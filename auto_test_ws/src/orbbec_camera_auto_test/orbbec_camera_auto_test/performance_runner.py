@@ -1,0 +1,352 @@
+from __future__ import annotations
+
+import argparse
+import sys
+import time
+from dataclasses import asdict
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict
+
+from .functional_runner import _build_launch_args, _require_detected_camera
+from .environment_info import collect_camera_environment, collect_host_environment
+from .functional_topics import run_topic_checks
+from .performance_fps import TopicFpsCollector
+from .performance_load import ExternalLoadController
+from .performance_system import ProcessTreeSampler
+from .profile_loader import PerformanceScenarioSpec, load_camera_profile
+from .reporter import append_log, build_performance_summary, ensure_dir, write_json, write_markdown
+from .ros_utils import RosHarness, resolve_service_type
+from .session import TestSession
+
+
+def _make_status_logger(*log_paths: Path):
+    def emit(message: str) -> None:
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        line = f"[{timestamp}] {message}"
+        print(line, flush=True)
+        for log_path in log_paths:
+            write_path = Path(log_path)
+            write_path.parent.mkdir(parents=True, exist_ok=True)
+            with write_path.open("a", encoding="utf-8") as stream:
+                stream.write(line + "\n")
+
+    return emit
+
+
+def _wait_for_camera_ready(
+    session: TestSession, harness: RosHarness, camera_name: str, emit_status
+) -> None:
+    session.assert_running()
+    emit_status(f"waiting for camera node '/{camera_name}/{camera_name}'")
+    harness.wait_for_node(camera_name, namespace=f"/{camera_name}", timeout=60.0)
+    emit_status(f"camera node '/{camera_name}/{camera_name}' is online")
+    emit_status(f"waiting for service '/{camera_name}/get_sdk_version'")
+    harness.wait_for_service(
+        f"/{camera_name}/get_sdk_version",
+        resolve_service_type("orbbec_camera_msgs/srv/GetString"),
+        timeout=60.0,
+    )
+    emit_status(f"launch is ready for camera '{camera_name}'")
+
+
+def _scenario_duration(args, scenario: PerformanceScenarioSpec) -> float:
+    if args.duration is not None:
+        return float(args.duration)
+    if scenario.duration is not None:
+        return float(scenario.duration)
+    raise ValueError(
+        f"performance scenario '{scenario.name}' has no duration; pass --duration or set duration in profile"
+    )
+
+
+def _select_performance_scenarios(profile, scenario_name: str | None) -> list[PerformanceScenarioSpec]:
+    scenarios = list(profile.performance_scenarios)
+    if not scenario_name:
+        return scenarios
+
+    for scenario in scenarios:
+        if scenario.name == scenario_name:
+            return [scenario]
+    available = ", ".join(item.name for item in scenarios)
+    raise ValueError(
+        f"unknown performance scenario '{scenario_name}'. available scenarios: {available}"
+    )
+
+
+def _scenario_result_payload(
+    profile_name: str,
+    launch_file: str,
+    camera_name: str,
+    scenario: PerformanceScenarioSpec,
+    launch_args: Dict[str, Any],
+    duration_seconds: float,
+    host_environment: Dict[str, Any],
+) -> Dict[str, Any]:
+    return {
+        "profile_name": profile_name,
+        "scenario_name": scenario.name,
+        "scenario_description": scenario.description,
+        "launch_file": launch_file,
+        "camera_name": camera_name,
+        "duration_seconds": duration_seconds,
+        "launch_args": dict(launch_args),
+        "load": asdict(scenario.load) if scenario.load is not None else {},
+        "status": "passed",
+        "fps_summary": {},
+        "system_summary": {},
+        "environment": {
+            "host": host_environment,
+            "camera": {
+                "camera_name": camera_name,
+                "launch_file": launch_file,
+                "launch_args": dict(launch_args),
+            },
+        },
+    }
+
+
+def _safe_harness_name(scenario_name: str) -> str:
+    normalized = "".join(ch if ch.isalnum() or ch == "_" else "_" for ch in scenario_name)
+    normalized = normalized.strip("_") or "default"
+    return f"orbbec_camera_performance_{normalized}"
+
+
+def _run_performance_scenario(
+    *,
+    args,
+    profile,
+    scenario: PerformanceScenarioSpec,
+    launch_file: str,
+    base_launch_args: Dict[str, Any],
+    results_dir: Path,
+    host_environment: Dict[str, Any],
+) -> Dict[str, Any]:
+    launch_log_path = results_dir / "launch.log"
+    performance_log_path = results_dir / "performance.log"
+    fps_csv_path = results_dir / "fps.csv"
+    system_csv_path = results_dir / "system_usage.csv"
+    stage_log_path = results_dir / "performance_stage.log"
+    emit_status = _make_status_logger(stage_log_path, performance_log_path)
+
+    launch_args = dict(base_launch_args)
+    launch_args.update(scenario.launch_args)
+    camera_name = str(launch_args.get("camera_name", "camera"))
+    duration_seconds = _scenario_duration(args, scenario)
+    emit_status(f"performance scenario '{scenario.name}' target launch: {launch_file}")
+    emit_status(f"performance scenario '{scenario.name}' camera name: {camera_name}")
+    emit_status(f"performance scenario '{scenario.name}' duration: {duration_seconds:.1f} seconds")
+    if scenario.description:
+        emit_status(f"performance scenario '{scenario.name}' description: {scenario.description}")
+
+    write_json(
+        results_dir / "launch_args.json",
+        {
+            "scenario_name": scenario.name,
+            "description": scenario.description,
+            "launch_file": launch_file,
+            "launch_args": launch_args,
+            "duration_seconds": duration_seconds,
+            "load": asdict(scenario.load) if scenario.load is not None else {},
+        },
+    )
+
+    result = _scenario_result_payload(
+        profile.profile_name,
+        launch_file,
+        camera_name,
+        scenario,
+        launch_args,
+        duration_seconds,
+        host_environment,
+    )
+
+    with RosHarness(_safe_harness_name(scenario.name)) as harness:
+        try:
+            _require_detected_camera(args.driver_setup, emit_status)
+        except Exception as exc:  # noqa: BLE001
+            result["status"] = "failed"
+            result["error"] = str(exc)
+            emit_status(f"performance scenario '{scenario.name}' preflight failed: {exc}")
+            write_json(results_dir / "result.json", result)
+            write_markdown(results_dir / "summary.md", build_performance_summary(result))
+            return result
+
+        session = TestSession(
+            launch_file=launch_file,
+            launch_args=launch_args,
+            work_dir=results_dir,
+            log_path=launch_log_path,
+            driver_setup=args.driver_setup,
+            status_callback=emit_status,
+        )
+        collector = None
+        sampler = None
+        load_controller = ExternalLoadController(scenario.load, emit_status=emit_status)
+        try:
+            emit_status(f"starting clean performance launch for scenario '{scenario.name}'")
+            session.start()
+            _wait_for_camera_ready(session, harness, camera_name, emit_status)
+            result["environment"]["camera"] = collect_camera_environment(
+                harness, camera_name, launch_file, launch_args
+            )
+            emit_status(f"warming up performance topics for scenario '{scenario.name}'")
+            warmup_results = run_topic_checks(
+                harness, scenario.topics, performance_log_path, emit_status=emit_status
+            )
+            if any(item["status"] == "failed" for item in warmup_results):
+                failed_topics = [item["name"] for item in warmup_results if item["status"] == "failed"]
+                raise RuntimeError(f"Performance warmup failed for topics: {failed_topics}")
+
+            emit_status(f"starting FPS collector for scenario '{scenario.name}'")
+            collector = TopicFpsCollector(
+                harness.node,
+                scenario.topics,
+                fps_csv_path,
+                launch_args=launch_args,
+            )
+            for line in collector.describe_topics():
+                emit_status(line)
+            sampler = ProcessTreeSampler(session, system_csv_path)
+
+            deadline = time.monotonic() + duration_seconds
+            next_system_sample = time.monotonic()
+            next_progress_log = time.monotonic() + min(10.0, max(duration_seconds / 10.0, 2.0))
+            while time.monotonic() < deadline:
+                harness.spin_once(0.1)
+                session.assert_running()
+                current_time = time.monotonic()
+                elapsed = current_time - collector.start_time
+                load_controller.update(elapsed, duration_seconds)
+                if current_time >= next_system_sample:
+                    snapshot = sampler.sample(elapsed)
+                    append_log(
+                        performance_log_path,
+                        f"[PERF] elapsed={elapsed:.2f}s cpu={snapshot['cpu_percent']:.2f} rss_mb={snapshot['memory_rss_mb']:.2f}",
+                    )
+                    next_system_sample = current_time + 1.0
+                if current_time >= next_progress_log:
+                    emit_status(
+                        f"scenario '{scenario.name}' sampling in progress: {elapsed:.1f}/{duration_seconds:.1f} seconds"
+                    )
+                    next_progress_log = current_time + min(10.0, max(duration_seconds / 10.0, 2.0))
+
+            result["fps_summary"] = collector.build_summary()
+            result["system_summary"] = sampler.build_summary()
+            emit_status(f"performance scenario '{scenario.name}' sampling completed")
+        except Exception as exc:  # noqa: BLE001
+            result["status"] = "failed"
+            result["error"] = str(exc)
+            append_log(performance_log_path, f"[PERF] FAIL: {exc}")
+            emit_status(f"performance scenario '{scenario.name}' failed: {exc}")
+        finally:
+            load_controller.close()
+            if collector is not None:
+                result["fps_summary"] = result["fps_summary"] or collector.build_summary()
+                collector.close()
+            if sampler is not None:
+                result["system_summary"] = result["system_summary"] or sampler.build_summary()
+                sampler.close()
+            session.stop()
+
+    write_json(results_dir / "result.json", result)
+    write_markdown(results_dir / "summary.md", build_performance_summary(result))
+    if result["status"] == "passed":
+        emit_status(f"performance scenario '{scenario.name}' finished successfully")
+    return result
+
+
+def run_performance_test(args) -> int:
+    results_dir = ensure_dir(Path(args.results_dir).resolve())
+    root_stage_log_path = results_dir / "performance_stage.log"
+    root_log_path = results_dir / "performance.log"
+    emit_status = _make_status_logger(root_stage_log_path, root_log_path)
+
+    emit_status(f"loading performance profile '{args.profile}'")
+    profile = load_camera_profile(args.profile)
+    launch_file = args.launch_file or profile.launch_file
+    base_launch_args = _build_launch_args(profile, args)
+    selected_scenarios = _select_performance_scenarios(profile, args.performance_scenario)
+    host_environment = collect_host_environment(args.driver_setup)
+    emit_status(f"selected performance scenarios: {', '.join(item.name for item in selected_scenarios)}")
+
+    if len(selected_scenarios) == 1:
+        result = _run_performance_scenario(
+            args=args,
+            profile=profile,
+            scenario=selected_scenarios[0],
+            launch_file=launch_file,
+            base_launch_args=base_launch_args,
+            results_dir=results_dir,
+            host_environment=host_environment,
+        )
+        return 0 if result["status"] == "passed" else 1
+
+    aggregate_result = {
+        "profile_name": profile.profile_name,
+        "launch_file": launch_file,
+        "camera_name": str(base_launch_args.get("camera_name", "camera")),
+        "status": "passed",
+        "selected_scenarios": [scenario.name for scenario in selected_scenarios],
+        "environment": {"host": host_environment},
+        "scenarios": [],
+    }
+
+    for scenario in selected_scenarios:
+        scenario_dir = ensure_dir(results_dir / "scenarios" / scenario.name)
+        scenario_result = _run_performance_scenario(
+            args=args,
+            profile=profile,
+            scenario=scenario,
+            launch_file=launch_file,
+            base_launch_args=base_launch_args,
+            results_dir=scenario_dir,
+            host_environment=host_environment,
+        )
+        scenario_result["result_dir"] = str(scenario_dir.relative_to(results_dir))
+        aggregate_result["scenarios"].append(scenario_result)
+        if scenario_result["status"] != "passed":
+            aggregate_result["status"] = "failed"
+
+    write_json(results_dir / "result.json", aggregate_result)
+    write_markdown(results_dir / "summary.md", build_performance_summary(aggregate_result))
+    if aggregate_result["status"] == "passed":
+        emit_status("all selected performance scenarios finished successfully")
+    else:
+        emit_status("one or more performance scenarios failed")
+    return 0 if aggregate_result["status"] == "passed" else 1
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Run Orbbec camera performance tests")
+    parser.add_argument("--profile", default="gemini_330_series", help="Profile name or YAML path")
+    parser.add_argument("--launch-file", default="", help="Override launch file from the profile")
+    parser.add_argument(
+        "--performance-scenario",
+        default="",
+        help="Run only the named performance scenario from the profile",
+    )
+    parser.add_argument("--camera-name", default=None)
+    parser.add_argument("--serial-number", default=None)
+    parser.add_argument("--usb-port", default=None)
+    parser.add_argument("--config-file-path", default=None)
+    parser.add_argument("--driver-setup", default=None)
+    parser.add_argument("--results-dir", required=True)
+    parser.add_argument("--duration", type=float, default=None)
+    parser.add_argument("--launch-arg", action="append", default=[], help="Extra KEY=VALUE launch arg")
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = parse_args()
+    try:
+        return_code = run_performance_test(args)
+    except KeyboardInterrupt:
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        print(f"[{timestamp}] performance test interrupted by user", flush=True)
+        return_code = 130
+    sys.exit(return_code)
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,455 @@
+profile_name: gemini_330_series
+launch_file: gemini_330_series.launch.py
+
+default_launch_args:
+  camera_name: camera
+  enable_point_cloud: true
+
+launch_scenarios:
+  - name: default
+    launch_args: {}
+    topic_defaults:
+      timeout: 10
+    topics:
+      # Color topics
+      - name: /camera/color/camera_info
+        type: sensor_msgs/msg/CameraInfo
+        mode: message
+        validator: camera_info_matches_image
+        paired_topic: /camera/color/image_raw
+      - name: /camera/color/image_raw
+        type: sensor_msgs/msg/Image
+        mode: message
+        validator: image
+      - name: /camera/color/image_raw/compressed
+        type: sensor_msgs/msg/CompressedImage
+        mode: advertised
+      - name: /camera/color/image_raw/theora
+        type: ""
+        mode: advertised
+      - name: /camera/color/metadata
+        type: orbbec_camera_msgs/msg/Metadata
+        mode: message
+        validator: metadata
+
+      # Depth topics
+      - name: /camera/depth/camera_info
+        type: sensor_msgs/msg/CameraInfo
+        mode: message
+        validator: camera_info_matches_image
+        paired_topic: /camera/depth/image_raw
+      - name: /camera/depth/image_raw
+        type: sensor_msgs/msg/Image
+        mode: message
+        validator: image
+      - name: /camera/depth/image_raw/compressedDepth
+        type: sensor_msgs/msg/CompressedImage
+        mode: advertised
+      - name: /camera/depth/metadata
+        type: orbbec_camera_msgs/msg/Metadata
+        mode: message
+        validator: metadata
+      - name: /camera/depth/points
+        type: sensor_msgs/msg/PointCloud2
+        mode: message
+        validator: point_cloud
+      - name: /camera/depth_filter_status
+        type: std_msgs/msg/String
+        mode: message
+        validator: string_non_empty
+        qos: transient_local
+
+      # Device and ROS system topics
+      - name: /camera/device_status
+        type: orbbec_camera_msgs/msg/DeviceStatus
+        mode: message
+        validator: device_status
+      - name: /diagnostics
+        type: diagnostic_msgs/msg/DiagnosticArray
+        mode: advertised
+      - name: /tf
+        type: tf2_msgs/msg/TFMessage
+        mode: advertised
+      - name: /tf_static
+        type: tf2_msgs/msg/TFMessage
+        mode: message
+        validator: tf_static
+        qos: transient_local
+    services:
+      # Read-only services
+      # Color / white balance
+      - name: /camera/get_auto_white_balance
+        type: orbbec_camera_msgs/srv/GetInt32
+        mode: read
+        response_checks:
+          - success_true
+      - name: /camera/get_color_exposure
+        type: orbbec_camera_msgs/srv/GetInt32
+        mode: read
+        response_checks:
+          - success_true
+      - name: /camera/get_color_gain
+        type: orbbec_camera_msgs/srv/GetInt32
+        mode: read
+        response_checks:
+          - success_true
+      - name: /camera/get_white_balance
+        type: orbbec_camera_msgs/srv/GetInt32
+        mode: read
+        response_checks:
+          - success_true
+
+      # Depth
+      - name: /camera/get_depth_exposure
+        type: orbbec_camera_msgs/srv/GetInt32
+        mode: read
+        response_checks:
+          - success_true
+      - name: /camera/get_depth_gain
+        type: orbbec_camera_msgs/srv/GetInt32
+        mode: read
+        response_checks:
+          - success_true
+
+      # Device / status / system
+      - name: /camera/get_device_info
+        type: orbbec_camera_msgs/srv/GetDeviceInfo
+        mode: read
+        response_checks:
+          - success_true
+          - field_non_empty:info.name
+          - field_non_empty:info.serial_number
+      - name: /camera/get_laser_status
+        type: orbbec_camera_msgs/srv/GetBool
+        mode: read
+        response_checks:
+          - success_true
+      - name: /camera/get_ldp_status
+        type: orbbec_camera_msgs/srv/GetBool
+        mode: read
+        response_checks:
+          - success_true
+      - name: /camera/get_lrm_measure_distance
+        type: orbbec_camera_msgs/srv/GetInt32
+        mode: read
+        response_checks:
+          - success_true
+      - name: /camera/get_point_cloud_decimation
+        type: orbbec_camera_msgs/srv/GetInt32
+        mode: read
+        response_checks:
+          - success_true
+      - name: /camera/get_ptp_config
+        type: orbbec_camera_msgs/srv/GetBool
+        mode: read
+        response_checks:
+          - success_true
+      - name: /camera/get_sdk_version
+        type: orbbec_camera_msgs/srv/GetString
+        mode: read
+        response_checks:
+          - success_true
+          - field_non_empty:data
+      - name: /camera/get_streams_enable
+        type: orbbec_camera_msgs/srv/GetBool
+        mode: read
+        response_checks:
+          - success_true
+
+      # Roundtrip services
+      # Color / white balance
+      - name: /camera/set_auto_white_balance
+        type: std_srvs/srv/SetBool
+        mode: roundtrip_bool_int
+        getter_name: /camera/get_auto_white_balance
+        getter_type: orbbec_camera_msgs/srv/GetInt32
+        getter_field: data
+        request_field: data
+        wait_after_call: 2.0
+      - name: /camera/set_color_exposure
+        type: orbbec_camera_msgs/srv/SetInt32
+        mode: roundtrip_int
+        getter_name: /camera/get_color_exposure
+        getter_type: orbbec_camera_msgs/srv/GetInt32
+        getter_field: data
+        request_field: data
+        request:
+          data: 30
+        alternate_request:
+          data: 60
+        wait_after_call: 2.0
+      - name: /camera/set_color_gain
+        type: orbbec_camera_msgs/srv/SetInt32
+        mode: roundtrip_int
+        getter_name: /camera/get_color_gain
+        getter_type: orbbec_camera_msgs/srv/GetInt32
+        getter_field: data
+        request_field: data
+        request:
+          data: 16
+        alternate_request:
+          data: 32
+        wait_after_call: 2.0
+      - name: /camera/set_white_balance
+        type: orbbec_camera_msgs/srv/SetInt32
+        mode: roundtrip_int
+        getter_name: /camera/get_white_balance
+        getter_type: orbbec_camera_msgs/srv/GetInt32
+        getter_field: data
+        request_field: data
+        request:
+          data: 3000
+        alternate_request:
+          data: 3500
+        wait_after_call: 2.0
+
+      # Depth
+      - name: /camera/set_depth_exposure
+        type: orbbec_camera_msgs/srv/SetInt32
+        mode: roundtrip_int
+        getter_name: /camera/get_depth_exposure
+        getter_type: orbbec_camera_msgs/srv/GetInt32
+        getter_field: data
+        request_field: data
+        request:
+          data: 3000
+        alternate_request:
+          data: 4000
+        wait_after_call: 2.0
+      - name: /camera/set_depth_gain
+        type: orbbec_camera_msgs/srv/SetInt32
+        mode: roundtrip_int
+        getter_name: /camera/get_depth_gain
+        getter_type: orbbec_camera_msgs/srv/GetInt32
+        getter_field: data
+        request_field: data
+        request:
+          data: 2000
+        alternate_request:
+          data: 3000
+        wait_after_call: 2.0
+
+      # Device / status / system
+      - name: /camera/set_laser_enable
+        type: std_srvs/srv/SetBool
+        mode: roundtrip_bool
+        getter_name: /camera/get_laser_status
+        getter_type: orbbec_camera_msgs/srv/GetBool
+        getter_field: data
+        request_field: data
+        wait_after_call: 2.0
+      - name: /camera/set_ldp_enable
+        type: std_srvs/srv/SetBool
+        mode: roundtrip_bool
+        getter_name: /camera/get_ldp_status
+        getter_type: orbbec_camera_msgs/srv/GetBool
+        getter_field: data
+        request_field: data
+        wait_after_call: 2.0
+      - name: /camera/set_point_cloud_decimation
+        type: orbbec_camera_msgs/srv/SetInt32
+        mode: roundtrip_int
+        getter_name: /camera/get_point_cloud_decimation
+        getter_type: orbbec_camera_msgs/srv/GetInt32
+        getter_field: data
+        request_field: data
+        request:
+          data: 2
+        alternate_request:
+          data: 1
+        wait_after_call: 2.0
+      - name: /camera/set_ptp_config
+        type: std_srvs/srv/SetBool
+        mode: roundtrip_bool
+        getter_name: /camera/get_ptp_config
+        getter_type: orbbec_camera_msgs/srv/GetBool
+        getter_field: data
+        request_field: data
+        wait_after_call: 2.0
+      - name: /camera/set_streams_enable
+        type: std_srvs/srv/SetBool
+        mode: roundtrip_bool
+        getter_name: /camera/get_streams_enable
+        getter_type: orbbec_camera_msgs/srv/GetBool
+        getter_field: data
+        request_field: data
+        wait_after_call: 2.0
+
+      # Advertised setter services
+      # Color
+      - name: /camera/send_software_trigger
+        type: std_srvs/srv/SetBool
+        mode: advertised
+      - name: /camera/set_ae_mode
+        type: orbbec_camera_msgs/srv/SetString
+        mode: advertised
+      - name: /camera/set_color_ae_roi
+        type: orbbec_camera_msgs/srv/SetArrays
+        mode: advertised
+      - name: /camera/set_color_auto_exposure
+        type: std_srvs/srv/SetBool
+        mode: advertised
+      - name: /camera/set_color_flip
+        type: std_srvs/srv/SetBool
+        mode: advertised
+      - name: /camera/set_color_mirror
+        type: std_srvs/srv/SetBool
+        mode: advertised
+      - name: /camera/set_color_rotation
+        type: orbbec_camera_msgs/srv/SetInt32
+        mode: advertised
+
+      # Depth
+      - name: /camera/set_depth_ae_roi
+        type: orbbec_camera_msgs/srv/SetArrays
+        mode: advertised
+      - name: /camera/set_depth_auto_exposure
+        type: std_srvs/srv/SetBool
+        mode: advertised
+      - name: /camera/set_depth_flip
+        type: std_srvs/srv/SetBool
+        mode: advertised
+      - name: /camera/set_depth_mirror
+        type: std_srvs/srv/SetBool
+        mode: advertised
+      - name: /camera/set_depth_rotation
+        type: orbbec_camera_msgs/srv/SetInt32
+        mode: advertised
+      - name: /camera/set_disparity_range_mode
+        type: orbbec_camera_msgs/srv/SetInt32
+        mode: advertised
+      - name: /camera/set_disparity_search_offset
+        type: orbbec_camera_msgs/srv/SetInt32
+        mode: advertised
+
+      # Device / status / system
+      - name: /camera/set_fan_work_mode
+        type: orbbec_camera_msgs/srv/SetInt32
+        mode: advertised
+      - name: /camera/set_filter
+        type: orbbec_camera_msgs/srv/SetFilter
+        mode: advertised
+      - name: /camera/set_floor_enable
+        type: std_srvs/srv/SetBool
+        mode: advertised
+      - name: /camera/set_ir_long_exposure
+        type: std_srvs/srv/SetBool
+        mode: advertised
+      - name: /camera/set_reset_timestamp
+        type: std_srvs/srv/SetBool
+        mode: advertised
+      - name: /camera/set_sports_mode
+        type: std_srvs/srv/SetBool
+        mode: advertised
+      - name: /camera/set_sync_hosttime
+        type: std_srvs/srv/SetBool
+        mode: advertised
+      - name: /camera/set_sync_interleaverlaser
+        type: orbbec_camera_msgs/srv/SetInt32
+        mode: advertised
+      - name: /camera/switch_ir
+        type: orbbec_camera_msgs/srv/SetString
+        mode: advertised
+      - name: /camera/toggle_color
+        type: std_srvs/srv/SetBool
+        mode: advertised
+      - name: /camera/toggle_depth
+        type: std_srvs/srv/SetBool
+        mode: advertised
+
+      # Artifact services
+      - name: /camera/save_images
+        type: std_srvs/srv/Empty
+        mode: artifact
+        target_subdir: image
+        min_new_files: 1
+        wait_after_call: 5.0
+        keepalive_topics:
+          - name: /camera/color/image_raw
+            type: sensor_msgs/msg/Image
+          - name: /camera/depth/image_raw
+            type: sensor_msgs/msg/Image
+      - name: /camera/save_point_cloud
+        type: std_srvs/srv/Empty
+        mode: artifact
+        target_subdir: point_cloud
+        min_new_files: 1
+        wait_after_call: 5.0
+        keepalive_topics:
+          - name: /camera/depth/points
+            type: sensor_msgs/msg/PointCloud2
+
+      # Reboot service
+      - name: /camera/reboot_device
+        type: std_srvs/srv/Empty
+        mode: reboot
+
+performance_topic_defaults:
+  timeout: 10
+
+performance_topics:
+  - name: /camera/color/image_raw
+    type: sensor_msgs/msg/Image
+    mode: message
+    validator: image
+    ideal_fps: 30
+  - name: /camera/depth/image_raw
+    type: sensor_msgs/msg/Image
+    mode: message
+    validator: image
+    ideal_fps: 10
+
+performance_scenarios:
+  - name: default_with_external_load
+    description: default launch with external CPU load to observe dropped frames
+    duration: 10
+    launch_args: {}
+    topics:
+      - name: /camera/color/image_raw
+        type: sensor_msgs/msg/Image
+        mode: message
+        validator: image
+        ideal_fps: 30
+      - name: /camera/depth/image_raw
+        type: sensor_msgs/msg/Image
+        mode: message
+        validator: image
+        ideal_fps: 10
+    load:
+      type: cpu
+      workers: 0
+      start_after_seconds: 30
+      stop_after_seconds: 210
+
+  - name: high_performance_launch
+    description: enable high performance stream parameters and observe CPU and memory fluctuation
+    duration: 180
+    launch_args:
+      color_fps: 30
+      depth_fps: 30
+      left_ir_fps: 30
+      right_ir_fps: 30
+      enable_point_cloud: true
+      enable_left_ir: true
+      enable_right_ir: true
+    topics:
+      - name: /camera/color/image_raw
+        type: sensor_msgs/msg/Image
+        mode: message
+        validator: image
+      - name: /camera/depth/image_raw
+        type: sensor_msgs/msg/Image
+        mode: message
+        validator: image
+      - name: /camera/left_ir/image_raw
+        type: sensor_msgs/msg/Image
+        mode: message
+        validator: image
+      - name: /camera/right_ir/image_raw
+        type: sensor_msgs/msg/Image
+        mode: message
+        validator: image
+      - name: /camera/depth/points
+        type: sensor_msgs/msg/PointCloud2
+        mode: message
+        validator: point_cloud

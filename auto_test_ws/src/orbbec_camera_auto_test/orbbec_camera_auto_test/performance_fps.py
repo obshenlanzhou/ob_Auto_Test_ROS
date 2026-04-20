@@ -1,0 +1,256 @@
+from __future__ import annotations
+
+import csv
+import time
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+from .profile_loader import TopicSpec
+from .ros_utils import resolve_message_type
+
+_TOPIC_FPS_KEY_RULES = (
+    ("/color/image_raw", "color_fps"),
+    ("/depth/image_raw", "depth_fps"),
+    ("/depth/points", "depth_fps"),
+    ("/left_ir/image_raw", "left_ir_fps"),
+    ("/right_ir/image_raw", "right_ir_fps"),
+    ("/ir/image_raw", "ir_fps"),
+)
+
+
+def _topic_label(topic_name: str) -> str:
+    return topic_name.strip("/").replace("/", "_")
+
+
+def _header_stamp(message: Any) -> Optional[float]:
+    header = getattr(message, "header", None)
+    if header is None or getattr(header, "stamp", None) is None:
+        return None
+    stamp = header.stamp.sec + header.stamp.nanosec * 1e-9
+    if stamp <= 0.0:
+        return None
+    return stamp
+
+
+def _infer_ideal_fps_key(topic_name: str) -> Optional[str]:
+    normalized = topic_name.rstrip("/")
+    for suffix, fps_key in _TOPIC_FPS_KEY_RULES:
+        if normalized.endswith(suffix):
+            return fps_key
+    return None
+
+
+def _coerce_positive_float(value: Any) -> float:
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    return numeric if numeric > 0.0 else 0.0
+
+
+def _resolve_ideal_fps(spec: TopicSpec, launch_args: Dict[str, Any]) -> tuple[Optional[str], float]:
+    if spec.ideal_fps > 0.0:
+        return spec.ideal_fps_key, spec.ideal_fps
+    fps_key = spec.ideal_fps_key or _infer_ideal_fps_key(spec.name)
+    if not fps_key:
+        return None, 0.0
+    return fps_key, _coerce_positive_float(launch_args.get(fps_key))
+
+
+def _estimate_missing_count(delta_seconds: float, ideal_fps: float) -> int:
+    if ideal_fps <= 0.0 or delta_seconds <= 0.0:
+        return 0
+    expected_interval = 1.0 / ideal_fps
+    estimated_frame_span = int((delta_seconds / expected_interval) + 0.5)
+    return max(0, estimated_frame_span - 1)
+
+
+def _fps_from_delta(total_delta: float, pair_count: int) -> float:
+    if total_delta <= 0.0 or pair_count <= 0:
+        return 0.0
+    return pair_count / total_delta
+
+
+def _event_rate(event_count: int, message_count: int) -> float:
+    total = message_count + event_count
+    if total <= 0:
+        return 0.0
+    return event_count / total
+
+
+class TopicFpsCollector:
+    def __init__(
+        self,
+        node,
+        topic_specs: List[TopicSpec],
+        csv_path: Path,
+        launch_args: Dict[str, Any],
+        sample_period: float = 1.0,
+    ):
+        self.node = node
+        self.topic_specs = topic_specs
+        self.csv_path = csv_path
+        self.sample_period = sample_period
+        self.start_time = time.monotonic()
+        self.launch_args = dict(launch_args)
+        self.trackers: Dict[str, Dict[str, Any]] = {}
+        self.subscriptions = []
+
+        self.csv_path.parent.mkdir(parents=True, exist_ok=True)
+        self.csv_file = self.csv_path.open("w", newline="", encoding="utf-8")
+        self.csv_writer = csv.writer(self.csv_file)
+
+        header = ["elapsed_seconds"]
+        for spec in topic_specs:
+            label = _topic_label(spec.name)
+            fps_key, ideal_fps = _resolve_ideal_fps(spec, self.launch_args)
+            header.extend(
+                [
+                    f"{label}_ideal_fps",
+                    f"{label}_current_fps",
+                    f"{label}_avg_fps",
+                    f"{label}_dropped_frames",
+                    f"{label}_drop_rate",
+                ]
+            )
+            self.trackers[spec.name] = {
+                "ideal_fps_key": fps_key,
+                "ideal_fps": ideal_fps,
+                "ideal_fps_explicit": spec.ideal_fps > 0.0,
+                "message_count": 0,
+                "invalid_stamp_count": 0,
+                "current_fps": 0.0,
+                "prev_stamp": None,
+                "window_pair_count": 0,
+                "window_delta_sum": 0.0,
+                "total_pair_count": 0,
+                "total_delta_sum": 0.0,
+                "total_dropped_frames": 0,
+            }
+            msg_type = resolve_message_type(spec.type)
+            self.subscriptions.append(
+                self.node.create_subscription(
+                    msg_type,
+                    spec.name,
+                    lambda msg, topic_name=spec.name: self._on_message(topic_name, msg),
+                    10,
+                )
+            )
+        self.csv_writer.writerow(header)
+        self.timer = self.node.create_timer(self.sample_period, self._on_sample)
+
+    def describe_topics(self) -> List[str]:
+        lines: List[str] = []
+        for spec in self.topic_specs:
+            tracker = self.trackers[spec.name]
+            ideal_fps = tracker["ideal_fps"]
+            ideal_fps_key = tracker["ideal_fps_key"]
+            if tracker["ideal_fps_explicit"] and ideal_fps > 0.0:
+                lines.append(
+                    f"[PERF][TOPIC] {spec.name}: ideal_fps={ideal_fps:.3f} from topic configuration"
+                )
+            elif ideal_fps_key and ideal_fps > 0.0:
+                lines.append(
+                    f"[PERF][TOPIC] {spec.name}: ideal_fps={ideal_fps:.3f} from launch arg '{ideal_fps_key}'"
+                )
+            elif ideal_fps_key:
+                lines.append(
+                    f"[PERF][TOPIC] {spec.name}: launch arg '{ideal_fps_key}' is unset or <= 0, drop estimation disabled"
+                )
+            else:
+                lines.append(
+                    f"[PERF][TOPIC] {spec.name}: no ideal_fps mapping, drop estimation disabled"
+                )
+        return lines
+
+    def _update_fps_stats(
+        self, tracker: Dict[str, Any], delta_seconds: float, missing_count: int = 0
+    ) -> None:
+        if delta_seconds <= 0.0:
+            return
+        tracker["window_pair_count"] += 1
+        tracker["window_delta_sum"] += delta_seconds
+        tracker["total_pair_count"] += 1
+        tracker["total_delta_sum"] += delta_seconds
+        tracker["total_dropped_frames"] += missing_count
+
+    def _on_message(self, topic_name: str, message: Any) -> None:
+        tracker = self.trackers[topic_name]
+        tracker["message_count"] += 1
+
+        stamp = _header_stamp(message)
+        if stamp is None:
+            tracker["invalid_stamp_count"] += 1
+            tracker["prev_stamp"] = None
+            return
+
+        if tracker["prev_stamp"] is not None:
+            delta_seconds = stamp - tracker["prev_stamp"]
+            if delta_seconds <= 0.0:
+                tracker["invalid_stamp_count"] += 1
+            else:
+                dropped_frames = _estimate_missing_count(delta_seconds, tracker["ideal_fps"])
+                self._update_fps_stats(
+                    tracker, delta_seconds, missing_count=dropped_frames
+                )
+        tracker["prev_stamp"] = stamp
+
+    def _on_sample(self) -> None:
+        elapsed = time.monotonic() - self.start_time
+        row = [f"{elapsed:.3f}"]
+        for spec in self.topic_specs:
+            tracker = self.trackers[spec.name]
+            current_fps = _fps_from_delta(
+                tracker["window_delta_sum"],
+                tracker["window_pair_count"],
+            )
+            avg_fps = _fps_from_delta(
+                tracker["total_delta_sum"],
+                tracker["total_pair_count"],
+            )
+            drop_rate = _event_rate(
+                tracker["total_dropped_frames"], tracker["message_count"]
+            )
+            tracker["current_fps"] = current_fps
+            row.extend(
+                [
+                    f"{tracker['ideal_fps']:.3f}",
+                    f"{current_fps:.3f}",
+                    f"{avg_fps:.3f}",
+                    str(tracker["total_dropped_frames"]),
+                    f"{drop_rate:.6f}",
+                ]
+            )
+            tracker["window_pair_count"] = 0
+            tracker["window_delta_sum"] = 0.0
+        self.csv_writer.writerow(row)
+        self.csv_file.flush()
+
+    def build_summary(self) -> Dict[str, Dict[str, float]]:
+        summary: Dict[str, Dict[str, float]] = {}
+        for spec in self.topic_specs:
+            tracker = self.trackers[spec.name]
+            avg_fps = _fps_from_delta(
+                tracker["total_delta_sum"],
+                tracker["total_pair_count"],
+            )
+            summary[spec.name] = {
+                "ideal_fps_key": tracker["ideal_fps_key"] or "",
+                "ideal_fps": tracker["ideal_fps"],
+                "current_fps": tracker["current_fps"],
+                "avg_fps": avg_fps,
+                "dropped_frames": tracker["total_dropped_frames"],
+                "drop_rate": _event_rate(
+                    tracker["total_dropped_frames"], tracker["message_count"]
+                ),
+            }
+        return summary
+
+    def close(self) -> None:
+        if self.timer is not None:
+            self.node.destroy_timer(self.timer)
+            self.timer = None
+        for subscription in self.subscriptions:
+            self.node.destroy_subscription(subscription)
+        self.subscriptions.clear()
+        self.csv_file.close()
