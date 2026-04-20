@@ -2,24 +2,13 @@ from __future__ import annotations
 
 import os
 import signal
+import shutil
 import subprocess
-import sys
 from typing import Optional
 
+import psutil
+
 from .profile_loader import ExternalLoadSpec
-
-
-_CPU_BURN_CODE = """
-import signal
-import sys
-import time
-
-signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(0))
-signal.signal(signal.SIGINT, lambda signum, frame: sys.exit(0))
-
-while True:
-    pass
-"""
 
 
 class ExternalLoadController:
@@ -38,26 +27,51 @@ class ExternalLoadController:
             return 0
         if self.spec.workers > 0:
             return self.spec.workers
-        cpu_count = os.cpu_count() or 1
-        return max(1, cpu_count // 2)
+        cpu_count = psutil.cpu_count(logical=True) or os.cpu_count() or 1
+        return max(1, cpu_count)
 
     def start(self) -> None:
         if self.active or self.spec is None:
             return
-        if self.spec.type.lower() != "cpu":
-            self._emit(f"external load type '{self.spec.type}' is unsupported, skipping")
-            return
 
-        workers = self._resolved_workers()
-        self._emit(f"starting external CPU load with {workers} worker(s)")
-        for _ in range(workers):
+        load_type = self.spec.type.lower()
+        if load_type == "stress-ng":
+            executable = shutil.which("stress-ng")
+            if executable is None:
+                raise RuntimeError("stress-ng is not installed or not found in PATH")
+
+            args = list(self.spec.args)
+            if not args:
+                workers = self._resolved_workers()
+                args = [
+                    "--cpu",
+                    str(workers),
+                    "--cpu-load",
+                    "50",
+                    "--vm",
+                    "1",
+                    "--vm-bytes",
+                    "50%",
+                    "--io",
+                    "4",
+                    "--hdd",
+                    "1",
+                    "--hdd-bytes",
+                    "512M",
+                ]
+            command = [executable, *args]
+            self._emit(f"starting external stress-ng load: {' '.join(command)}")
             process = subprocess.Popen(
-                [sys.executable, "-c", _CPU_BURN_CODE],
+                command,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 start_new_session=True,
             )
             self.processes.append(process)
+        else:
+            raise RuntimeError(
+                f"external load type '{self.spec.type}' is unsupported; use 'stress-ng'"
+            )
         self.active = True
 
     def stop(self) -> None:

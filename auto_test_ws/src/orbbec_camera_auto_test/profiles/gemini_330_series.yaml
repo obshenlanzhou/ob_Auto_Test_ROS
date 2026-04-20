@@ -397,12 +397,12 @@ performance_topics:
     type: sensor_msgs/msg/Image
     mode: message
     validator: image
-    ideal_fps: 10
+    ideal_fps: 30
 
 performance_scenarios:
-  - name: default_with_external_load
-    description: default launch with external CPU load to observe dropped frames
-    duration: 10
+  - name: default_with_stress_ng_load
+    description: default launch with stress-ng high load to observe dropped frames
+    duration: 240
     launch_args: {}
     topics:
       - name: /camera/color/image_raw
@@ -414,11 +414,11 @@ performance_scenarios:
         type: sensor_msgs/msg/Image
         mode: message
         validator: image
-        ideal_fps: 10
+        ideal_fps: 30
     load:
-      type: cpu
+      type: stress-ng
       workers: 0
-      start_after_seconds: 30
+      start_after_seconds: 10
       stop_after_seconds: 210
 
   - name: high_performance_launch

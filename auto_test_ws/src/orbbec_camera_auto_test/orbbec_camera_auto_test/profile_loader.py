@@ -53,6 +53,7 @@ class ExternalLoadSpec:
     workers: int = 0
     start_after_seconds: float = 0.0
     stop_after_seconds: float = 0.0
+    args: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -138,11 +139,19 @@ def _launch_scenario_from_dict(data: Dict[str, Any]) -> LaunchScenarioSpec:
 
 
 def _external_load_from_dict(data: Dict[str, Any]) -> ExternalLoadSpec:
+    raw_args = data.get("args", [])
+    if raw_args is None:
+        raw_args = []
+    if isinstance(raw_args, str):
+        args = [raw_args]
+    else:
+        args = [str(item) for item in raw_args]
     return ExternalLoadSpec(
         type=str(data.get("type", "none")),
         workers=int(data.get("workers", 0) or 0),
         start_after_seconds=float(data.get("start_after_seconds", 0.0) or 0.0),
         stop_after_seconds=float(data.get("stop_after_seconds", 0.0) or 0.0),
+        args=args,
     )
 
 
