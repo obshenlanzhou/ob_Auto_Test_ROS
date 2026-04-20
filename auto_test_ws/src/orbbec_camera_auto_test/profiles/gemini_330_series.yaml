@@ -418,8 +418,6 @@ performance_scenarios:
     load:
       type: stress-ng
       workers: 0
-      start_after_seconds: 10
-      stop_after_seconds: 210
 
   - name: high_performance_launch
     description: enable high performance stream parameters and observe CPU and memory fluctuation

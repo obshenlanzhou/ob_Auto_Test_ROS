@@ -20,6 +20,59 @@ from .ros_utils import RosHarness, resolve_service_type
 from .session import TestSession
 
 
+def _parse_duration_value(value: Any) -> float:
+    if value is None:
+        raise ValueError("duration is required")
+    if isinstance(value, (int, float)):
+        return float(value)
+
+    raw = str(value).strip().lower()
+    if not raw:
+        raise ValueError("duration is required")
+
+    multiplier = 1.0
+    if raw.endswith("s"):
+        raw = raw[:-1]
+    elif raw.endswith("m"):
+        raw = raw[:-1]
+        multiplier = 60.0
+    elif raw.endswith("h"):
+        raw = raw[:-1]
+        multiplier = 3600.0
+    elif raw.endswith("d"):
+        raw = raw[:-1]
+        multiplier = 86400.0
+
+    duration_seconds = float(raw) * multiplier
+    if duration_seconds <= 0.0:
+        raise ValueError("duration must be > 0")
+    return duration_seconds
+
+
+def _format_hms(seconds: float) -> str:
+    total_seconds = max(int(seconds), 0)
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, secs = divmod(remainder, 60)
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+
+
+def _format_duration_cn(seconds: float) -> str:
+    total_seconds = max(int(seconds), 0)
+    days, remainder = divmod(total_seconds, 86400)
+    hours, remainder = divmod(remainder, 3600)
+    minutes, secs = divmod(remainder, 60)
+
+    parts = []
+    if days > 0:
+        parts.append(f"{days}天")
+    if hours > 0 or parts:
+        parts.append(f"{hours}小时")
+    if minutes > 0 or parts:
+        parts.append(f"{minutes}分钟")
+    parts.append(f"{secs}秒")
+    return "".join(parts)
+
+
 def _make_status_logger(*log_paths: Path):
     def emit(message: str) -> None:
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -52,9 +105,9 @@ def _wait_for_camera_ready(
 
 def _scenario_duration(args, scenario: PerformanceScenarioSpec) -> float:
     if args.duration is not None:
-        return float(args.duration)
+        return _parse_duration_value(args.duration)
     if scenario.duration is not None:
-        return float(scenario.duration)
+        return _parse_duration_value(scenario.duration)
     raise ValueError(
         f"performance scenario '{scenario.name}' has no duration; pass --duration or set duration in profile"
     )
@@ -106,6 +159,15 @@ def _scenario_result_payload(
     }
 
 
+def _result_exit_code(result: Dict[str, Any]) -> int:
+    status = result.get("status")
+    if status == "passed":
+        return 0
+    if status == "interrupted":
+        return 130
+    return 1
+
+
 def _safe_harness_name(scenario_name: str) -> str:
     normalized = "".join(ch if ch.isalnum() or ch == "_" else "_" for ch in scenario_name)
     normalized = normalized.strip("_") or "default"
@@ -135,7 +197,9 @@ def _run_performance_scenario(
     duration_seconds = _scenario_duration(args, scenario)
     emit_status(f"performance scenario '{scenario.name}' target launch: {launch_file}")
     emit_status(f"performance scenario '{scenario.name}' camera name: {camera_name}")
-    emit_status(f"performance scenario '{scenario.name}' duration: {duration_seconds:.1f} seconds")
+    emit_status(
+        f"performance scenario '{scenario.name}' duration: {_format_duration_cn(duration_seconds)}"
+    )
     if scenario.description:
         emit_status(f"performance scenario '{scenario.name}' description: {scenario.description}")
 
@@ -211,7 +275,7 @@ def _run_performance_scenario(
 
             deadline = time.monotonic() + duration_seconds
             next_system_sample = time.monotonic()
-            next_progress_log = time.monotonic() + min(10.0, max(duration_seconds / 10.0, 2.0))
+            next_progress_log = time.monotonic() + 10.0
             while time.monotonic() < deadline:
                 harness.spin_once(0.1)
                 session.assert_running()
@@ -226,20 +290,29 @@ def _run_performance_scenario(
                     )
                     next_system_sample = current_time + 1.0
                 if current_time >= next_progress_log:
-                    emit_status(
-                        f"scenario '{scenario.name}' sampling in progress: {elapsed:.1f}/{duration_seconds:.1f} seconds"
-                    )
-                    next_progress_log = current_time + min(10.0, max(duration_seconds / 10.0, 2.0))
+                    emit_status(f"performance elapsed: {_format_hms(elapsed)}")
+                    next_progress_log = current_time + 10.0
 
             result["fps_summary"] = collector.build_summary()
             result["system_summary"] = sampler.build_summary()
             emit_status(f"performance scenario '{scenario.name}' sampling completed")
+        except KeyboardInterrupt:
+            result["status"] = "interrupted"
+            result["error"] = "interrupted by user"
+            append_log(performance_log_path, "[PERF] INTERRUPTED: interrupted by user")
+            emit_status(
+                f"performance scenario '{scenario.name}' interrupted by user, finalizing partial results"
+            )
         except Exception as exc:  # noqa: BLE001
             result["status"] = "failed"
             result["error"] = str(exc)
             append_log(performance_log_path, f"[PERF] FAIL: {exc}")
             emit_status(f"performance scenario '{scenario.name}' failed: {exc}")
         finally:
+            total_elapsed = 0.0
+            if collector is not None:
+                total_elapsed = time.monotonic() - collector.start_time
+            emit_status(f"total performance duration: {_format_duration_cn(total_elapsed)}")
             load_controller.close()
             if collector is not None:
                 result["fps_summary"] = result["fps_summary"] or collector.build_summary()
@@ -253,6 +326,8 @@ def _run_performance_scenario(
     write_markdown(results_dir / "summary.md", build_performance_summary(result))
     if result["status"] == "passed":
         emit_status(f"performance scenario '{scenario.name}' finished successfully")
+    elif result["status"] == "interrupted":
+        emit_status(f"performance scenario '{scenario.name}' wrote partial results after interruption")
     return result
 
 
@@ -280,7 +355,7 @@ def run_performance_test(args) -> int:
             results_dir=results_dir,
             host_environment=host_environment,
         )
-        return 0 if result["status"] == "passed" else 1
+        return _result_exit_code(result)
 
     aggregate_result = {
         "profile_name": profile.profile_name,
@@ -305,6 +380,9 @@ def run_performance_test(args) -> int:
         )
         scenario_result["result_dir"] = str(scenario_dir.relative_to(results_dir))
         aggregate_result["scenarios"].append(scenario_result)
+        if scenario_result["status"] == "interrupted":
+            aggregate_result["status"] = "interrupted"
+            break
         if scenario_result["status"] != "passed":
             aggregate_result["status"] = "failed"
 
@@ -312,9 +390,11 @@ def run_performance_test(args) -> int:
     write_markdown(results_dir / "summary.md", build_performance_summary(aggregate_result))
     if aggregate_result["status"] == "passed":
         emit_status("all selected performance scenarios finished successfully")
+    elif aggregate_result["status"] == "interrupted":
+        emit_status("performance test interrupted by user, partial results were written")
     else:
         emit_status("one or more performance scenarios failed")
-    return 0 if aggregate_result["status"] == "passed" else 1
+    return _result_exit_code(aggregate_result)
 
 
 def parse_args():
@@ -332,19 +412,18 @@ def parse_args():
     parser.add_argument("--config-file-path", default=None)
     parser.add_argument("--driver-setup", default=None)
     parser.add_argument("--results-dir", required=True)
-    parser.add_argument("--duration", type=float, default=None)
+    parser.add_argument(
+        "--duration",
+        default=None,
+        help="Override scenario duration, supports seconds or suffixes like 15m, 2h, 1d",
+    )
     parser.add_argument("--launch-arg", action="append", default=[], help="Extra KEY=VALUE launch arg")
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    try:
-        return_code = run_performance_test(args)
-    except KeyboardInterrupt:
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        print(f"[{timestamp}] performance test interrupted by user", flush=True)
-        return_code = 130
+    return_code = run_performance_test(args)
     sys.exit(return_code)
 
 
