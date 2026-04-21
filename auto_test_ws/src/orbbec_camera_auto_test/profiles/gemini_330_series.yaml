@@ -400,6 +400,22 @@ performance_topics:
     ideal_fps: 30
 
 performance_scenarios:
+  - name: default
+    description: default launch
+    duration: 240
+    launch_args: {}
+    topics:
+      - name: /camera/color/image_raw
+        type: sensor_msgs/msg/Image
+        mode: message
+        validator: image
+        ideal_fps: 30
+      - name: /camera/depth/image_raw
+        type: sensor_msgs/msg/Image
+        mode: message
+        validator: image
+        ideal_fps: 30
+
   - name: default_with_stress_ng_load
     description: default launch with stress-ng high load to observe dropped frames
     duration: 240
