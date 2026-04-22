@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import json
 import os
 import shlex
@@ -66,6 +67,118 @@ def read_json(path: Path, default: Any) -> Any:
 def write_json(path: Path, payload: Dict[str, Any]) -> None:
     ensure_dir(path.parent)
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=True) + "\n", encoding="utf-8")
+
+
+def _read_latest_csv_row(path: Path) -> Dict[str, str]:
+    if not path.is_file():
+        return {}
+    try:
+        with path.open("rb") as stream:
+            header = stream.readline().decode("utf-8", errors="replace").strip()
+            if not header:
+                return {}
+            stream.seek(0, os.SEEK_END)
+            end = stream.tell()
+            chunk_size = min(8192, end)
+            stream.seek(max(0, end - chunk_size))
+            tail = stream.read().decode("utf-8", errors="replace")
+    except OSError:
+        return {}
+    lines = [line for line in tail.splitlines() if line.strip()]
+    if not lines:
+        return {}
+    if lines[0] == header and len(lines) == 1:
+        return {}
+    last_line = lines[-1]
+    try:
+        headers = next(csv.reader([header]))
+        values = next(csv.reader([last_line]))
+    except csv.Error:
+        return {}
+    return dict(zip(headers, values))
+
+
+def _latest_file(root: Path, name: str) -> Path | None:
+    candidates = [path for path in root.rglob(name) if path.is_file()]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda path: path.stat().st_mtime)
+
+
+def _float_value(payload: Dict[str, str], key: str, default: float = 0.0) -> float:
+    try:
+        return float(payload.get(key, default) or default)
+    except (TypeError, ValueError):
+        return default
+
+
+def _int_value(payload: Dict[str, str], key: str, default: int = 0) -> int:
+    try:
+        return int(float(payload.get(key, default) or default))
+    except (TypeError, ValueError):
+        return default
+
+
+def _format_topic_label(label: str) -> str:
+    if not label:
+        return ""
+    topic = "/" + label.replace("_", "/")
+    return (
+        topic.replace("/image/raw", "/image_raw")
+        .replace("/left/ir", "/left_ir")
+        .replace("/right/ir", "/right_ir")
+    )
+
+
+def build_performance_metrics(run_root: Path) -> Dict[str, Any]:
+    system_path = _latest_file(run_root, "system_usage.csv")
+    fps_path = _latest_file(run_root, "fps.csv")
+    system_row = _read_latest_csv_row(system_path) if system_path else {}
+    fps_row = _read_latest_csv_row(fps_path) if fps_path else {}
+
+    elapsed_seconds = max(
+        _float_value(system_row, "elapsed_seconds"),
+        _float_value(fps_row, "elapsed_seconds"),
+    )
+    topics: List[Dict[str, Any]] = []
+    suffixes = (
+        "_ideal_fps",
+        "_current_fps",
+        "_avg_fps",
+        "_dropped_frames",
+        "_drop_rate",
+    )
+    labels = sorted(
+        {
+            key[: -len(suffix)]
+            for key in fps_row
+            for suffix in suffixes
+            if key.endswith(suffix)
+        }
+    )
+    for label in labels:
+        topics.append(
+            {
+                "label": label,
+                "topic": _format_topic_label(label),
+                "ideal_fps": _float_value(fps_row, f"{label}_ideal_fps"),
+                "current_fps": _float_value(fps_row, f"{label}_current_fps"),
+                "avg_fps": _float_value(fps_row, f"{label}_avg_fps"),
+                "dropped_frames": _int_value(fps_row, f"{label}_dropped_frames"),
+                "drop_rate": _float_value(fps_row, f"{label}_drop_rate"),
+            }
+        )
+
+    return {
+        "available": bool(system_row or fps_row),
+        "elapsed_seconds": elapsed_seconds,
+        "pid_count": _int_value(system_row, "pid_count"),
+        "cpu_percent": _float_value(system_row, "cpu_percent"),
+        "memory_rss_mb": _float_value(system_row, "memory_rss_mb"),
+        "fps_topics": topics,
+        "system_csv": str(system_path) if system_path else "",
+        "fps_csv": str(fps_path) if fps_path else "",
+    }
 
 
 def load_config() -> Dict[str, Any]:
@@ -235,6 +348,7 @@ class TestJob:
             "results_dir": str(self.run_root),
             "command_lines": self.command_lines,
             "shell": self.shell,
+            "performance": build_performance_metrics(self.run_root),
             "log_offset": len(logs),
             "logs": logs[log_offset:],
         }

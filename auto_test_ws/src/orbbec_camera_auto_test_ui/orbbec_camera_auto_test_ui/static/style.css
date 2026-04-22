@@ -410,9 +410,84 @@ textarea:focus {
   padding: 9px 10px;
 }
 
+.performance-panel {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.perf-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.perf-metric {
+  min-width: 0;
+  border: 1px solid #dce3ec;
+  border-radius: 8px;
+  background: var(--surface-soft);
+  padding: 10px;
+}
+
+.perf-metric span {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.perf-metric strong {
+  display: block;
+  margin-top: 5px;
+  color: #243143;
+  font-size: 18px;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.fps-table-wrap {
+  overflow: auto;
+  border: 1px solid #dce3ec;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.fps-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.fps-table th,
+.fps-table td {
+  border-bottom: 1px solid #edf1f5;
+  padding: 8px 9px;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.fps-table th:first-child,
+.fps-table td:first-child {
+  max-width: 260px;
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+}
+
+.fps-table th {
+  background: #f8fafc;
+  color: #445164;
+  font-weight: 900;
+}
+
+.fps-table tr:last-child td {
+  border-bottom: 0;
+}
+
 .log {
   width: 100%;
-  height: 514px;
+  height: 300px;
   margin: 0;
   overflow: auto;
   border: 1px solid #1f2c38;
@@ -558,6 +633,10 @@ textarea:focus {
 
   .grid.two {
     grid-template-columns: 1fr;
+  }
+
+  .perf-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .panel {

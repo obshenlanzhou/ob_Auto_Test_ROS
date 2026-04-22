@@ -147,6 +147,46 @@
             <span id="runMeta"></span>
           </div>
           <div class="command-box" id="commandBox"></div>
+          <section class="performance-panel">
+            <div class="perf-metrics">
+              <div class="perf-metric">
+                <span>压测时间</span>
+                <strong id="perfElapsed">--:--:--</strong>
+              </div>
+              <div class="perf-metric">
+                <span>CPU</span>
+                <strong id="perfCpu">--</strong>
+              </div>
+              <div class="perf-metric">
+                <span>RAM</span>
+                <strong id="perfRam">--</strong>
+              </div>
+              <div class="perf-metric">
+                <span>进程数</span>
+                <strong id="perfPidCount">--</strong>
+              </div>
+            </div>
+
+            <div class="fps-table-wrap">
+              <table class="fps-table">
+                <thead>
+                  <tr>
+                    <th>Topic</th>
+                    <th>当前 FPS</th>
+                    <th>平均 FPS</th>
+                    <th>目标 FPS</th>
+                    <th>丢帧</th>
+                    <th>丢帧率</th>
+                  </tr>
+                </thead>
+                <tbody id="fpsTableBody">
+                  <tr>
+                    <td colspan="6">等待性能压测数据。</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
           <pre id="logOutput" class="log"></pre>
         </section>
       </section>

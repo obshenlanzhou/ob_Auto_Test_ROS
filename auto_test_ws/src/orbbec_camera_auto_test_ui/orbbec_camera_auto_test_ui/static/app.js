@@ -66,6 +66,64 @@ function appendLogs(lines = []) {
   }
 }
 
+function formatDuration(seconds) {
+  const total = Math.max(0, Math.floor(Number(seconds) || 0));
+  const hours = String(Math.floor(total / 3600)).padStart(2, "0");
+  const minutes = String(Math.floor((total % 3600) / 60)).padStart(2, "0");
+  const secs = String(total % 60).padStart(2, "0");
+  return `${hours}:${minutes}:${secs}`;
+}
+
+function formatNumber(value, digits = 1) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "--";
+  return number.toFixed(digits);
+}
+
+function renderPerformance(performance = {}) {
+  $("perfElapsed").textContent = formatDuration(performance.elapsed_seconds);
+  $("perfCpu").textContent = performance.available
+    ? `${formatNumber(performance.cpu_percent, 1)}%`
+    : "--";
+  $("perfRam").textContent = performance.available
+    ? `${formatNumber(performance.memory_rss_mb, 1)} MB`
+    : "--";
+  $("perfPidCount").textContent = performance.available
+    ? String(performance.pid_count || 0)
+    : "--";
+
+  const body = $("fpsTableBody");
+  body.innerHTML = "";
+  const topics = performance.fps_topics || [];
+  if (!topics.length) {
+    const row = document.createElement("tr");
+    const cell = document.createElement("td");
+    cell.colSpan = 6;
+    cell.textContent = performance.available ? "暂无 FPS 采样。" : "等待性能压测数据。";
+    row.appendChild(cell);
+    body.appendChild(row);
+    return;
+  }
+
+  for (const topic of topics) {
+    const row = document.createElement("tr");
+    const values = [
+      topic.topic || topic.label || "",
+      formatNumber(topic.current_fps, 2),
+      formatNumber(topic.avg_fps, 2),
+      formatNumber(topic.ideal_fps, 2),
+      String(topic.dropped_frames || 0),
+      `${formatNumber((topic.drop_rate || 0) * 100, 3)}%`,
+    ];
+    for (const value of values) {
+      const cell = document.createElement("td");
+      cell.textContent = value;
+      row.appendChild(cell);
+    }
+    body.appendChild(row);
+  }
+}
+
 function updateScenarioOptions() {
   const selected = state.profiles.find((profile) => profile.name === $("profile").value);
   state.selectedProfile = selected || null;
@@ -127,6 +185,7 @@ async function pollStatus() {
     if (payload.command_lines) {
       renderCommands(payload.command_lines);
     }
+    renderPerformance(payload.performance || {});
     appendLogs(payload.logs || []);
     state.logOffset = payload.log_offset || state.logOffset;
     if (["passed", "failed", "interrupted"].includes(payload.status)) {

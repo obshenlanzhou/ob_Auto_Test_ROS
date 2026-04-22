@@ -184,6 +184,8 @@ source <页面中填写的 Camera ROS setup.bash 或 setup.zsh>
 results/ui_runs/
 ```
 
+性能压测运行时，UI 会实时读取当前结果目录中的 `system_usage.csv` 和 `fps.csv`，展示已压测时间、CPU 占用、RAM 占用、进程数和各图像话题 FPS。
+
 最近一次 UI 配置会保存到：
 
 ```text
