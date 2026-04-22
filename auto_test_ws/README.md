@@ -19,6 +19,7 @@
 当前统一入口脚本为：
 
 - [run_camera_auto_test.sh](/home/slz/ORBBEC/ob_Auto_Test/auto_test_ws/run_camera_auto_test.sh)
+- [run_camera_auto_test_ui.sh](/home/slz/ORBBEC/ob_Auto_Test/auto_test_ws/run_camera_auto_test_ui.sh)
 
 
 ## 2. 当前目录结构
@@ -26,6 +27,7 @@
 核心文件如下：
 
 - [run_camera_auto_test.sh](/home/slz/ORBBEC/ob_Auto_Test/auto_test_ws/run_camera_auto_test.sh)
+- [run_camera_auto_test_ui.sh](/home/slz/ORBBEC/ob_Auto_Test/auto_test_ws/run_camera_auto_test_ui.sh)
 - [README.md](/home/slz/ORBBEC/ob_Auto_Test/auto_test_ws/README.md)
 - [gemini_330_series.yaml](/home/slz/ORBBEC/ob_Auto_Test/auto_test_ws/src/orbbec_camera_auto_test/profiles/gemini_330_series.yaml)
 - [functional_runner.py](/home/slz/ORBBEC/ob_Auto_Test/auto_test_ws/src/orbbec_camera_auto_test/orbbec_camera_auto_test/functional_runner.py)
@@ -140,9 +142,58 @@ cd /home/slz/ORBBEC/ob_Auto_Test/auto_test_ws
 ```
 
 
-## 7. 常见用法示例
+## 7. Web UI
 
-### 7.1 指定相机名
+项目也提供一个本地 Web UI。这个 UI 不是 ROS2 package，不需要 `colcon build` 或 `ros2 run`。
+
+启动方式：
+
+```bash
+cd /home/slz/ORBBEC/ob_Auto_Test/auto_test_ws
+./run_camera_auto_test_ui.sh
+```
+
+浏览器访问：
+
+```text
+http://127.0.0.1:8000
+```
+
+如需指定监听地址或端口：
+
+```bash
+./run_camera_auto_test_ui.sh --host 127.0.0.1 --port 8001
+```
+
+UI 启动测试时会作为 CLI proxy 执行测试命令，并自动 source：
+
+```bash
+source /opt/ros/humble/setup.bash
+source <页面中填写的 Camera ROS setup.bash 或 setup.zsh>
+```
+
+`Camera ROS setup.bash` 默认会自动填入：
+
+```text
+/home/slz/ORBBEC/orbbecsdk_ros2_v2-main/install/setup.bash
+```
+
+如果使用 `setup.zsh`，UI 后端会切换到 zsh 执行测试命令，并优先 source `/opt/ros/humble/setup.zsh`。UI 会把测试记录写入：
+
+```text
+results/ui_runs/
+```
+
+最近一次 UI 配置会保存到：
+
+```text
+results/ui_config.json
+```
+
+
+## 8. 常见用法示例
+
+### 8.1 指定相机名
 
 ```bash
 ./run_camera_auto_test.sh \
@@ -151,7 +202,7 @@ cd /home/slz/ORBBEC/ob_Auto_Test/auto_test_ws
   --driver-setup /path/to/install/setup.bash
 ```
 
-### 7.2 指定序列号
+### 8.2 指定序列号
 
 ```bash
 ./run_camera_auto_test.sh \
@@ -160,7 +211,7 @@ cd /home/slz/ORBBEC/ob_Auto_Test/auto_test_ws
   --driver-setup /path/to/install/setup.bash
 ```
 
-### 7.3 指定 USB 端口
+### 8.3 指定 USB 端口
 
 ```bash
 ./run_camera_auto_test.sh \
@@ -169,7 +220,7 @@ cd /home/slz/ORBBEC/ob_Auto_Test/auto_test_ws
   --driver-setup /path/to/install/setup.bash
 ```
 
-### 7.4 指定自定义 launch 参数
+### 8.4 指定自定义 launch 参数
 
 例如覆盖分辨率：
 
@@ -183,7 +234,7 @@ cd /home/slz/ORBBEC/ob_Auto_Test/auto_test_ws
   --driver-setup /path/to/install/setup.bash
 ```
 
-### 7.5 自定义结果输出目录
+### 8.5 自定义结果输出目录
 
 ```bash
 ./run_camera_auto_test.sh \
@@ -194,7 +245,7 @@ cd /home/slz/ORBBEC/ob_Auto_Test/auto_test_ws
 ```
 
 
-## 8. 功能测试说明
+## 9. 功能测试说明
 
 功能测试现在按“启动场景”执行。
 
@@ -235,7 +286,7 @@ cd /home/slz/ORBBEC/ob_Auto_Test/auto_test_ws
   - `enable_gyro=true`
 
 
-## 9. 性能压测说明
+## 10. 性能压测说明
 
 性能压测会独立启动一轮干净的 launch，不复用功能测试实例。
 
@@ -264,7 +315,7 @@ cd /home/slz/ORBBEC/ob_Auto_Test/auto_test_ws
 - 性能数值先统计并输出，不做硬阈值拦截
 
 
-## 10. 结果目录说明
+## 11. 结果目录说明
 
 每次运行都会在结果根目录下生成一个时间戳目录：
 
@@ -305,7 +356,7 @@ results/<run_id>/performance/
 - `system_usage.csv`
 
 
-## 11. YAML Profile 说明
+## 12. YAML Profile 说明
 
 当前默认 profile 文件：
 
@@ -328,7 +379,7 @@ results/<run_id>/performance/
 3. 通过 `--profile` 选择对应机型
 
 
-## 12. 可选构建方式
+## 13. 可选构建方式
 
 当前推荐直接使用根目录脚本运行，不强制先构建。
 
@@ -348,7 +399,7 @@ python3 -m orbbec_camera_auto_test.performance_runner --help
 ```
 
 
-## 13. 当前限制
+## 14. 当前限制
 
 当前实现有以下限制：
 
@@ -358,9 +409,9 @@ python3 -m orbbec_camera_auto_test.performance_runner --help
 - YAML profile 目前只提供一个机型模板
 
 
-## 14. 故障排查
+## 15. 故障排查
 
-### 14.1 找不到 ROS2 Humble
+### 15.1 找不到 ROS2 Humble
 
 检查：
 
@@ -368,7 +419,7 @@ python3 -m orbbec_camera_auto_test.performance_runner --help
 ls /opt/ros/humble/setup.bash
 ```
 
-### 14.2 驱动环境无效
+### 15.2 驱动环境无效
 
 检查：
 
@@ -377,7 +428,7 @@ source /path/to/install/setup.bash
 ros2 pkg list | grep orbbec_camera
 ```
 
-### 14.3 相机起不来
+### 15.3 相机起不来
 
 建议先手动验证：
 
@@ -387,7 +438,7 @@ source /path/to/install/setup.bash
 ros2 launch orbbec_camera gemini_330_series.launch.py
 ```
 
-### 14.4 没有生成图像或点云产物
+### 15.4 没有生成图像或点云产物
 
 检查：
 
@@ -396,7 +447,7 @@ ros2 launch orbbec_camera gemini_330_series.launch.py
 - 当前工作目录是否有写权限
 
 
-## 15. 建议运行顺序
+## 16. 建议运行顺序
 
 建议首次联调时按以下顺序：
 

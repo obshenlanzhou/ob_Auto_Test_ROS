@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Orbbec Camera Auto Test</title>
+    <link rel="stylesheet" href="/static/style.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true"></div>
+          <div>
+            <p class="eyebrow">测试控制台</p>
+            <h1>Orbbec Camera Auto Test</h1>
+            <p id="workspacePath">加载工作区...</p>
+          </div>
+        </div>
+        <div class="status-stack">
+          <span>当前状态</span>
+          <div class="status-pill" id="runStatus">idle</div>
+        </div>
+      </header>
+
+      <section class="summary-strip" aria-label="运行概览">
+        <div class="metric">
+          <span>Run ID</span>
+          <strong id="currentRunId">-</strong>
+        </div>
+        <div class="metric">
+          <span>Mode</span>
+          <strong id="currentMode">-</strong>
+        </div>
+        <div class="metric">
+          <span>Profiles</span>
+          <strong id="profileCount">-</strong>
+        </div>
+      </section>
+
+      <section class="layout">
+        <form id="runForm" class="panel controls">
+          <div class="panel-header">
+            <div>
+              <h2>测试配置</h2>
+              <p>环境、模式和 launch 参数</p>
+            </div>
+            <button type="button" class="ghost" id="refreshProfiles">刷新 Profile</button>
+          </div>
+
+          <div class="form-section">
+            <div class="section-title">环境</div>
+            <label>
+              Camera ROS setup
+              <input id="cameraSetup" name="camera_setup" autocomplete="off" placeholder="/home/slz/ORBBEC/orbbecsdk_ros2_v2-main/install/setup.bash" />
+            </label>
+
+            <label>
+              ROS setup
+              <input id="rosSetup" name="ros_setup" autocomplete="off" />
+            </label>
+          </div>
+
+          <div class="form-section">
+            <div class="section-title">测试</div>
+            <div class="grid two">
+              <label>
+                测试模式
+                <select id="mode" name="mode">
+                  <option value="functional">functional</option>
+                  <option value="performance">performance</option>
+                  <option value="all">all</option>
+                </select>
+              </label>
+
+              <label>
+                Profile
+                <select id="profile" name="profile"></select>
+              </label>
+            </div>
+
+            <div class="grid two">
+              <label>
+                Performance scenario
+                <select id="performanceScenario" name="performance_scenario"></select>
+              </label>
+
+              <label>
+                Duration
+                <input id="duration" name="duration" placeholder="300 / 15m / 2h" />
+              </label>
+            </div>
+          </div>
+
+          <div class="form-section">
+            <div class="section-title">相机</div>
+            <div class="grid two">
+              <label>
+                Camera name
+                <input id="cameraName" name="camera_name" placeholder="camera" />
+              </label>
+
+              <label>
+                Serial number
+                <input id="serialNumber" name="serial_number" />
+              </label>
+            </div>
+
+            <div class="grid two">
+              <label>
+                USB port
+                <input id="usbPort" name="usb_port" />
+              </label>
+
+              <label>
+                Config file path
+                <input id="configFilePath" name="config_file_path" />
+              </label>
+            </div>
+          </div>
+
+          <div class="form-section">
+            <div class="section-title">Launch</div>
+            <label>
+              Launch file
+              <input id="launchFile" name="launch_file" />
+            </label>
+
+            <label>
+              Extra launch args
+              <textarea id="launchArgs" name="launch_args" rows="4" placeholder="enable_point_cloud=true"></textarea>
+            </label>
+          </div>
+
+          <div class="actions">
+            <button type="submit" class="primary" id="startButton">开始测试</button>
+            <button type="button" class="danger" id="stopButton">停止测试</button>
+          </div>
+        </form>
+
+        <section class="panel monitor">
+          <div class="panel-header">
+            <div>
+              <h2>运行状态</h2>
+              <p>命令、日志和实时输出</p>
+            </div>
+            <span id="runMeta"></span>
+          </div>
+          <div class="command-box" id="commandBox"></div>
+          <pre id="logOutput" class="log"></pre>
+        </section>
+      </section>
+
+      <section class="layout bottom">
+        <section class="panel">
+          <div class="panel-header">
+            <div>
+              <h2>历史记录</h2>
+              <p>最近的 UI 测试任务</p>
+            </div>
+            <button type="button" class="ghost" id="refreshRuns">刷新</button>
+          </div>
+          <div id="runsList" class="runs-list"></div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-header">
+            <div>
+              <h2>报告预览</h2>
+              <p>result.json 和 summary.md</p>
+            </div>
+            <span id="reportTitle"></span>
+          </div>
+          <div id="reportView" class="report-view">选择一条历史记录查看结果。</div>
+        </section>
+      </section>
+    </main>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>
