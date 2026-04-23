@@ -316,6 +316,29 @@ results/ui_config.json
 - 若相机进程异常退出或采集失败，则判失败
 - 性能数值先统计并输出，不做硬阈值拦截
 
+### 多相机性能压测
+
+多相机压测支持两种资源统计模式：
+
+- `gemini_330_multi_isolated`：对应 `multi_camera.launch.py`，每台相机独立 component container，输出每台相机 CPU/RAM/FPS 和总 CPU/RAM。
+- `gemini_330_multi_shared`：对应 `orbbec_multicamera.launch.py`，多台相机共享 `orbbec_container`，FPS 按相机 topic 统计，CPU/RAM 只统计共享 container 整体。
+
+示例：
+
+```bash
+./run_camera_auto_test.sh \
+  --mode performance \
+  --profile gemini_330_multi_isolated \
+  --duration 300
+
+./run_camera_auto_test.sh \
+  --mode performance \
+  --profile gemini_330_multi_shared \
+  --duration 300
+```
+
+若实际 launch 中相机名称和示例 profile 不一致，请同步修改 profile 中的 `multi_camera.cameras` 和 `multi_camera.topic_templates`。
+
 
 ## 11. 结果目录说明
 

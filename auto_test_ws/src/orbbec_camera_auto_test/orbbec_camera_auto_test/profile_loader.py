@@ -67,6 +67,15 @@ class PerformanceScenarioSpec:
 
 
 @dataclass
+class MultiCameraSpec:
+    enabled: bool = False
+    resource_mode: str = "isolated_containers"
+    container_name: str = ""
+    cameras: List[str] = field(default_factory=list)
+    topic_templates: List[TopicSpec] = field(default_factory=list)
+
+
+@dataclass
 class CameraProfile:
     profile_name: str
     launch_file: str
@@ -74,6 +83,7 @@ class CameraProfile:
     launch_scenarios: List[LaunchScenarioSpec]
     performance_topics: List[TopicSpec]
     performance_scenarios: List[PerformanceScenarioSpec]
+    multi_camera: MultiCameraSpec = field(default_factory=MultiCameraSpec)
 
 
 def _default_timeout(defaults: Dict[str, Any], fallback: float = 30.0) -> float:
@@ -155,6 +165,36 @@ def _external_load_from_dict(data: Dict[str, Any]) -> ExternalLoadSpec:
     )
 
 
+def _camera_name_from_item(item: Any) -> str:
+    if isinstance(item, dict):
+        return str(item.get("name", "")).strip()
+    return str(item).strip()
+
+
+def _multi_camera_from_dict(data: Dict[str, Any], default_timeout: float) -> MultiCameraSpec:
+    if not data:
+        return MultiCameraSpec()
+
+    resource_mode = str(data.get("resource_mode", "isolated_containers"))
+    if resource_mode not in {"isolated_containers", "shared_container"}:
+        raise ValueError(
+            "multi_camera.resource_mode must be isolated_containers or shared_container"
+        )
+    cameras = [
+        camera_name
+        for camera_name in (_camera_name_from_item(item) for item in data.get("cameras", []))
+        if camera_name
+    ]
+    raw_templates = data.get("topic_templates", [])
+    return MultiCameraSpec(
+        enabled=bool(data.get("enabled", True)),
+        resource_mode=resource_mode,
+        container_name=str(data.get("container_name", "")),
+        cameras=cameras,
+        topic_templates=_topics_from_dicts(raw_templates, default_timeout),
+    )
+
+
 def _performance_scenario_from_dict(
     data: Dict[str, Any],
     default_topics: List[Dict[str, Any]],
@@ -203,10 +243,14 @@ def load_camera_profile(profile: str, package_root: Optional[Path] = None) -> Ca
     default_performance_timeout = _default_timeout(performance_topic_defaults)
     legacy_performance_topics = list(data.get("performance_topics", []))
     raw_performance_scenarios = list(data.get("performance_scenarios", []))
+    multi_camera = _multi_camera_from_dict(
+        dict(data.get("multi_camera", {})),
+        default_performance_timeout,
+    )
 
-    if not raw_performance_scenarios and not legacy_performance_topics:
+    if not raw_performance_scenarios and not legacy_performance_topics and not multi_camera.topic_templates:
         raise ValueError(
-            f"Profile {profile_path} must define either performance_topics or performance_scenarios"
+            f"Profile {profile_path} must define performance_topics, performance_scenarios, or multi_camera.topic_templates"
         )
 
     if raw_performance_scenarios:
@@ -241,4 +285,5 @@ def load_camera_profile(profile: str, package_root: Optional[Path] = None) -> Ca
             default_performance_timeout,
         ),
         performance_scenarios=performance_scenarios,
+        multi_camera=multi_camera,
     )

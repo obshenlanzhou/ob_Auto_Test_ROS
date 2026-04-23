@@ -1,0 +1,42 @@
+profile_name: gemini_330_multi_isolated
+launch_file: multi_camera.launch.py
+
+default_launch_args: {}
+
+launch_scenarios: []
+
+performance_topic_defaults:
+  timeout: 15
+
+multi_camera:
+  enabled: true
+  resource_mode: isolated_containers
+  cameras:
+    - name: camera_01
+    - name: camera_02
+  topic_templates:
+    - name: /{camera}/color/image_raw
+      type: sensor_msgs/msg/Image
+      mode: message
+      validator: image
+      ideal_fps_key: color_fps
+    - name: /{camera}/depth/image_raw
+      type: sensor_msgs/msg/Image
+      mode: message
+      validator: image
+      ideal_fps_key: depth_fps
+    - name: /{camera}/left_ir/image_raw
+      type: sensor_msgs/msg/Image
+      mode: message
+      validator: image
+      ideal_fps_key: left_ir_fps
+    - name: /{camera}/right_ir/image_raw
+      type: sensor_msgs/msg/Image
+      mode: message
+      validator: image
+      ideal_fps_key: right_ir_fps
+
+performance_scenarios:
+  - name: default
+    description: Multi-camera stress test with one component container per camera.
+    duration: 300

@@ -98,6 +98,54 @@ def _read_latest_csv_row(path: Path) -> Dict[str, str]:
     return dict(zip(headers, values))
 
 
+def _read_latest_csv_rows(path: Path) -> List[Dict[str, str]]:
+    if not path.is_file():
+        return []
+    try:
+        with path.open("rb") as stream:
+            header = stream.readline().decode("utf-8", errors="replace").strip()
+            if not header:
+                return []
+            stream.seek(0, os.SEEK_END)
+            end = stream.tell()
+            chunk_size = min(32768, end)
+            stream.seek(max(0, end - chunk_size))
+            tail = stream.read().decode("utf-8", errors="replace")
+    except OSError:
+        return []
+
+    lines = [line for line in tail.splitlines() if line.strip()]
+    if not lines:
+        return []
+    if lines[0] == header:
+        lines = lines[1:]
+    try:
+        headers = next(csv.reader([header]))
+    except csv.Error:
+        return []
+
+    rows: List[Dict[str, str]] = []
+    for line in lines:
+        try:
+            values = next(csv.reader([line]))
+        except csv.Error:
+            continue
+        row = dict(zip(headers, values))
+        if row:
+            rows.append(row)
+    if not rows:
+        return []
+
+    latest_elapsed = max(_float_value(row, "elapsed_seconds", -1.0) for row in rows)
+    if latest_elapsed < 0.0:
+        return [rows[-1]]
+    return [
+        row
+        for row in rows
+        if abs(_float_value(row, "elapsed_seconds", -1.0) - latest_elapsed) < 0.0005
+    ]
+
+
 def _latest_file(root: Path, name: str) -> Path | None:
     candidates = [path for path in root.rglob(name) if path.is_file()]
     if not candidates:
@@ -133,8 +181,24 @@ def _format_topic_label(label: str) -> str:
 def build_performance_metrics(run_root: Path) -> Dict[str, Any]:
     system_path = _latest_file(run_root, "system_usage.csv")
     fps_path = _latest_file(run_root, "fps.csv")
-    system_row = _read_latest_csv_row(system_path) if system_path else {}
+    system_rows = _read_latest_csv_rows(system_path) if system_path else []
+    system_row = system_rows[-1] if system_rows else {}
     fps_row = _read_latest_csv_row(fps_path) if fps_path else {}
+    preferred_system_row = next(
+        (
+            row
+            for row in system_rows
+            if row.get("scope") == "total" and row.get("camera_name") == "all"
+        ),
+        None,
+    )
+    if preferred_system_row is None:
+        preferred_system_row = next(
+            (row for row in system_rows if row.get("scope") == "shared_container"),
+            None,
+        )
+    if preferred_system_row is None:
+        preferred_system_row = system_row
 
     elapsed_seconds = max(
         _float_value(system_row, "elapsed_seconds"),
@@ -169,12 +233,30 @@ def build_performance_metrics(run_root: Path) -> Dict[str, Any]:
             }
         )
 
+    system_scopes: List[Dict[str, Any]] = []
+    for row in system_rows:
+        scope = row.get("scope", "")
+        camera_name = row.get("camera_name", "")
+        if not scope and not camera_name:
+            continue
+        system_scopes.append(
+            {
+                "scope": scope,
+                "camera_name": camera_name,
+                "label": f"{scope}:{camera_name}" if scope and camera_name else camera_name or scope,
+                "pid_count": _int_value(row, "pid_count"),
+                "cpu_percent": _float_value(row, "cpu_percent"),
+                "memory_rss_mb": _float_value(row, "memory_rss_mb"),
+            }
+        )
+
     return {
         "available": bool(system_row or fps_row),
         "elapsed_seconds": elapsed_seconds,
-        "pid_count": _int_value(system_row, "pid_count"),
-        "cpu_percent": _float_value(system_row, "cpu_percent"),
-        "memory_rss_mb": _float_value(system_row, "memory_rss_mb"),
+        "pid_count": _int_value(preferred_system_row, "pid_count"),
+        "cpu_percent": _float_value(preferred_system_row, "cpu_percent"),
+        "memory_rss_mb": _float_value(preferred_system_row, "memory_rss_mb"),
+        "system_scopes": system_scopes,
         "fps_topics": topics,
         "system_csv": str(system_path) if system_path else "",
         "fps_csv": str(fps_path) if fps_path else "",

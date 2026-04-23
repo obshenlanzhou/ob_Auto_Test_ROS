@@ -92,6 +92,36 @@ function renderPerformance(performance = {}) {
     ? String(performance.pid_count || 0)
     : "--";
 
+  const systemBody = $("systemTableBody");
+  systemBody.innerHTML = "";
+  const scopes = (performance.system_scopes || []).filter(
+    (scope) => !(scope.scope === "total" && scope.camera_name === "all")
+  );
+  if (!scopes.length) {
+    const row = document.createElement("tr");
+    const cell = document.createElement("td");
+    cell.colSpan = 4;
+    cell.textContent = performance.available ? "暂无资源明细。" : "等待资源采样。";
+    row.appendChild(cell);
+    systemBody.appendChild(row);
+  } else {
+    for (const scope of scopes) {
+      const row = document.createElement("tr");
+      const values = [
+        scope.label || scope.camera_name || scope.scope || "",
+        `${formatNumber(scope.cpu_percent, 2)}%`,
+        `${formatNumber(scope.memory_rss_mb, 1)} MB`,
+        String(scope.pid_count || 0),
+      ];
+      for (const value of values) {
+        const cell = document.createElement("td");
+        cell.textContent = value;
+        row.appendChild(cell);
+      }
+      systemBody.appendChild(row);
+    }
+  }
+
   const body = $("fpsTableBody");
   body.innerHTML = "";
   const topics = performance.fps_topics || [];

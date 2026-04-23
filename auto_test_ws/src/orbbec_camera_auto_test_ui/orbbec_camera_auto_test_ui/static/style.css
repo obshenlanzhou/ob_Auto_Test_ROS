@@ -446,6 +446,7 @@ textarea:focus {
   overflow-wrap: anywhere;
 }
 
+.system-table-wrap,
 .fps-table-wrap {
   overflow: auto;
   border: 1px solid #dce3ec;
@@ -453,12 +454,19 @@ textarea:focus {
   background: #ffffff;
 }
 
+.system-table-wrap {
+  margin-bottom: 12px;
+}
+
+.system-table,
 .fps-table {
   width: 100%;
   border-collapse: collapse;
   font-size: 12px;
 }
 
+.system-table th,
+.system-table td,
 .fps-table th,
 .fps-table td {
   border-bottom: 1px solid #edf1f5;
@@ -467,6 +475,8 @@ textarea:focus {
   white-space: nowrap;
 }
 
+.system-table th:first-child,
+.system-table td:first-child,
 .fps-table th:first-child,
 .fps-table td:first-child {
   max-width: 260px;
@@ -475,12 +485,14 @@ textarea:focus {
   text-overflow: ellipsis;
 }
 
+.system-table th,
 .fps-table th {
   background: #f8fafc;
   color: #445164;
   font-weight: 900;
 }
 
+.system-table tr:last-child td,
 .fps-table tr:last-child td {
   border-bottom: 0;
 }

@@ -13,8 +13,8 @@ from .environment_info import collect_camera_environment, collect_host_environme
 from .functional_topics import run_topic_checks
 from .performance_fps import TopicFpsCollector
 from .performance_load import ExternalLoadController
-from .performance_system import ProcessTreeSampler
-from .profile_loader import PerformanceScenarioSpec, load_camera_profile
+from .performance_system import MultiCameraSystemSampler, ProcessTreeSampler
+from .profile_loader import PerformanceScenarioSpec, TopicSpec, load_camera_profile
 from .reporter import append_log, build_performance_summary, ensure_dir, write_json, write_markdown
 from .ros_utils import RosHarness, resolve_service_type
 from .session import TestSession
@@ -103,6 +103,13 @@ def _wait_for_camera_ready(
     emit_status(f"launch is ready for camera '{camera_name}'")
 
 
+def _wait_for_cameras_ready(
+    session: TestSession, harness: RosHarness, camera_names: list[str], emit_status
+) -> None:
+    for camera_name in camera_names:
+        _wait_for_camera_ready(session, harness, camera_name, emit_status)
+
+
 def _scenario_duration(args, scenario: PerformanceScenarioSpec) -> float:
     if args.duration is not None:
         return _parse_duration_value(args.duration)
@@ -159,6 +166,79 @@ def _scenario_result_payload(
     }
 
 
+def _multi_camera_result_payload(
+    profile_name: str,
+    launch_file: str,
+    camera_names: list[str],
+    resource_mode: str,
+    container_name: str,
+    scenario: PerformanceScenarioSpec,
+    launch_args: Dict[str, Any],
+    duration_seconds: float,
+    host_environment: Dict[str, Any],
+) -> Dict[str, Any]:
+    return {
+        "profile_name": profile_name,
+        "scenario_name": scenario.name,
+        "scenario_description": scenario.description,
+        "launch_file": launch_file,
+        "camera_name": ",".join(camera_names),
+        "camera_names": list(camera_names),
+        "resource_mode": resource_mode,
+        "container_name": container_name,
+        "duration_seconds": duration_seconds,
+        "launch_args": dict(launch_args),
+        "load": asdict(scenario.load) if scenario.load is not None else {},
+        "status": "passed",
+        "fps_summary": {},
+        "system_summary": {},
+        "environment": {
+            "host": host_environment,
+            "cameras": {},
+            "resource_attribution": {
+                "mode": resource_mode,
+                "per_camera_cpu_ram": resource_mode == "isolated_containers",
+                "container_name": container_name,
+            },
+        },
+    }
+
+
+def _format_topic_name(template: str, camera_name: str) -> str:
+    return (
+        template.replace("{camera}", camera_name)
+        .replace("{camera_name}", camera_name)
+        .replace("${camera}", camera_name)
+        .replace("${camera_name}", camera_name)
+    )
+
+
+def _expand_multi_camera_topics(profile, scenario: PerformanceScenarioSpec) -> list[TopicSpec]:
+    multi_camera = profile.multi_camera
+    template_specs = scenario.topics or multi_camera.topic_templates
+    topics: list[TopicSpec] = []
+    for camera_name in multi_camera.cameras:
+        for spec in template_specs:
+            topics.append(
+                TopicSpec(
+                    name=_format_topic_name(spec.name, camera_name),
+                    type=spec.type,
+                    mode=spec.mode,
+                    validator=spec.validator,
+                    paired_topic=(
+                        _format_topic_name(spec.paired_topic, camera_name)
+                        if spec.paired_topic
+                        else None
+                    ),
+                    timeout=spec.timeout,
+                    qos=spec.qos,
+                    ideal_fps_key=spec.ideal_fps_key,
+                    ideal_fps=spec.ideal_fps,
+                )
+            )
+    return topics
+
+
 def _result_exit_code(result: Dict[str, Any]) -> int:
     status = result.get("status")
     if status == "passed":
@@ -194,9 +274,25 @@ def _run_performance_scenario(
     launch_args = dict(base_launch_args)
     launch_args.update(scenario.launch_args)
     camera_name = str(launch_args.get("camera_name", "camera"))
+    multi_camera = profile.multi_camera
+    is_multi_camera = bool(multi_camera.enabled and multi_camera.cameras)
+    camera_names = list(multi_camera.cameras) if is_multi_camera else [camera_name]
+    performance_topics = (
+        _expand_multi_camera_topics(profile, scenario) if is_multi_camera else scenario.topics
+    )
+    resource_mode = multi_camera.resource_mode if is_multi_camera else ""
+    container_name = multi_camera.container_name if is_multi_camera else ""
     duration_seconds = _scenario_duration(args, scenario)
     emit_status(f"performance scenario '{scenario.name}' target launch: {launch_file}")
-    emit_status(f"performance scenario '{scenario.name}' camera name: {camera_name}")
+    if is_multi_camera:
+        emit_status(
+            f"performance scenario '{scenario.name}' cameras: {', '.join(camera_names)}"
+        )
+        emit_status(
+            f"performance scenario '{scenario.name}' resource mode: {resource_mode}"
+        )
+    else:
+        emit_status(f"performance scenario '{scenario.name}' camera name: {camera_name}")
     emit_status(
         f"performance scenario '{scenario.name}' duration: {_format_duration_cn(duration_seconds)}"
     )
@@ -210,20 +306,36 @@ def _run_performance_scenario(
             "description": scenario.description,
             "launch_file": launch_file,
             "launch_args": launch_args,
+            "camera_names": camera_names,
+            "resource_mode": resource_mode,
+            "container_name": container_name,
             "duration_seconds": duration_seconds,
             "load": asdict(scenario.load) if scenario.load is not None else {},
         },
     )
 
-    result = _scenario_result_payload(
-        profile.profile_name,
-        launch_file,
-        camera_name,
-        scenario,
-        launch_args,
-        duration_seconds,
-        host_environment,
-    )
+    if is_multi_camera:
+        result = _multi_camera_result_payload(
+            profile.profile_name,
+            launch_file,
+            camera_names,
+            resource_mode,
+            container_name,
+            scenario,
+            launch_args,
+            duration_seconds,
+            host_environment,
+        )
+    else:
+        result = _scenario_result_payload(
+            profile.profile_name,
+            launch_file,
+            camera_name,
+            scenario,
+            launch_args,
+            duration_seconds,
+            host_environment,
+        )
 
     with RosHarness(_safe_harness_name(scenario.name)) as harness:
         try:
@@ -250,13 +362,20 @@ def _run_performance_scenario(
         try:
             emit_status(f"starting clean performance launch for scenario '{scenario.name}'")
             session.start()
-            _wait_for_camera_ready(session, harness, camera_name, emit_status)
-            result["environment"]["camera"] = collect_camera_environment(
-                harness, camera_name, launch_file, launch_args
-            )
+            if is_multi_camera:
+                _wait_for_cameras_ready(session, harness, camera_names, emit_status)
+                for current_camera in camera_names:
+                    result["environment"]["cameras"][current_camera] = collect_camera_environment(
+                        harness, current_camera, launch_file, launch_args
+                    )
+            else:
+                _wait_for_camera_ready(session, harness, camera_name, emit_status)
+                result["environment"]["camera"] = collect_camera_environment(
+                    harness, camera_name, launch_file, launch_args
+                )
             emit_status(f"warming up performance topics for scenario '{scenario.name}'")
             warmup_results = run_topic_checks(
-                harness, scenario.topics, performance_log_path, emit_status=emit_status
+                harness, performance_topics, performance_log_path, emit_status=emit_status
             )
             if any(item["status"] == "failed" for item in warmup_results):
                 failed_topics = [item["name"] for item in warmup_results if item["status"] == "failed"]
@@ -265,13 +384,22 @@ def _run_performance_scenario(
             emit_status(f"starting FPS collector for scenario '{scenario.name}'")
             collector = TopicFpsCollector(
                 harness.node,
-                scenario.topics,
+                performance_topics,
                 fps_csv_path,
                 launch_args=launch_args,
             )
             for line in collector.describe_topics():
                 emit_status(line)
-            sampler = ProcessTreeSampler(session, system_csv_path)
+            if is_multi_camera:
+                sampler = MultiCameraSystemSampler(
+                    session,
+                    system_csv_path,
+                    camera_names=camera_names,
+                    resource_mode=resource_mode,
+                    container_name=container_name,
+                )
+            else:
+                sampler = ProcessTreeSampler(session, system_csv_path)
 
             deadline = time.monotonic() + duration_seconds
             next_system_sample = time.monotonic()
@@ -284,10 +412,23 @@ def _run_performance_scenario(
                 load_controller.update(elapsed, duration_seconds)
                 if current_time >= next_system_sample:
                     snapshot = sampler.sample(elapsed)
-                    append_log(
-                        performance_log_path,
-                        f"[PERF] elapsed={elapsed:.2f}s cpu={snapshot['cpu_percent']:.2f} rss_mb={snapshot['memory_rss_mb']:.2f}",
-                    )
+                    if is_multi_camera:
+                        parts = [
+                            (
+                                f"{scope}:{name} cpu={item['cpu_percent']:.2f} "
+                                f"rss_mb={item['memory_rss_mb']:.2f}"
+                            )
+                            for scope, name, item in snapshot
+                        ]
+                        append_log(
+                            performance_log_path,
+                            f"[PERF] elapsed={elapsed:.2f}s " + "; ".join(parts),
+                        )
+                    else:
+                        append_log(
+                            performance_log_path,
+                            f"[PERF] elapsed={elapsed:.2f}s cpu={snapshot['cpu_percent']:.2f} rss_mb={snapshot['memory_rss_mb']:.2f}",
+                        )
                     next_system_sample = current_time + 1.0
                 if current_time >= next_progress_log:
                     emit_status(f"performance elapsed: {_format_hms(elapsed)}")

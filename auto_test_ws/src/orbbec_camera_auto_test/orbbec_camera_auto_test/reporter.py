@@ -180,7 +180,11 @@ def build_performance_summary(result: Dict[str, Any]) -> List[str]:
     environment = result.get("environment", {})
     host_environment = environment.get("host", {})
     camera_environment = environment.get("camera", {})
+    camera_environments = environment.get("cameras", {})
+    resource_attribution = environment.get("resource_attribution", {})
     launch_args = camera_environment.get("launch_args", {})
+    if not launch_args:
+        launch_args = result.get("launch_args", {})
 
     lines = [
         f"# Performance Test Summary: {result['profile_name']}"
@@ -208,19 +212,64 @@ def build_performance_summary(result: Dict[str, Any]) -> List[str]:
     lines.append(
         f"- ROS distro: `{_stringify_markdown_value(host_environment.get('ros_distro'))}`"
     )
-    lines.append(
-        f"- Camera model: `{_stringify_markdown_value(camera_environment.get('camera_model'))}`"
-    )
-    lines.append(
-        f"- ob_sdk_version: `{_stringify_markdown_value(camera_environment.get('ob_sdk_version'))}`"
-    )
-    lines.append(
-        f"- ros_sdk_version: `{_stringify_markdown_value(camera_environment.get('ros_sdk_version'))}`"
-    )
-    lines.append(
-        f"- Firmware version: `{_stringify_markdown_value(camera_environment.get('firmware_version'))}`"
-    )
+    if camera_environments:
+        lines.append(f"- Cameras: `{_stringify_markdown_value(result.get('camera_names'))}`")
+        lines.append(
+            f"- Resource mode: `{_stringify_markdown_value(result.get('resource_mode'))}`"
+        )
+        if resource_attribution:
+            per_camera = resource_attribution.get("per_camera_cpu_ram")
+            lines.append(
+                f"- Per-camera CPU/RAM: `{_stringify_markdown_value(per_camera)}`"
+            )
+            if not per_camera:
+                lines.append(
+                    "- Resource attribution note: cameras are loaded into a shared component container."
+                )
+    else:
+        lines.append(
+            f"- Camera model: `{_stringify_markdown_value(camera_environment.get('camera_model'))}`"
+        )
+        lines.append(
+            f"- ob_sdk_version: `{_stringify_markdown_value(camera_environment.get('ob_sdk_version'))}`"
+        )
+        lines.append(
+            f"- ros_sdk_version: `{_stringify_markdown_value(camera_environment.get('ros_sdk_version'))}`"
+        )
+        lines.append(
+            f"- Firmware version: `{_stringify_markdown_value(camera_environment.get('firmware_version'))}`"
+        )
     lines.append("")
+
+    if camera_environments:
+        lines.append("## Cameras")
+        lines.append("")
+        camera_rows: List[List[Any]] = []
+        for camera_name, camera_payload in camera_environments.items():
+            camera_rows.append(
+                [
+                    camera_name,
+                    camera_payload.get("camera_model", ""),
+                    camera_payload.get("serial_number", ""),
+                    camera_payload.get("firmware_version", ""),
+                    camera_payload.get("ob_sdk_version", ""),
+                    camera_payload.get("ros_sdk_version", ""),
+                ]
+            )
+        lines.extend(
+            _markdown_table(
+                [
+                    "Camera",
+                    "Model",
+                    "Serial Number",
+                    "Firmware",
+                    "OB SDK",
+                    "ROS SDK",
+                ],
+                camera_rows,
+            )
+        )
+        lines.append("")
 
     if launch_args:
         lines.append("## Camera Configuration")
@@ -265,25 +314,50 @@ def build_performance_summary(result: Dict[str, Any]) -> List[str]:
     system = result.get("system_summary", {})
     lines.append("## Camera Process Tree Usage")
     lines.append("")
-    lines.extend(
-        _markdown_table(
-            ["Metric", "Average", "Minimum", "Maximum"],
-            [
+    if any(isinstance(value, dict) for value in system.values()):
+        system_rows: List[List[Any]] = []
+        for scope_name, payload in system.items():
+            system_rows.append(
                 [
-                    "CPU Usage (%)",
-                    f"{system.get('avg_cpu_percent', 0.0):.2f}",
-                    f"{system.get('min_cpu_percent', 0.0):.2f}",
-                    f"{system.get('max_cpu_percent', 0.0):.2f}",
-                ],
+                    scope_name,
+                    f"{payload.get('avg_cpu_percent', 0.0):.2f}",
+                    f"{payload.get('max_cpu_percent', 0.0):.2f}",
+                    f"{payload.get('avg_memory_rss_mb', 0.0):.2f}",
+                    f"{payload.get('max_memory_rss_mb', 0.0):.2f}",
+                ]
+            )
+        lines.extend(
+            _markdown_table(
                 [
-                    "RAM Usage (MB)",
-                    f"{system.get('avg_memory_rss_mb', 0.0):.2f}",
-                    f"{system.get('min_memory_rss_mb', 0.0):.2f}",
-                    f"{system.get('max_memory_rss_mb', 0.0):.2f}",
+                    "Scope",
+                    "Avg CPU (%)",
+                    "Max CPU (%)",
+                    "Avg RAM (MB)",
+                    "Max RAM (MB)",
                 ],
-            ],
+                system_rows,
+            )
         )
-    )
+    else:
+        lines.extend(
+            _markdown_table(
+                ["Metric", "Average", "Minimum", "Maximum"],
+                [
+                    [
+                        "CPU Usage (%)",
+                        f"{system.get('avg_cpu_percent', 0.0):.2f}",
+                        f"{system.get('min_cpu_percent', 0.0):.2f}",
+                        f"{system.get('max_cpu_percent', 0.0):.2f}",
+                    ],
+                    [
+                        "RAM Usage (MB)",
+                        f"{system.get('avg_memory_rss_mb', 0.0):.2f}",
+                        f"{system.get('min_memory_rss_mb', 0.0):.2f}",
+                        f"{system.get('max_memory_rss_mb', 0.0):.2f}",
+                    ],
+                ],
+            )
+        )
     return lines
 
 

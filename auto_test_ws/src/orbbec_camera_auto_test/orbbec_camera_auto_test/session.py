@@ -7,7 +7,7 @@ import subprocess
 import threading
 import time
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional, Set
+from typing import Any, Callable, Dict, Iterable, Optional, Set
 
 import psutil
 
@@ -344,6 +344,46 @@ class TestSession:
             return False
         return any(hint in name or hint in cmdline for hint in CAMERA_PROCESS_HINTS)
 
+    def _process_text(self, pid: int) -> str:
+        process = self._get_process(pid)
+        if process is None:
+            return ""
+        try:
+            name = process.name() or ""
+            cmdline = " ".join(process.cmdline() or [])
+        except psutil.Error:
+            return ""
+        return f"{name} {cmdline}".lower()
+
+    def _pid_tree_from_roots(self, root_pids: Iterable[int], active_pids: Set[int]) -> Set[int]:
+        pids: Set[int] = set()
+        for pid in sorted(set(root_pids)):
+            process = self._get_process(pid)
+            if process is None:
+                continue
+            pids.add(process.pid)
+            try:
+                for child in process.children(recursive=True):
+                    if child.pid in active_pids:
+                        pids.add(child.pid)
+            except psutil.Error:
+                continue
+        return pids
+
+    def process_pids_matching(self, *needles: str) -> Set[int]:
+        active_pids = self.pid_tree()
+        if not active_pids:
+            return set()
+        normalized_needles = [needle.lower() for needle in needles if needle]
+        if not normalized_needles:
+            return set()
+        root_pids = {
+            pid
+            for pid in active_pids
+            if any(needle in self._process_text(pid) for needle in normalized_needles)
+        }
+        return self._pid_tree_from_roots(root_pids, active_pids)
+
     def camera_pid_tree(self) -> Set[int]:
         active_pids = self.pid_tree()
         if not active_pids:
@@ -425,8 +465,73 @@ class TestSession:
             "memory_rss_mb": total_rss / (1024.0 * 1024.0),
         }
 
+    def sample_pid_groups(self, pid_groups: Dict[str, Set[int]]) -> Dict[str, Dict[str, Any]]:
+        active_pids: Set[int] = set()
+        for pids in pid_groups.values():
+            active_pids.update(pids)
+
+        for pid in list(self._process_cache):
+            if pid not in active_pids:
+                self._process_cache.pop(pid, None)
+                self._primed_pids.discard(pid)
+
+        per_pid: Dict[int, Dict[str, Any]] = {}
+        for pid in sorted(active_pids):
+            process = self._get_process(pid)
+            if process is None:
+                continue
+            try:
+                if pid not in self._primed_pids:
+                    process.cpu_percent(interval=None)
+                    self._primed_pids.add(pid)
+                    cpu_percent = 0.0
+                else:
+                    cpu_percent = process.cpu_percent(interval=None)
+                per_pid[pid] = {
+                    "cpu_percent": cpu_percent,
+                    "memory_rss_mb": process.memory_info().rss / (1024.0 * 1024.0),
+                }
+            except psutil.Error:
+                self._process_cache.pop(pid, None)
+                self._primed_pids.discard(pid)
+                continue
+
+        cpu_count = max(psutil.cpu_count() or 1, 1)
+        snapshots: Dict[str, Dict[str, Any]] = {}
+        for group_name, pids in pid_groups.items():
+            group_pids = sorted(pid for pid in pids if pid in per_pid)
+            snapshots[group_name] = {
+                "pid_count": len(group_pids),
+                "pids": group_pids,
+                "cpu_percent": (
+                    sum(per_pid[pid]["cpu_percent"] for pid in group_pids) / cpu_count
+                ),
+                "memory_rss_mb": sum(per_pid[pid]["memory_rss_mb"] for pid in group_pids),
+            }
+        return snapshots
+
     def sample_process_tree(self) -> Dict[str, Any]:
         return self._sample_pid_values(sorted(self.pid_tree()))
 
     def sample_camera_process_tree(self) -> Dict[str, Any]:
         return self._sample_pid_values(sorted(self.camera_pid_tree()))
+
+    def sample_camera_process_groups(self, camera_names: list[str]) -> Dict[str, Dict[str, Any]]:
+        pid_groups: Dict[str, Set[int]] = {}
+        for camera_name in camera_names:
+            needles = [
+                camera_name,
+                f"/{camera_name}",
+                f"__ns:=/{camera_name}",
+                f"namespace:={camera_name}",
+            ]
+            pid_groups[camera_name] = self.process_pids_matching(*needles)
+        return self.sample_pid_groups(pid_groups)
+
+    def sample_named_container_tree(self, container_name: str) -> Dict[str, Any]:
+        if not container_name:
+            return self.sample_camera_process_tree()
+        snapshots = self.sample_pid_groups(
+            {"shared_container": self.process_pids_matching(container_name)}
+        )
+        return snapshots["shared_container"]
