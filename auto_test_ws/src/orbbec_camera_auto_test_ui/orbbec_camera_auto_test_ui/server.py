@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import mimetypes
+import shutil
 import sys
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -171,6 +172,17 @@ def get_run(run_id: str) -> Dict[str, Any]:
     }
 
 
+def delete_run(run_id: str) -> tuple[Dict[str, Any], HTTPStatus]:
+    run_dir = (UI_RESULTS_ROOT / run_id).resolve()
+    root = UI_RESULTS_ROOT.resolve()
+    if run_dir == root or root not in [run_dir, *run_dir.parents] or not run_dir.is_dir():
+        raise FileNotFoundError(run_id)
+    if MANAGER.is_active_run(run_id):
+        return {"error": "cannot delete a running test"}, HTTPStatus.CONFLICT
+    shutil.rmtree(run_dir)
+    return {"deleted": run_id, "results_dir": str(run_dir)}, HTTPStatus.OK
+
+
 class UiHandler(BaseHTTPRequestHandler):
     server_version = "OrbbecAutoTestUI/0.1"
 
@@ -272,6 +284,20 @@ class UiHandler(BaseHTTPRequestHandler):
                 self._send_json({"error": "not found"}, status=HTTPStatus.NOT_FOUND)
         except json.JSONDecodeError as exc:
             self._send_json({"error": f"invalid json: {exc}"}, status=HTTPStatus.BAD_REQUEST)
+        except Exception as exc:  # noqa: BLE001
+            self._send_json({"error": str(exc)}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+
+    def do_DELETE(self) -> None:  # noqa: N802
+        parsed = urlparse(self.path)
+        try:
+            if parsed.path.startswith("/api/runs/"):
+                run_id = unquote(parsed.path.removeprefix("/api/runs/"))
+                response, status = delete_run(run_id)
+                self._send_json(response, status=status)
+            else:
+                self._send_json({"error": "not found"}, status=HTTPStatus.NOT_FOUND)
+        except FileNotFoundError:
+            self._send_json({"error": "not found"}, status=HTTPStatus.NOT_FOUND)
         except Exception as exc:  # noqa: BLE001
             self._send_json({"error": str(exc)}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
 

@@ -530,7 +530,18 @@ textarea:focus {
   box-shadow: 0 8px 20px rgba(31, 39, 51, 0.07);
 }
 
-.run-item button {
+.run-actions {
+  grid-row: span 2;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.run-actions button {
+  min-width: 60px;
+}
+
+.run-item > button {
   grid-row: span 2;
 }
 

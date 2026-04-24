@@ -474,6 +474,15 @@ class RunManager:
             return {"status": "idle", "logs": [], "log_offset": 0}
         return job.snapshot(log_offset=log_offset)
 
+    def is_active_run(self, run_id: str) -> bool:
+        with self._lock:
+            job = self._current
+        return (
+            job is not None
+            and job.run_id == run_id
+            and job.status in {"starting", "running", "stopping"}
+        )
+
     def start(self, payload: Dict[str, Any]) -> tuple[int, Dict[str, Any]]:
         with self._lock:
             if self._current is not None and self._current.status in {"starting", "running", "stopping"}:

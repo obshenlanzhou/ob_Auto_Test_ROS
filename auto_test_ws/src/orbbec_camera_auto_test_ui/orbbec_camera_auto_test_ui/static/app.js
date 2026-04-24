@@ -314,6 +314,22 @@ async function stopRun() {
   }
 }
 
+async function deleteRun(runId) {
+  if (!window.confirm(`删除历史记录 ${runId}？`)) {
+    return;
+  }
+  try {
+    await api(`/api/runs/${encodeURIComponent(runId)}`, { method: "DELETE" });
+    if ($("reportTitle").textContent === runId) {
+      $("reportTitle").textContent = "";
+      $("reportView").textContent = "选择一条历史记录查看结果。";
+    }
+    await loadRuns();
+  } catch (error) {
+    appendLogs([`[UI] delete failed: ${error.message}`]);
+  }
+}
+
 function runItem(run) {
   const item = document.createElement("div");
   item.className = "run-item";
@@ -332,13 +348,23 @@ function runItem(run) {
   title.append(" ");
   title.appendChild(badge);
 
-  const button = document.createElement("button");
-  button.type = "button";
-  button.className = "ghost";
-  button.textContent = "查看";
-  button.addEventListener("click", () => loadRunDetail(run.run_id));
+  const actions = document.createElement("div");
+  actions.className = "run-actions";
 
-  item.append(title, button, subtitle);
+  const viewButton = document.createElement("button");
+  viewButton.type = "button";
+  viewButton.className = "ghost";
+  viewButton.textContent = "查看";
+  viewButton.addEventListener("click", () => loadRunDetail(run.run_id));
+
+  const deleteButton = document.createElement("button");
+  deleteButton.type = "button";
+  deleteButton.className = "danger";
+  deleteButton.textContent = "删除";
+  deleteButton.addEventListener("click", () => deleteRun(run.run_id));
+
+  actions.append(viewButton, deleteButton);
+  item.append(title, actions, subtitle);
   return item;
 }
 
