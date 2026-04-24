@@ -207,7 +207,7 @@ def run_functional_test(args) -> int:
     emit_status = _make_status_logger(stage_log_path)
 
     emit_status(f"loading functional profile '{args.profile}'")
-    profile = load_camera_profile(args.profile)
+    profile = load_camera_profile(args.profile, profile_type="functional")
     launch_file = args.launch_file or profile.launch_file
     base_launch_args = _build_launch_args(profile, args)
     camera_name = str(base_launch_args.get("camera_name", "camera"))

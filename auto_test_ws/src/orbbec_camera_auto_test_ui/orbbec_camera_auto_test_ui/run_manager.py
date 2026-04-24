@@ -270,12 +270,27 @@ def load_config() -> Dict[str, Any]:
         "camera_setup": config.get("camera_setup") or DEFAULT_CAMERA_SETUP,
         "host": config.get("host") or "127.0.0.1",
         "port": int(config.get("port") or 8000),
+        "mode": config.get("mode") or "functional",
+        "functional_profile": config.get("functional_profile") or "gemini_330_series",
+        "performance_profile": config.get("performance_profile") or "gemini_330_series",
+        "performance_scenario": config.get("performance_scenario") or "",
+        "duration": config.get("duration") or "",
     }
 
 
 def save_config(payload: Dict[str, Any]) -> Dict[str, Any]:
     config = load_config()
-    for key in ("ros_setup", "camera_setup", "host", "port"):
+    for key in (
+        "ros_setup",
+        "camera_setup",
+        "host",
+        "port",
+        "mode",
+        "functional_profile",
+        "performance_profile",
+        "performance_scenario",
+        "duration",
+    ):
         if key in payload:
             config[key] = payload[key]
     write_json(CONFIG_PATH, config)
@@ -305,7 +320,9 @@ def _build_runner_args(payload: Dict[str, Any], mode: str, results_dir: Path) ->
         else "orbbec_camera_auto_test.performance_runner"
     )
     args = ["python3", "-m", module]
-    _append_arg(args, "--profile", payload.get("profile") or "gemini_330_series")
+    profile_key = f"{mode}_profile"
+    profile = payload.get(profile_key) or payload.get("profile") or "gemini_330_series"
+    _append_arg(args, "--profile", profile)
     _append_arg(args, "--results-dir", str(results_dir))
     _append_arg(args, "--launch-file", payload.get("launch_file"))
     _append_arg(args, "--camera-name", payload.get("camera_name"))
@@ -374,6 +391,15 @@ def validate_run_payload(payload: Dict[str, Any]) -> List[str]:
     mode = _safe_text(payload.get("mode")) or "functional"
     if mode not in {"functional", "performance", "all"}:
         errors.append(f"unsupported mode: {mode}")
+
+    if mode in {"functional", "all"} and not _safe_text(
+        payload.get("functional_profile") or payload.get("profile")
+    ):
+        errors.append("functional profile is required")
+    if mode in {"performance", "all"} and not _safe_text(
+        payload.get("performance_profile") or payload.get("profile")
+    ):
+        errors.append("performance profile is required")
 
     ros_setup = Path(_safe_text(payload.get("ros_setup")) or DEFAULT_ROS_SETUP)
     if not ros_setup.is_file():
@@ -461,6 +487,15 @@ class RunManager:
             {
                 "ros_setup": payload.get("ros_setup") or DEFAULT_ROS_SETUP,
                 "camera_setup": payload.get("camera_setup") or DEFAULT_CAMERA_SETUP,
+                "mode": payload.get("mode") or "functional",
+                "functional_profile": payload.get("functional_profile")
+                or payload.get("profile")
+                or "gemini_330_series",
+                "performance_profile": payload.get("performance_profile")
+                or payload.get("profile")
+                or "gemini_330_series",
+                "performance_scenario": payload.get("performance_scenario") or "",
+                "duration": payload.get("duration") or "",
             }
         )
         payload = {**payload, **config}

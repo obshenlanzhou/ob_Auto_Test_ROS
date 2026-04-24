@@ -527,7 +527,7 @@ def run_performance_test(args) -> int:
     emit_status = _make_status_logger(root_stage_log_path, root_log_path)
 
     emit_status(f"loading performance profile '{args.profile}'")
-    profile = load_camera_profile(args.profile)
+    profile = load_camera_profile(args.profile, profile_type="performance")
     launch_file = args.launch_file or profile.launch_file
     base_launch_args = _build_launch_args(profile, args)
     selected_scenarios = _select_performance_scenarios(profile, args.performance_scenario)

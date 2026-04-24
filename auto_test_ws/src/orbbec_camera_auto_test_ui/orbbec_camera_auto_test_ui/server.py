@@ -47,30 +47,45 @@ def _load_yaml(path: Path) -> Dict[str, Any]:
 
 def list_profiles() -> Dict[str, Any]:
     profiles_dir = CORE_PACKAGE_ROOT / "profiles"
-    profiles = []
-    for path in sorted(profiles_dir.glob("*.yaml")):
+    profiles_by_type: Dict[str, Any] = {"functional": [], "performance": []}
+    all_profiles = []
+
+    def append_profile(path: Path, profile_type: str) -> None:
         data = _load_yaml(path)
-        profiles.append(
-            {
-                "name": data.get("profile_name") or path.stem,
-                "path": str(path),
-                "launch_file": data.get("launch_file", ""),
-                "default_launch_args": data.get("default_launch_args", {}),
-                "launch_scenarios": [
-                    item.get("name", "") for item in data.get("launch_scenarios", [])
-                ],
-                "performance_scenarios": [
-                    {
-                        "name": item.get("name", ""),
-                        "description": item.get("description", ""),
-                        "duration": item.get("duration", ""),
-                    }
-                    for item in data.get("performance_scenarios", [])
-                ],
-                "error": data.get("error"),
-            }
-        )
-    return {"profiles": profiles, "profiles_dir": str(profiles_dir)}
+        item = {
+            "name": data.get("profile_name") or path.stem,
+            "type": profile_type,
+            "path": str(path),
+            "launch_file": data.get("launch_file", ""),
+            "default_launch_args": data.get("default_launch_args", {}),
+            "launch_scenarios": [
+                entry.get("name", "") for entry in data.get("launch_scenarios", [])
+            ],
+            "performance_scenarios": [
+                {
+                    "name": entry.get("name", ""),
+                    "description": entry.get("description", ""),
+                    "duration": entry.get("duration", ""),
+                }
+                for entry in data.get("performance_scenarios", [])
+            ],
+            "error": data.get("error"),
+        }
+        profiles_by_type.setdefault(profile_type, []).append(item)
+        all_profiles.append(item)
+
+    for profile_type in ("functional", "performance"):
+        for path in sorted((profiles_dir / profile_type).glob("*.yaml")):
+            append_profile(path, profile_type)
+
+    for path in sorted(profiles_dir.glob("*.yaml")):
+        append_profile(path, "legacy")
+
+    return {
+        "profiles": all_profiles,
+        "profiles_by_type": profiles_by_type,
+        "profiles_dir": str(profiles_dir),
+    }
 
 
 def _find_result_json(run_dir: Path) -> Dict[str, Any]:
@@ -160,6 +175,12 @@ class UiHandler(BaseHTTPRequestHandler):
     server_version = "OrbbecAutoTestUI/0.1"
 
     def log_message(self, format: str, *args: Any) -> None:
+        status = args[1] if len(args) > 1 else ""
+        try:
+            if int(status) < 400:
+                return
+        except (TypeError, ValueError):
+            pass
         print(f"[UI HTTP] {self.address_string()} - {format % args}", file=sys.stderr)
 
     def _send_bytes(

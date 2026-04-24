@@ -1,3 +1,5 @@
+from glob import glob
+
 from setuptools import find_packages, setup
 
 
@@ -11,7 +13,14 @@ setup(
     data_files=[
         ("share/ament_index/resource_index/packages", [f"resource/{package_name}"]),
         (f"share/{package_name}", ["package.xml"]),
-        (f"share/{package_name}/profiles", ["profiles/gemini_330_series.yaml"]),
+        (
+            f"share/{package_name}/profiles/functional",
+            glob("profiles/functional/*.yaml"),
+        ),
+        (
+            f"share/{package_name}/profiles/performance",
+            glob("profiles/performance/*.yaml"),
+        ),
     ],
     install_requires=["setuptools"],
     zip_safe=True,

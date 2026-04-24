@@ -10,7 +10,7 @@
     <main class="shell">
       <header class="topbar">
         <div class="brand">
-          <div class="brand-mark" aria-hidden="true"></div>
+          <img class="brand-mark" src="/static/assets/console-avatar.png" alt="" aria-hidden="true" />
           <div>
             <p class="eyebrow">测试控制台</p>
             <h1>Orbbec Camera Auto Test</h1>
@@ -73,18 +73,25 @@
                 </select>
               </label>
 
-              <label>
-                Profile
-                <select id="profile" name="profile"></select>
+              <label id="functionalProfileField">
+                功能 Profile
+                <select id="functionalProfile" name="functional_profile"></select>
               </label>
             </div>
 
             <div class="grid two">
+              <label id="performanceProfileField">
+                性能 Profile
+                <select id="performanceProfile" name="performance_profile"></select>
+              </label>
+
               <label>
                 Performance scenario
                 <select id="performanceScenario" name="performance_scenario"></select>
               </label>
+            </div>
 
+            <div class="grid two">
               <label>
                 Duration
                 <input id="duration" name="duration" placeholder="300 / 15m / 2h" />

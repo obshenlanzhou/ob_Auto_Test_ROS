@@ -29,7 +29,8 @@
 - [run_camera_auto_test.sh](/home/slz/ORBBEC/ob_Auto_Test/auto_test_ws/run_camera_auto_test.sh)
 - [run_camera_auto_test_ui.sh](/home/slz/ORBBEC/ob_Auto_Test/auto_test_ws/run_camera_auto_test_ui.sh)
 - [README.md](/home/slz/ORBBEC/ob_Auto_Test/auto_test_ws/README.md)
-- [gemini_330_series.yaml](/home/slz/ORBBEC/ob_Auto_Test/auto_test_ws/src/orbbec_camera_auto_test/profiles/gemini_330_series.yaml)
+- [functional/gemini_330_series.yaml](/home/slz/ORBBEC/ob_Auto_Test/auto_test_ws/src/orbbec_camera_auto_test/profiles/functional/gemini_330_series.yaml)
+- [performance/gemini_330_series.yaml](/home/slz/ORBBEC/ob_Auto_Test/auto_test_ws/src/orbbec_camera_auto_test/profiles/performance/gemini_330_series.yaml)
 - [functional_runner.py](/home/slz/ORBBEC/ob_Auto_Test/auto_test_ws/src/orbbec_camera_auto_test/orbbec_camera_auto_test/functional_runner.py)
 - [performance_runner.py](/home/slz/ORBBEC/ob_Auto_Test/auto_test_ws/src/orbbec_camera_auto_test/orbbec_camera_auto_test/performance_runner.py)
 
@@ -186,6 +187,12 @@ results/ui_runs/
 
 性能压测运行时，UI 会实时读取当前结果目录中的 `system_usage.csv` 和 `fps.csv`，展示已压测时间、CPU 占用、RAM 占用、进程数和各图像话题 FPS。
 
+UI 的测试配置会按模式切换：
+
+- `functional`：只选择 `profiles/functional` 下的功能 profile
+- `performance`：只选择 `profiles/performance` 下的性能 profile，并可选择性能场景
+- `all`：分别选择功能 profile 和性能 profile，先执行功能测试，再执行性能压测
+
 最近一次 UI 配置会保存到：
 
 ```text
@@ -257,12 +264,9 @@ results/ui_config.json
 - 一组要检查的 topic
 - 一组要检查的 service
 
-当前 `gemini_330_series.yaml` 里已经定义了这些场景：
+当前 `profiles/functional/gemini_330_series.yaml` 里已经定义了这些场景：
 
 - `default`
-- `extrinsics_enabled`
-- `ir_enabled`
-- `imu_enabled`
 
 ### default 场景
 
@@ -273,20 +277,6 @@ results/ui_config.json
 - 一部分只读服务是否能正常调用
 - `save_images` / `save_point_cloud` 是否能生成文件
 - `/camera/reboot_device` 后是否能恢复
-
-### 其他参数场景
-
-其余场景会在默认参数基础上追加对应启动参数，然后测试该参数组合下的专属话题：
-
-- `extrinsics_enabled`
-  - `enable_publish_extrinsic=true`
-- `ir_enabled`
-  - `enable_left_ir=true`
-  - `enable_right_ir=true`
-- `imu_enabled`
-  - `enable_accel=true`
-  - `enable_gyro=true`
-
 
 ## 10. 性能压测说明
 
@@ -422,11 +412,12 @@ results/<run_id>/performance/
 
 ## 12. YAML Profile 说明
 
-当前默认 profile 文件：
+当前默认 profile 文件按测试类型拆分：
 
-- [gemini_330_series.yaml](/home/slz/ORBBEC/ob_Auto_Test/auto_test_ws/src/orbbec_camera_auto_test/profiles/gemini_330_series.yaml)
+- 功能测试：[functional/gemini_330_series.yaml](/home/slz/ORBBEC/ob_Auto_Test/auto_test_ws/src/orbbec_camera_auto_test/profiles/functional/gemini_330_series.yaml)
+- 性能压测：[performance/gemini_330_series.yaml](/home/slz/ORBBEC/ob_Auto_Test/auto_test_ws/src/orbbec_camera_auto_test/profiles/performance/gemini_330_series.yaml)
 
-该文件负责描述：
+功能 profile 负责描述：
 
 - 使用哪个 launch 文件
 - 默认 launch 参数
@@ -434,13 +425,20 @@ results/<run_id>/performance/
 - 基础服务清单
 - 功能组
 - 副产物服务
+
+性能 profile 负责描述：
+
+- 使用哪个 launch 文件
+- 默认 launch 参数
 - 性能压测关注的话题
+- 压测场景、时长、负载和多相机资源模式
 
 如果后续要支持其他机型，建议做法是：
 
-1. 新增一个新的 profile YAML
-2. 保持主测试逻辑不变
-3. 通过 `--profile` 选择对应机型
+1. 功能差异新增到 `profiles/functional`
+2. 性能/压测场景新增到 `profiles/performance`
+3. 保持主测试逻辑不变
+4. 通过 `--profile` 选择对应机型
 
 
 ## 13. 可选构建方式

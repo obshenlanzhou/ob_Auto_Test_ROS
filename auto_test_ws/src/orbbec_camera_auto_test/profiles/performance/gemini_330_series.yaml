@@ -1,0 +1,111 @@
+profile_name: gemini_330_series
+launch_file: gemini_330_series.launch.py
+
+default_launch_args:
+  camera_name: camera
+  enable_point_cloud: true
+
+performance_topic_defaults:
+  timeout: 10
+
+performance_topics:
+  - name: /camera/color/image_raw
+    type: sensor_msgs/msg/Image
+    mode: message
+    validator: image
+    ideal_fps: 30
+  - name: /camera/depth/image_raw
+    type: sensor_msgs/msg/Image
+    mode: message
+    validator: image
+    ideal_fps: 30
+
+performance_scenarios:
+  - name: default
+    description: default launch
+    duration: 240
+    launch_args: {}
+    topics:
+      - name: /camera/color/image_raw
+        type: sensor_msgs/msg/Image
+        mode: message
+        validator: image
+        ideal_fps: 30
+      - name: /camera/depth/image_raw
+        type: sensor_msgs/msg/Image
+        mode: message
+        validator: image
+        ideal_fps: 30
+
+  - name: default_with_stress_ng_load
+    description: default launch with stress-ng high load to observe dropped frames
+    duration: 240
+    launch_args: {}
+    topics:
+      - name: /camera/color/image_raw
+        type: sensor_msgs/msg/Image
+        mode: message
+        validator: image
+        ideal_fps: 30
+      - name: /camera/depth/image_raw
+        type: sensor_msgs/msg/Image
+        mode: message
+        validator: image
+        ideal_fps: 30
+    load:
+      type: stress-ng
+      workers: 0
+
+  - name: drop_frame_analysis
+    description: enable driver frame timestamp csv and record receiver color and depth frame timestamps for drop-frame analysis
+    duration: 300
+    launch_args:
+      enable_frame_timestamp_csv: true
+      frame_timestamp_csv_file: "{results_dir}/driver_frame_timestamp.csv"
+    frame_timestamps:
+      enabled: true
+      flush_every_rows: 1000
+    topics:
+      - name: /camera/color/image_raw
+        type: sensor_msgs/msg/Image
+        mode: message
+        validator: image
+        ideal_fps: 30
+      - name: /camera/depth/image_raw
+        type: sensor_msgs/msg/Image
+        mode: message
+        validator: image
+        ideal_fps: 30
+
+  - name: high_performance_launch
+    description: enable high performance stream parameters and observe CPU and memory fluctuation
+    duration: 180
+    launch_args:
+      color_fps: 30
+      depth_fps: 30
+      left_ir_fps: 30
+      right_ir_fps: 30
+      enable_point_cloud: true
+      enable_left_ir: true
+      enable_right_ir: true
+    topics:
+      - name: /camera/color/image_raw
+        type: sensor_msgs/msg/Image
+        mode: message
+        validator: image
+      - name: /camera/depth/image_raw
+        type: sensor_msgs/msg/Image
+        mode: message
+        validator: image
+      - name: /camera/left_ir/image_raw
+        type: sensor_msgs/msg/Image
+        mode: message
+        validator: image
+      - name: /camera/right_ir/image_raw
+        type: sensor_msgs/msg/Image
+        mode: message
+        validator: image
+      - name: /camera/depth/points
+        type: sensor_msgs/msg/PointCloud2
+        mode: message
+        validator: point_cloud

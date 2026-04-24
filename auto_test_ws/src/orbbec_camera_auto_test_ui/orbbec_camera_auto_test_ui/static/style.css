@@ -128,26 +128,9 @@ button.ghost {
   flex: 0 0 44px;
   border: 1px solid #b9cfe4;
   border-radius: 8px;
-  background:
-    linear-gradient(135deg, rgba(23, 105, 170, 0.18), rgba(20, 128, 74, 0.12)),
-    var(--surface);
-  position: relative;
-  box-shadow: 0 10px 24px rgba(23, 105, 170, 0.12);
-}
-
-.brand-mark::before,
-.brand-mark::after {
-  content: "";
-  position: absolute;
-  inset: 10px;
-  border: 2px solid var(--primary);
-  border-radius: 50%;
-}
-
-.brand-mark::after {
-  inset: 18px;
-  border-color: var(--ok);
   background: var(--surface);
+  object-fit: cover;
+  box-shadow: 0 10px 24px rgba(23, 105, 170, 0.12);
 }
 
 .eyebrow {
@@ -326,6 +309,10 @@ h2 {
 
 .grid.two {
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.is-hidden {
+  display: none !important;
 }
 
 label {

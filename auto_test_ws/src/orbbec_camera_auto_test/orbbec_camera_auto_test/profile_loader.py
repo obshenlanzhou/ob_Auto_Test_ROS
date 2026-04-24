@@ -6,6 +6,8 @@ from typing import Any, Dict, List, Optional
 
 import yaml
 
+PACKAGE_NAME = "orbbec_camera_auto_test"
+
 
 @dataclass
 class TopicSpec:
@@ -230,20 +232,50 @@ def _performance_scenario_from_dict(
     )
 
 
-def resolve_profile_path(profile: str, package_root: Optional[Path] = None) -> Path:
+def resolve_profile_path(
+    profile: str,
+    package_root: Optional[Path] = None,
+    profile_type: Optional[str] = None,
+) -> Path:
     candidate = Path(profile)
     if candidate.is_file():
         return candidate.resolve()
 
-    base_dir = package_root or Path(__file__).resolve().parents[1]
-    resolved = base_dir / "profiles" / f"{profile}.yaml"
-    if not resolved.is_file():
-        raise FileNotFoundError(f"Profile not found: {profile}")
-    return resolved.resolve()
+    base_dirs = (
+        [package_root]
+        if package_root is not None
+        else [Path(__file__).resolve().parents[1]]
+    )
+    try:
+        from ament_index_python.packages import get_package_share_directory
+
+        base_dirs.append(Path(get_package_share_directory(PACKAGE_NAME)))
+    except Exception:  # noqa: BLE001
+        pass
+
+    candidates = []
+    for base_dir in base_dirs:
+        profiles_dir = base_dir / "profiles"
+        if profile_type:
+            candidates.append(profiles_dir / profile_type / f"{profile}.yaml")
+        candidates.append(profiles_dir / f"{profile}.yaml")
+
+    for resolved in candidates:
+        if resolved.is_file():
+            return resolved.resolve()
+    raise FileNotFoundError(f"Profile not found: {profile}")
 
 
-def load_camera_profile(profile: str, package_root: Optional[Path] = None) -> CameraProfile:
-    profile_path = resolve_profile_path(profile, package_root=package_root)
+def load_camera_profile(
+    profile: str,
+    package_root: Optional[Path] = None,
+    profile_type: Optional[str] = None,
+) -> CameraProfile:
+    profile_path = resolve_profile_path(
+        profile,
+        package_root=package_root,
+        profile_type=profile_type,
+    )
     with profile_path.open("r", encoding="utf-8") as stream:
         data = yaml.safe_load(stream) or {}
 
@@ -251,11 +283,16 @@ def load_camera_profile(profile: str, package_root: Optional[Path] = None) -> Ca
         "profile_name",
         "launch_file",
         "default_launch_args",
-        "launch_scenarios",
     }
     missing = sorted(required_keys.difference(data))
     if missing:
         raise ValueError(f"Profile {profile_path} is missing keys: {', '.join(missing)}")
+
+    if profile_type == "functional":
+        if not data.get("launch_scenarios"):
+            raise ValueError(
+                f"Functional profile {profile_path} must define at least one launch_scenario"
+            )
 
     performance_topic_defaults = dict(data.get("performance_topic_defaults", {}))
     default_performance_timeout = _default_timeout(performance_topic_defaults)
@@ -269,9 +306,20 @@ def load_camera_profile(profile: str, package_root: Optional[Path] = None) -> Ca
     if frame_timestamps is None:
         frame_timestamps = FrameTimestampSpec()
 
-    if not raw_performance_scenarios and not legacy_performance_topics and not multi_camera.topic_templates:
+    has_performance_config = (
+        raw_performance_scenarios
+        or legacy_performance_topics
+        or multi_camera.topic_templates
+    )
+    if profile_type == "performance" and not has_performance_config:
         raise ValueError(
-            f"Profile {profile_path} must define performance_topics, performance_scenarios, or multi_camera.topic_templates"
+            f"Performance profile {profile_path} must define performance_topics, "
+            "performance_scenarios, or multi_camera.topic_templates"
+        )
+    if profile_type is None and not has_performance_config and not data.get("launch_scenarios"):
+        raise ValueError(
+            f"Profile {profile_path} must define launch_scenarios, performance_topics, "
+            "performance_scenarios, or multi_camera.topic_templates"
         )
 
     if raw_performance_scenarios:
@@ -283,7 +331,7 @@ def load_camera_profile(profile: str, package_root: Optional[Path] = None) -> Ca
             )
             for item in raw_performance_scenarios
         ]
-    else:
+    elif legacy_performance_topics:
         performance_scenarios = [
             PerformanceScenarioSpec(
                 name="default",
@@ -293,6 +341,8 @@ def load_camera_profile(profile: str, package_root: Optional[Path] = None) -> Ca
                 load=None,
             )
         ]
+    else:
+        performance_scenarios = []
 
     return CameraProfile(
         profile_name=data["profile_name"],
