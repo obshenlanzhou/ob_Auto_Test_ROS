@@ -1,0 +1,87 @@
+profile_name: gemini_330_drop_frame
+launch_file: gemini_330_series.launch.py
+
+default_launch_args:
+  camera_name: camera
+  enable_frame_timestamp_csv: true
+  frame_timestamp_csv_file: "{results_dir}/driver_frame_timestamp.csv"
+
+launch_scenarios: []
+
+performance_topic_defaults:
+  timeout: 15
+
+frame_timestamps:
+  enabled: true
+  flush_every_rows: 1000
+
+performance_topics:
+  - name: /camera/color/image_raw
+    type: sensor_msgs/msg/Image
+    mode: message
+    validator: image
+    ideal_fps: 30
+  - name: /camera/depth/image_raw
+    type: sensor_msgs/msg/Image
+    mode: message
+    validator: image
+    ideal_fps: 30
+
+performance_scenarios:
+  - name: default
+    description: default launch with driver and receiver frame timestamp recording for drop-frame analysis
+    duration: 240
+    launch_args: {}
+    topics:
+      - name: /camera/color/image_raw
+        type: sensor_msgs/msg/Image
+        mode: message
+        validator: image
+        ideal_fps: 30
+      - name: /camera/depth/image_raw
+        type: sensor_msgs/msg/Image
+        mode: message
+        validator: image
+        ideal_fps: 30
+
+  - name: default_with_stress_ng_load
+    description: default launch with stress-ng high load and driver plus receiver frame timestamp recording for drop-frame analysis
+    duration: 240
+    launch_args: {}
+    topics:
+      - name: /camera/color/image_raw
+        type: sensor_msgs/msg/Image
+        mode: message
+        validator: image
+        ideal_fps: 30
+      - name: /camera/depth/image_raw
+        type: sensor_msgs/msg/Image
+        mode: message
+        validator: image
+        ideal_fps: 30
+    load:
+      type: stress-ng
+      workers: 0
+
+  - name: high_performance_launch
+    description: high performance stream parameters with driver and receiver frame timestamp recording for drop-frame analysis
+    duration: 180
+    launch_args:
+      color_fps: 30
+      depth_fps: 30
+      left_ir_fps: 30
+      right_ir_fps: 30
+      enable_point_cloud: true
+      enable_left_ir: true
+      enable_right_ir: true
+    topics:
+      - name: /camera/color/image_raw
+        type: sensor_msgs/msg/Image
+        mode: message
+        validator: image
+        ideal_fps: 30
+      - name: /camera/depth/image_raw
+        type: sensor_msgs/msg/Image
+        mode: message
+        validator: image
+        ideal_fps: 30

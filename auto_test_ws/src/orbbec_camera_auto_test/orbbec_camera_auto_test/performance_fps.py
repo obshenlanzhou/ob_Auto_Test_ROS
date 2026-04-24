@@ -86,6 +86,8 @@ class TopicFpsCollector:
         csv_path: Path,
         launch_args: Dict[str, Any],
         sample_period: float = 1.0,
+        frame_timestamp_dir: Optional[Path] = None,
+        frame_timestamp_flush_every_rows: int = 1000,
     ):
         self.node = node
         self.topic_specs = topic_specs
@@ -95,10 +97,17 @@ class TopicFpsCollector:
         self.launch_args = dict(launch_args)
         self.trackers: Dict[str, Dict[str, Any]] = {}
         self.subscriptions = []
+        self.frame_timestamp_dir = frame_timestamp_dir
+        self.frame_timestamp_flush_every_rows = max(frame_timestamp_flush_every_rows, 1)
+        self.frame_timestamp_files: Dict[str, Any] = {}
+        self.frame_timestamp_writers: Dict[str, csv.writer] = {}
+        self.frame_timestamp_rows_since_flush: Dict[str, int] = {}
 
         self.csv_path.parent.mkdir(parents=True, exist_ok=True)
         self.csv_file = self.csv_path.open("w", newline="", encoding="utf-8")
         self.csv_writer = csv.writer(self.csv_file)
+        if self.frame_timestamp_dir is not None:
+            self.frame_timestamp_dir.mkdir(parents=True, exist_ok=True)
 
         header = ["elapsed_seconds"]
         for spec in topic_specs:
@@ -121,12 +130,14 @@ class TopicFpsCollector:
                 "invalid_stamp_count": 0,
                 "current_fps": 0.0,
                 "prev_stamp": None,
+                "prev_recv_monotonic": None,
                 "window_pair_count": 0,
                 "window_delta_sum": 0.0,
                 "total_pair_count": 0,
                 "total_delta_sum": 0.0,
                 "total_dropped_frames": 0,
             }
+            self._open_frame_timestamp_file(spec.name)
             msg_type = resolve_message_type(spec.type)
             self.subscriptions.append(
                 self.node.create_subscription(
@@ -138,6 +149,61 @@ class TopicFpsCollector:
             )
         self.csv_writer.writerow(header)
         self.timer = self.node.create_timer(self.sample_period, self._on_sample)
+
+    def _open_frame_timestamp_file(self, topic_name: str) -> None:
+        if self.frame_timestamp_dir is None:
+            return
+        label = _topic_label(topic_name)
+        self.frame_timestamp_dir.mkdir(parents=True, exist_ok=True)
+        path = self.frame_timestamp_dir / f"{label}.csv"
+        csv_file = path.open("w", newline="", encoding="utf-8")
+        writer = csv.writer(csv_file)
+        writer.writerow(
+            [
+                "header_stamp",
+                "recv_monotonic",
+                "delta_header_ms",
+                "delta_recv_ms",
+                "estimated_drop",
+            ]
+        )
+        self.frame_timestamp_files[topic_name] = csv_file
+        self.frame_timestamp_writers[topic_name] = writer
+        self.frame_timestamp_rows_since_flush[topic_name] = 0
+
+    def _write_frame_timestamp(
+        self,
+        topic_name: str,
+        tracker: Dict[str, Any],
+        stamp: Optional[float],
+        recv_monotonic: float,
+        delta_header_seconds: Optional[float],
+        delta_recv_seconds: Optional[float],
+        estimated_drop: int,
+    ) -> None:
+        writer = self.frame_timestamp_writers.get(topic_name)
+        if writer is None:
+            return
+        writer.writerow(
+            [
+                f"{stamp:.9f}" if stamp is not None else "",
+                f"{recv_monotonic:.9f}",
+                f"{delta_header_seconds * 1000.0:.3f}"
+                if delta_header_seconds is not None
+                else "",
+                f"{delta_recv_seconds * 1000.0:.3f}"
+                if delta_recv_seconds is not None
+                else "",
+                estimated_drop,
+            ]
+        )
+        self.frame_timestamp_rows_since_flush[topic_name] += 1
+        if (
+            self.frame_timestamp_rows_since_flush[topic_name]
+            >= self.frame_timestamp_flush_every_rows
+        ):
+            self.frame_timestamp_files[topic_name].flush()
+            self.frame_timestamp_rows_since_flush[topic_name] = 0
 
     def describe_topics(self) -> List[str]:
         lines: List[str] = []
@@ -177,13 +243,32 @@ class TopicFpsCollector:
     def _on_message(self, topic_name: str, message: Any) -> None:
         tracker = self.trackers[topic_name]
         tracker["message_count"] += 1
+        recv_monotonic = time.monotonic()
+        prev_recv_monotonic = tracker["prev_recv_monotonic"]
+        delta_recv_seconds = (
+            recv_monotonic - prev_recv_monotonic
+            if prev_recv_monotonic is not None
+            else None
+        )
+        tracker["prev_recv_monotonic"] = recv_monotonic
 
         stamp = _header_stamp(message)
         if stamp is None:
             tracker["invalid_stamp_count"] += 1
             tracker["prev_stamp"] = None
+            self._write_frame_timestamp(
+                topic_name,
+                tracker,
+                None,
+                recv_monotonic,
+                None,
+                delta_recv_seconds,
+                0,
+            )
             return
 
+        delta_seconds = None
+        dropped_frames = 0
         if tracker["prev_stamp"] is not None:
             delta_seconds = stamp - tracker["prev_stamp"]
             if delta_seconds <= 0.0:
@@ -193,6 +278,15 @@ class TopicFpsCollector:
                 self._update_fps_stats(
                     tracker, delta_seconds, missing_count=dropped_frames
                 )
+        self._write_frame_timestamp(
+            topic_name,
+            tracker,
+            stamp,
+            recv_monotonic,
+            delta_seconds if delta_seconds and delta_seconds > 0.0 else None,
+            delta_recv_seconds,
+            dropped_frames,
+        )
         tracker["prev_stamp"] = stamp
 
     def _on_sample(self) -> None:
@@ -253,4 +347,10 @@ class TopicFpsCollector:
         for subscription in self.subscriptions:
             self.node.destroy_subscription(subscription)
         self.subscriptions.clear()
+        for csv_file in self.frame_timestamp_files.values():
+            csv_file.flush()
+            csv_file.close()
+        self.frame_timestamp_files.clear()
+        self.frame_timestamp_writers.clear()
+        self.frame_timestamp_rows_since_flush.clear()
         self.csv_file.close()

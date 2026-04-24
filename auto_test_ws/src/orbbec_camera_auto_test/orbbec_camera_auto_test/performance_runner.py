@@ -14,7 +14,12 @@ from .functional_topics import run_topic_checks
 from .performance_fps import TopicFpsCollector
 from .performance_load import ExternalLoadController
 from .performance_system import MultiCameraSystemSampler, ProcessTreeSampler
-from .profile_loader import PerformanceScenarioSpec, TopicSpec, load_camera_profile
+from .profile_loader import (
+    FrameTimestampSpec,
+    PerformanceScenarioSpec,
+    TopicSpec,
+    load_camera_profile,
+)
 from .reporter import append_log, build_performance_summary, ensure_dir, write_json, write_markdown
 from .ros_utils import RosHarness, resolve_service_type
 from .session import TestSession
@@ -118,6 +123,26 @@ def _scenario_duration(args, scenario: PerformanceScenarioSpec) -> float:
     raise ValueError(
         f"performance scenario '{scenario.name}' has no duration; pass --duration or set duration in profile"
     )
+
+
+def _scenario_frame_timestamps(profile, scenario: PerformanceScenarioSpec) -> FrameTimestampSpec:
+    return scenario.frame_timestamps or profile.frame_timestamps
+
+
+def _expand_launch_arg_templates(launch_args: Dict[str, Any], results_dir: Path) -> Dict[str, Any]:
+    expanded: Dict[str, Any] = {}
+    for key, value in launch_args.items():
+        if isinstance(value, str):
+            expanded_value = (
+                value.replace("{results_dir}", str(results_dir))
+                .replace("{results_dir_posix}", results_dir.as_posix())
+            )
+            expanded[key] = expanded_value
+            if key.endswith("_file") or key.endswith("_path"):
+                Path(expanded_value).expanduser().parent.mkdir(parents=True, exist_ok=True)
+        else:
+            expanded[key] = value
+    return expanded
 
 
 def _select_performance_scenarios(profile, scenario_name: str | None) -> list[PerformanceScenarioSpec]:
@@ -268,11 +293,13 @@ def _run_performance_scenario(
     performance_log_path = results_dir / "performance.log"
     fps_csv_path = results_dir / "fps.csv"
     system_csv_path = results_dir / "system_usage.csv"
+    frame_timestamp_dir = results_dir / "frame_timestamps"
     stage_log_path = results_dir / "performance_stage.log"
     emit_status = _make_status_logger(stage_log_path, performance_log_path)
 
     launch_args = dict(base_launch_args)
     launch_args.update(scenario.launch_args)
+    launch_args = _expand_launch_arg_templates(launch_args, results_dir)
     camera_name = str(launch_args.get("camera_name", "camera"))
     multi_camera = profile.multi_camera
     is_multi_camera = bool(multi_camera.enabled and multi_camera.cameras)
@@ -282,6 +309,7 @@ def _run_performance_scenario(
     )
     resource_mode = multi_camera.resource_mode if is_multi_camera else ""
     container_name = multi_camera.container_name if is_multi_camera else ""
+    frame_timestamps = _scenario_frame_timestamps(profile, scenario)
     duration_seconds = _scenario_duration(args, scenario)
     emit_status(f"performance scenario '{scenario.name}' target launch: {launch_file}")
     if is_multi_camera:
@@ -298,6 +326,16 @@ def _run_performance_scenario(
     )
     if scenario.description:
         emit_status(f"performance scenario '{scenario.name}' description: {scenario.description}")
+    if frame_timestamps.enabled:
+        emit_status(
+            f"receiver frame timestamp recording enabled: {frame_timestamp_dir} "
+            f"(flush_every_rows={frame_timestamps.flush_every_rows})"
+        )
+    if launch_args.get("enable_frame_timestamp_csv"):
+        emit_status(
+            "driver frame timestamp csv enabled: "
+            f"{launch_args.get('frame_timestamp_csv_file', '')}"
+        )
 
     write_json(
         results_dir / "launch_args.json",
@@ -310,6 +348,7 @@ def _run_performance_scenario(
             "resource_mode": resource_mode,
             "container_name": container_name,
             "duration_seconds": duration_seconds,
+            "frame_timestamps": asdict(frame_timestamps),
             "load": asdict(scenario.load) if scenario.load is not None else {},
         },
     )
@@ -336,6 +375,11 @@ def _run_performance_scenario(
             duration_seconds,
             host_environment,
         )
+    result["frame_timestamps"] = {
+        **asdict(frame_timestamps),
+        "output_dir": str(frame_timestamp_dir) if frame_timestamps.enabled else "",
+        "driver_csv": str(launch_args.get("frame_timestamp_csv_file", "")),
+    }
 
     with RosHarness(_safe_harness_name(scenario.name)) as harness:
         try:
@@ -387,6 +431,10 @@ def _run_performance_scenario(
                 performance_topics,
                 fps_csv_path,
                 launch_args=launch_args,
+                frame_timestamp_dir=frame_timestamp_dir
+                if frame_timestamps.enabled
+                else None,
+                frame_timestamp_flush_every_rows=frame_timestamps.flush_every_rows,
             )
             for line in collector.describe_topics():
                 emit_status(line)

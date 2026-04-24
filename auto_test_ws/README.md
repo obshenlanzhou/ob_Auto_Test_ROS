@@ -316,6 +316,45 @@ results/ui_config.json
 - 若相机进程异常退出或采集失败，则判失败
 - 性能数值先统计并输出，不做硬阈值拦截
 
+### 丢帧压测
+
+丢帧压测 profile：
+
+```text
+gemini_330_drop_frame
+```
+
+该 profile 会启动：
+
+```bash
+ros2 launch orbbec_camera gemini_330_series.launch.py \
+  enable_frame_timestamp_csv:=true \
+  frame_timestamp_csv_file:=<results_dir>/driver_frame_timestamp.csv
+```
+
+同时测试工具会订阅：
+
+```text
+/camera/color/image_raw
+/camera/depth/image_raw
+```
+
+并输出：
+
+- `fps.csv`：接收端 color/depth FPS、平均 FPS、估算丢帧数
+- `frame_timestamps/camera_color_image_raw.csv`：接收端 color 每帧时间戳、帧间隔和估算丢帧
+- `frame_timestamps/camera_depth_image_raw.csv`：接收端 depth 每帧时间戳、帧间隔和估算丢帧
+- `driver_frame_timestamp.csv`：驱动端通过 `enable_frame_timestamp_csv` 生成的时间戳文件
+
+示例：
+
+```bash
+./run_camera_auto_test.sh \
+  --mode performance \
+  --profile gemini_330_drop_frame \
+  --duration 300
+```
+
 ### 多相机性能压测
 
 多相机压测支持两种资源统计模式：

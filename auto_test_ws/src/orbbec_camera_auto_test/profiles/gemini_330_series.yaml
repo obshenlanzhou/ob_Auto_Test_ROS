@@ -435,6 +435,27 @@ performance_scenarios:
       type: stress-ng
       workers: 0
 
+  - name: drop_frame_analysis
+    description: enable driver frame timestamp csv and record receiver color and depth frame timestamps for drop-frame analysis
+    duration: 300
+    launch_args:
+      enable_frame_timestamp_csv: true
+      frame_timestamp_csv_file: "{results_dir}/driver_frame_timestamp.csv"
+    frame_timestamps:
+      enabled: true
+      flush_every_rows: 1000
+    topics:
+      - name: /camera/color/image_raw
+        type: sensor_msgs/msg/Image
+        mode: message
+        validator: image
+        ideal_fps: 30
+      - name: /camera/depth/image_raw
+        type: sensor_msgs/msg/Image
+        mode: message
+        validator: image
+        ideal_fps: 30
+
   - name: high_performance_launch
     description: enable high performance stream parameters and observe CPU and memory fluctuation
     duration: 180

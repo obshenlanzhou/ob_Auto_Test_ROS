@@ -281,6 +281,26 @@ def build_performance_summary(result: Dict[str, Any]) -> List[str]:
         )
         lines.append("")
 
+    frame_timestamps = result.get("frame_timestamps", {})
+    if frame_timestamps:
+        lines.append("## Frame Timestamps")
+        lines.append("")
+        lines.append(
+            f"- Receiver recording: `{_stringify_markdown_value(frame_timestamps.get('enabled'))}`"
+        )
+        if frame_timestamps.get("enabled"):
+            lines.append(
+                f"- Receiver output directory: `{_stringify_markdown_value(frame_timestamps.get('output_dir'))}`"
+            )
+            lines.append(
+                f"- Flush every rows: `{_stringify_markdown_value(frame_timestamps.get('flush_every_rows'))}`"
+            )
+        if frame_timestamps.get("driver_csv"):
+            lines.append(
+                f"- Driver CSV: `{_stringify_markdown_value(frame_timestamps.get('driver_csv'))}`"
+            )
+        lines.append("")
+
     lines.append("## Topic FPS")
     lines.append("")
     fps_rows: List[List[Any]] = []

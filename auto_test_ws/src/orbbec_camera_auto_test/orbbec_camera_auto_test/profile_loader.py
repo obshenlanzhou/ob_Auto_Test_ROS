@@ -57,6 +57,12 @@ class ExternalLoadSpec:
 
 
 @dataclass
+class FrameTimestampSpec:
+    enabled: bool = False
+    flush_every_rows: int = 1000
+
+
+@dataclass
 class PerformanceScenarioSpec:
     name: str
     description: str = ""
@@ -64,6 +70,7 @@ class PerformanceScenarioSpec:
     launch_args: Dict[str, Any] = field(default_factory=dict)
     topics: List[TopicSpec] = field(default_factory=list)
     load: Optional[ExternalLoadSpec] = None
+    frame_timestamps: Optional[FrameTimestampSpec] = None
 
 
 @dataclass
@@ -84,6 +91,7 @@ class CameraProfile:
     performance_topics: List[TopicSpec]
     performance_scenarios: List[PerformanceScenarioSpec]
     multi_camera: MultiCameraSpec = field(default_factory=MultiCameraSpec)
+    frame_timestamps: FrameTimestampSpec = field(default_factory=FrameTimestampSpec)
 
 
 def _default_timeout(defaults: Dict[str, Any], fallback: float = 30.0) -> float:
@@ -165,6 +173,15 @@ def _external_load_from_dict(data: Dict[str, Any]) -> ExternalLoadSpec:
     )
 
 
+def _frame_timestamps_from_dict(data: Optional[Dict[str, Any]]) -> Optional[FrameTimestampSpec]:
+    if data is None:
+        return None
+    return FrameTimestampSpec(
+        enabled=bool(data.get("enabled", False)),
+        flush_every_rows=max(int(data.get("flush_every_rows", 1000) or 1000), 1),
+    )
+
+
 def _camera_name_from_item(item: Any) -> str:
     if isinstance(item, dict):
         return str(item.get("name", "")).strip()
@@ -209,6 +226,7 @@ def _performance_scenario_from_dict(
         launch_args=dict(data.get("launch_args", {})),
         topics=_topics_from_dicts(raw_topics, default_timeout),
         load=_external_load_from_dict(raw_load) if raw_load else None,
+        frame_timestamps=_frame_timestamps_from_dict(data.get("frame_timestamps")),
     )
 
 
@@ -247,6 +265,9 @@ def load_camera_profile(profile: str, package_root: Optional[Path] = None) -> Ca
         dict(data.get("multi_camera", {})),
         default_performance_timeout,
     )
+    frame_timestamps = _frame_timestamps_from_dict(data.get("frame_timestamps"))
+    if frame_timestamps is None:
+        frame_timestamps = FrameTimestampSpec()
 
     if not raw_performance_scenarios and not legacy_performance_topics and not multi_camera.topic_templates:
         raise ValueError(
@@ -286,4 +307,5 @@ def load_camera_profile(profile: str, package_root: Optional[Path] = None) -> Ca
         ),
         performance_scenarios=performance_scenarios,
         multi_camera=multi_camera,
+        frame_timestamps=frame_timestamps,
     )
