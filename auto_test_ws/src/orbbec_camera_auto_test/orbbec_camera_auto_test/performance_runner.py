@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 import time
 from dataclasses import asdict
@@ -238,6 +239,151 @@ def _format_topic_name(template: str, camera_name: str) -> str:
     )
 
 
+def _stream_config_from_launch_args(launch_args: Dict[str, Any]) -> list[Dict[str, Any]]:
+    streams = (
+        ("color", "Color"),
+        ("depth", "Depth"),
+        ("left_ir", "Left IR"),
+        ("right_ir", "Right IR"),
+        ("ir", "IR"),
+    )
+    configs: list[Dict[str, Any]] = []
+    for prefix, label in streams:
+        payload = {
+            "stream": prefix,
+            "label": label,
+            "width": launch_args.get(f"{prefix}_width", ""),
+            "height": launch_args.get(f"{prefix}_height", ""),
+            "fps": launch_args.get(f"{prefix}_fps", ""),
+            "format": launch_args.get(f"{prefix}_format", ""),
+        }
+        if any(payload[key] not in ("", None) for key in ("width", "height", "fps", "format")):
+            configs.append(payload)
+    return configs
+
+
+_FRAME_CONFIG_RE = re.compile(
+    r"\[(?P<node>[^\]]+)\]: (?P<stream>color|depth|left_ir|right_ir|ir) Frame - Width: "
+    r"(?P<width>\d+) Height: (?P<height>\d+) fps: (?P<fps>\d+) Format: (?P<format>\S+)"
+)
+
+
+def _stream_config_from_launch_log(log_path: Path) -> list[Dict[str, Any]]:
+    if not log_path.is_file():
+        return []
+    labels = {
+        "color": "Color",
+        "depth": "Depth",
+        "left_ir": "Left IR",
+        "right_ir": "Right IR",
+        "ir": "IR",
+    }
+    configs: Dict[tuple[str, str], Dict[str, Any]] = {}
+    try:
+        lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return []
+    for line in lines:
+        match = _FRAME_CONFIG_RE.search(line)
+        if not match:
+            continue
+        node_name = match.group("node").split(".")[0]
+        stream = match.group("stream")
+        configs[(node_name, stream)] = {
+            "camera": node_name,
+            "stream": stream,
+            "label": labels.get(stream, stream),
+            "width": int(match.group("width")),
+            "height": int(match.group("height")),
+            "fps": int(match.group("fps")),
+            "format": match.group("format"),
+            "source": "launch_log",
+        }
+    return [
+        configs[key]
+        for key in sorted(configs, key=lambda item: (item[0], list(labels).index(item[1])))
+    ]
+
+
+def _stream_key_from_topic(topic_name: str) -> str:
+    if "/left_ir/" in topic_name:
+        return "left_ir"
+    if "/right_ir/" in topic_name:
+        return "right_ir"
+    if "/color/" in topic_name:
+        return "color"
+    if "/depth/" in topic_name:
+        return "depth"
+    if "/ir/" in topic_name:
+        return "ir"
+    return ""
+
+
+def _camera_name_from_topic(topic_name: str) -> str:
+    parts = [part for part in topic_name.split("/") if part]
+    return parts[0] if len(parts) >= 2 else ""
+
+
+def _apply_stream_config_to_fps_summary(result: Dict[str, Any]) -> None:
+    stream_config = result.get("stream_config", [])
+    fps_summary = result.get("fps_summary", {})
+    if not stream_config or not fps_summary:
+        return
+
+    by_camera_stream = {
+        (item.get("camera", ""), item.get("stream", "")): item
+        for item in stream_config
+    }
+    by_stream = {
+        item.get("stream", ""): item
+        for item in stream_config
+        if not item.get("camera")
+    }
+    for topic_name, topic_summary in fps_summary.items():
+        stream_key = _stream_key_from_topic(topic_name)
+        camera_name = _camera_name_from_topic(topic_name)
+        config = (
+            by_camera_stream.get((camera_name, stream_key))
+            or by_stream.get(stream_key)
+        )
+        if not config or not config.get("fps"):
+            continue
+        ideal_fps = float(config["fps"])
+        dropped_frames = int(topic_summary.get("dropped_frames", 0) or 0)
+        message_count = int(topic_summary.get("message_count", 0) or 0)
+        topic_summary["ideal_fps"] = ideal_fps
+        topic_summary["ideal_fps_source"] = "launch_log"
+        if message_count + dropped_frames > 0:
+            topic_summary["drop_rate"] = dropped_frames / (message_count + dropped_frames)
+
+
+def _apply_stream_config_to_topic_specs(
+    topic_specs: list[TopicSpec],
+    stream_config: list[Dict[str, Any]],
+) -> None:
+    if not stream_config:
+        return
+    by_camera_stream = {
+        (item.get("camera", ""), item.get("stream", "")): item
+        for item in stream_config
+    }
+    by_stream = {
+        item.get("stream", ""): item
+        for item in stream_config
+        if not item.get("camera")
+    }
+    for spec in topic_specs:
+        stream_key = _stream_key_from_topic(spec.name)
+        camera_name = _camera_name_from_topic(spec.name)
+        config = (
+            by_camera_stream.get((camera_name, stream_key))
+            or by_stream.get(stream_key)
+        )
+        if not config or not config.get("fps"):
+            continue
+        spec.ideal_fps = float(config["fps"])
+
+
 def _expand_multi_camera_topics(profile, scenario: PerformanceScenarioSpec) -> list[TopicSpec]:
     multi_camera = profile.multi_camera
     template_specs = scenario.topics or multi_camera.topic_templates
@@ -380,6 +526,7 @@ def _run_performance_scenario(
         "output_dir": str(frame_timestamp_dir) if frame_timestamps.enabled else "",
         "driver_csv": str(launch_args.get("frame_timestamp_csv_file", "")),
     }
+    result["stream_config"] = _stream_config_from_launch_args(launch_args)
 
     with RosHarness(_safe_harness_name(scenario.name)) as harness:
         try:
@@ -424,6 +571,11 @@ def _run_performance_scenario(
             if any(item["status"] == "failed" for item in warmup_results):
                 failed_topics = [item["name"] for item in warmup_results if item["status"] == "failed"]
                 raise RuntimeError(f"Performance warmup failed for topics: {failed_topics}")
+
+            runtime_stream_config = _stream_config_from_launch_log(launch_log_path)
+            if runtime_stream_config:
+                result["stream_config"] = runtime_stream_config
+                _apply_stream_config_to_topic_specs(performance_topics, runtime_stream_config)
 
             emit_status(f"starting FPS collector for scenario '{scenario.name}'")
             collector = TopicFpsCollector(
@@ -511,6 +663,11 @@ def _run_performance_scenario(
                 sampler.close()
             session.stop()
 
+    result["stream_config"] = (
+        _stream_config_from_launch_log(launch_log_path)
+        or result.get("stream_config", [])
+    )
+    _apply_stream_config_to_fps_summary(result)
     write_json(results_dir / "result.json", result)
     write_markdown(results_dir / "summary.md", build_performance_summary(result))
     if result["status"] == "passed":

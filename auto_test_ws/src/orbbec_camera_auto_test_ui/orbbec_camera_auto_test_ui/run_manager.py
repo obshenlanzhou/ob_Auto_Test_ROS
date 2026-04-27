@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import json
 import os
+import re
 import shlex
 import signal
 import shutil
@@ -170,12 +171,75 @@ def _int_value(payload: Dict[str, str], key: str, default: int = 0) -> int:
 def _format_topic_label(label: str) -> str:
     if not label:
         return ""
-    topic = "/" + label.replace("_", "/")
-    return (
-        topic.replace("/image/raw", "/image_raw")
-        .replace("/left/ir", "/left_ir")
-        .replace("/right/ir", "/right_ir")
+    stream_markers = (
+        ("left_ir", "_left_ir_"),
+        ("right_ir", "_right_ir_"),
+        ("color", "_color_"),
+        ("depth", "_depth_"),
+        ("ir", "_ir_"),
     )
+    padded = f"_{label}_"
+    for stream_name, marker in stream_markers:
+        if marker not in padded:
+            continue
+        before, after = padded.split(marker, 1)
+        camera_name = before.strip("_")
+        suffix = after.strip("_").replace("_", "/").replace("image/raw", "image_raw")
+        if camera_name:
+            return f"/{camera_name}/{stream_name}/{suffix}".rstrip("/")
+        return f"/{stream_name}/{suffix}".rstrip("/")
+    return "/" + label.replace("_", "/").replace("image/raw", "image_raw")
+
+
+_FRAME_CONFIG_RE = re.compile(
+    r"\[(?P<node>[^\]]+)\]: (?P<stream>color|depth|left_ir|right_ir|ir) Frame - Width: "
+    r"(?P<width>\d+) Height: (?P<height>\d+) fps: (?P<fps>\d+) Format: (?P<format>\S+)"
+)
+
+
+def _read_stream_config_from_launch_log(run_root: Path) -> Dict[tuple[str, str], Dict[str, Any]]:
+    launch_path = _latest_file(run_root, "launch.log")
+    if launch_path is None:
+        return {}
+    configs: Dict[tuple[str, str], Dict[str, Any]] = {}
+    try:
+        lines = launch_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return {}
+    for line in lines:
+        match = _FRAME_CONFIG_RE.search(line)
+        if not match:
+            continue
+        node_name = match.group("node").split(".")[0]
+        stream = match.group("stream")
+        configs[(node_name, stream)] = {
+            "width": int(match.group("width")),
+            "height": int(match.group("height")),
+            "fps": int(match.group("fps")),
+            "format": match.group("format"),
+        }
+    return configs
+
+
+def _stream_key_from_topic(topic_name: str) -> str:
+    if "/left_ir/" in topic_name:
+        return "left_ir"
+    if "/right_ir/" in topic_name:
+        return "right_ir"
+    if "/color/" in topic_name:
+        return "color"
+    if "/depth/" in topic_name:
+        return "depth"
+    if "/ir/" in topic_name:
+        return "ir"
+    return ""
+
+
+def _camera_name_from_topic(topic_name: str) -> str:
+    parts = [part for part in topic_name.split("/") if part]
+    if len(parts) >= 2:
+        return parts[0]
+    return ""
 
 
 def build_performance_metrics(run_root: Path) -> Dict[str, Any]:
@@ -204,6 +268,7 @@ def build_performance_metrics(run_root: Path) -> Dict[str, Any]:
         _float_value(system_row, "elapsed_seconds"),
         _float_value(fps_row, "elapsed_seconds"),
     )
+    stream_configs = _read_stream_config_from_launch_log(run_root)
     topics: List[Dict[str, Any]] = []
     suffixes = (
         "_ideal_fps",
@@ -221,11 +286,29 @@ def build_performance_metrics(run_root: Path) -> Dict[str, Any]:
         }
     )
     for label in labels:
+        topic_name = _format_topic_label(label)
+        stream_key = _stream_key_from_topic(topic_name)
+        camera_name = _camera_name_from_topic(topic_name)
+        stream_config = (
+            stream_configs.get((camera_name, stream_key))
+            or stream_configs.get(("", stream_key))
+            or {}
+        )
         topics.append(
             {
                 "label": label,
-                "topic": _format_topic_label(label),
-                "ideal_fps": _float_value(fps_row, f"{label}_ideal_fps"),
+                "topic": topic_name,
+                "resolution": (
+                    f"{stream_config.get('width')} x {stream_config.get('height')}"
+                    if stream_config.get("width") and stream_config.get("height")
+                    else ""
+                ),
+                "stream_format": stream_config.get("format", ""),
+                "ideal_fps": _float_value(
+                    {"value": stream_config.get("fps")},
+                    "value",
+                    _float_value(fps_row, f"{label}_ideal_fps"),
+                ),
                 "current_fps": _float_value(fps_row, f"{label}_current_fps"),
                 "avg_fps": _float_value(fps_row, f"{label}_avg_fps"),
                 "dropped_frames": _int_value(fps_row, f"{label}_dropped_frames"),

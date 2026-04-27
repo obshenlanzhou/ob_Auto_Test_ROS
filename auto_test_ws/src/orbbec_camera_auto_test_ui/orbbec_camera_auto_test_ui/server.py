@@ -60,13 +60,18 @@ def list_profiles() -> Dict[str, Any]:
             "launch_file": data.get("launch_file", ""),
             "default_launch_args": data.get("default_launch_args", {}),
             "launch_scenarios": [
-                entry.get("name", "") for entry in data.get("launch_scenarios", [])
+                {
+                    "name": entry.get("name", ""),
+                    "launch_args": entry.get("launch_args", {}),
+                }
+                for entry in data.get("launch_scenarios", [])
             ],
             "performance_scenarios": [
                 {
                     "name": entry.get("name", ""),
                     "description": entry.get("description", ""),
                     "duration": entry.get("duration", ""),
+                    "launch_args": entry.get("launch_args", {}),
                 }
                 for entry in data.get("performance_scenarios", [])
             ],

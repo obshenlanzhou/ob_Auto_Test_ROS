@@ -3,7 +3,14 @@ launch_file: gemini_330_series.launch.py
 
 default_launch_args:
   camera_name: camera
-  enable_point_cloud: true
+  depth_width: 848
+  depth_height: 480
+  depth_fps: 30
+  depth_format: Y16
+  color_width: 1280
+  color_height: 720
+  color_fps: 30
+  color_format: MJPG
 
 launch_scenarios:
   - name: default

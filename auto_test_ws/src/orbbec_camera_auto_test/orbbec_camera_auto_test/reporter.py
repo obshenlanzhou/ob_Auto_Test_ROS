@@ -42,6 +42,26 @@ def _stringify_markdown_value(value: Any) -> str:
     return text.replace("|", "\\|").replace("\n", "<br>")
 
 
+def _format_stream_config_summary(stream_config: List[Dict[str, Any]]) -> str:
+    parts = []
+    for stream in stream_config:
+        label = stream.get("label") or stream.get("stream", "")
+        width = stream.get("width", "")
+        height = stream.get("height", "")
+        fps = stream.get("fps", "")
+        fmt = stream.get("format", "")
+        resolution = f"{width}x{height}" if width or height else ""
+        detail = " ".join(
+            str(item)
+            for item in (resolution, f"{fps}fps" if fps else "", fmt)
+            if item
+        )
+        camera = stream.get("camera", "")
+        name = f"{camera}/{label}" if camera else str(label)
+        parts.append(f"{name}: {detail}" if detail else name)
+    return "; ".join(parts)
+
+
 def _markdown_table(headers: List[str], rows: List[List[Any]]) -> List[str]:
     lines = [
         "| " + " | ".join(headers) + " |",
@@ -157,6 +177,7 @@ def build_performance_summary(result: Dict[str, Any]) -> List[str]:
                     scenario.get("scenario_name", ""),
                     scenario.get("status", ""),
                     scenario.get("duration_seconds", 0.0),
+                    _format_stream_config_summary(scenario.get("stream_config", [])),
                     scenario.get("scenario_description", ""),
                     scenario.get("result_dir", ""),
                 ]
@@ -164,15 +185,29 @@ def build_performance_summary(result: Dict[str, Any]) -> List[str]:
         if scenario_rows:
             lines.extend(
                 _markdown_table(
-                    ["Scenario", "Status", "Duration Seconds", "Description", "Result Directory"],
+                    [
+                        "Scenario",
+                        "Status",
+                        "Duration Seconds",
+                        "Stream Configuration",
+                        "Description",
+                        "Result Directory",
+                    ],
                     scenario_rows,
                 )
             )
         else:
             lines.extend(
                 _markdown_table(
-                    ["Scenario", "Status", "Duration Seconds", "Description", "Result Directory"],
-                    [["N/A", "N/A", "N/A", "N/A", "N/A"]],
+                    [
+                        "Scenario",
+                        "Status",
+                        "Duration Seconds",
+                        "Stream Configuration",
+                        "Description",
+                        "Result Directory",
+                    ],
+                    [["N/A", "N/A", "N/A", "N/A", "N/A", "N/A"]],
                 )
             )
         return lines
@@ -278,6 +313,30 @@ def build_performance_summary(result: Dict[str, Any]) -> List[str]:
             lines.append(f"- {key}: `{_stringify_markdown_value(launch_args[key])}`")
         lines.append(
             f"- Other parameters: keep the default values defined by the startup launch `{_stringify_markdown_value(result.get('launch_file'))}`"
+        )
+        lines.append("")
+
+    stream_config = result.get("stream_config", [])
+    if stream_config:
+        lines.append("## Stream Configuration")
+        lines.append("")
+        stream_rows: List[List[Any]] = []
+        for stream in stream_config:
+            stream_rows.append(
+                [
+                    stream.get("camera", ""),
+                    stream.get("label") or stream.get("stream", ""),
+                    stream.get("width", ""),
+                    stream.get("height", ""),
+                    stream.get("fps", ""),
+                    stream.get("format", ""),
+                ]
+            )
+        lines.extend(
+            _markdown_table(
+                ["Camera", "Stream", "Width", "Height", "FPS", "Format"],
+                stream_rows,
+            )
         )
         lines.append("")
 

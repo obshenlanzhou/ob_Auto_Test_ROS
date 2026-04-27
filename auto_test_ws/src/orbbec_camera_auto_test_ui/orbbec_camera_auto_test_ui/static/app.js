@@ -134,7 +134,7 @@ function renderPerformance(performance = {}) {
   if (!topics.length) {
     const row = document.createElement("tr");
     const cell = document.createElement("td");
-    cell.colSpan = 6;
+    cell.colSpan = 8;
     cell.textContent = performance.available ? "暂无 FPS 采样。" : "等待性能压测数据。";
     row.appendChild(cell);
     body.appendChild(row);
@@ -145,6 +145,8 @@ function renderPerformance(performance = {}) {
     const row = document.createElement("tr");
     const values = [
       topic.topic || topic.label || "",
+      topic.resolution || "-",
+      topic.stream_format || "-",
       formatNumber(topic.current_fps, 2),
       formatNumber(topic.avg_fps, 2),
       formatNumber(topic.ideal_fps, 2),

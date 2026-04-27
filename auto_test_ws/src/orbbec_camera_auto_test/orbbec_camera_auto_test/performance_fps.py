@@ -334,6 +334,7 @@ class TopicFpsCollector:
                 "current_fps": tracker["current_fps"],
                 "avg_fps": avg_fps,
                 "dropped_frames": tracker["total_dropped_frames"],
+                "message_count": tracker["message_count"],
                 "drop_rate": _event_rate(
                     tracker["total_dropped_frames"], tracker["message_count"]
                 ),
