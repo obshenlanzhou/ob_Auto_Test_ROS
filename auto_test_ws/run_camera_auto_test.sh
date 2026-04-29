@@ -9,8 +9,12 @@ export PYTHONPATH
 
 MODE=""
 DURATION=""
-PROFILE="gemini_330_series"
+PROFILE=""
 PERFORMANCE_SCENARIO=""
+STABLE_SECONDS="10"
+STREAM_TIMEOUT="60"
+MAX_GAP_SECONDS="1.5"
+RESTART_DELAY="2"
 CAMERA_NAME=""
 SERIAL_NUMBER=""
 USB_PORT=""
@@ -19,19 +23,26 @@ DRIVER_SETUP="${ORBBEC_DRIVER_SETUP:-}"
 RESULTS_ROOT="${WORKSPACE_ROOT}/results"
 LAUNCH_FILE=""
 LAUNCH_ARGS=()
+IMAGE_TOPICS=()
 
 usage() {
   cat <<'EOF'
 Usage:
   run_camera_auto_test.sh --mode functional
   run_camera_auto_test.sh --mode performance [--performance-scenario NAME] [--duration 300]
+  run_camera_auto_test.sh --mode restart --duration 300 [--image-topic /camera/color/image_raw]
   run_camera_auto_test.sh --mode all [--performance-scenario NAME] [--duration 300]
 
 Options:
-  --mode functional|performance|all
-  --duration SECONDS   Override scenario duration from the profile
+  --mode functional|performance|restart|all
+  --duration SECONDS   Performance duration or restart stress duration
   --profile PROFILE_NAME_OR_PATH
   --performance-scenario NAME
+  --stable-seconds SECONDS
+  --stream-timeout SECONDS
+  --max-gap-seconds SECONDS
+  --restart-delay SECONDS
+  --image-topic TOPIC
   --camera-name NAME
   --serial-number SERIAL
   --usb-port PORT
@@ -67,6 +78,26 @@ while [[ $# -gt 0 ]]; do
       ;;
     --performance-scenario)
       PERFORMANCE_SCENARIO="$2"
+      shift 2
+      ;;
+    --stable-seconds)
+      STABLE_SECONDS="$2"
+      shift 2
+      ;;
+    --stream-timeout)
+      STREAM_TIMEOUT="$2"
+      shift 2
+      ;;
+    --max-gap-seconds)
+      MAX_GAP_SECONDS="$2"
+      shift 2
+      ;;
+    --restart-delay)
+      RESTART_DELAY="$2"
+      shift 2
+      ;;
+    --image-topic)
+      IMAGE_TOPICS+=("$2")
       shift 2
       ;;
     --camera-name)
@@ -140,10 +171,12 @@ RUN_ROOT="${RESULTS_ROOT}/${RUN_ID}"
 mkdir -p "${RUN_ROOT}"
 
 COMMON_ARGS=(
-  --profile "${PROFILE}"
   --results-dir ""
 )
 
+if [[ -n "${PROFILE}" ]]; then
+  COMMON_ARGS+=(--profile "${PROFILE}")
+fi
 if [[ -n "${CAMERA_NAME}" ]]; then
   COMMON_ARGS+=(--camera-name "${CAMERA_NAME}")
 fi
@@ -170,7 +203,7 @@ run_functional() {
   local functional_dir="${RUN_ROOT}/functional"
   mkdir -p "${functional_dir}"
   local args=("${COMMON_ARGS[@]}")
-  args[3]="${functional_dir}"
+  args[1]="${functional_dir}"
   python3 -m orbbec_camera_auto_test.functional_runner "${args[@]}"
 }
 
@@ -178,7 +211,7 @@ run_performance() {
   local performance_dir="${RUN_ROOT}/performance"
   mkdir -p "${performance_dir}"
   local args=("${COMMON_ARGS[@]}")
-  args[3]="${performance_dir}"
+  args[1]="${performance_dir}"
   if [[ -n "${PERFORMANCE_SCENARIO}" ]]; then
     args+=(--performance-scenario "${PERFORMANCE_SCENARIO}")
   fi
@@ -188,12 +221,36 @@ run_performance() {
   python3 -m orbbec_camera_auto_test.performance_runner "${args[@]}"
 }
 
+run_restart() {
+  local restart_dir="${RUN_ROOT}/restart"
+  mkdir -p "${restart_dir}"
+  local args=("${COMMON_ARGS[@]}")
+  args[1]="${restart_dir}"
+  if [[ -n "${PERFORMANCE_SCENARIO}" ]]; then
+    args+=(--performance-scenario "${PERFORMANCE_SCENARIO}")
+  fi
+  if [[ -n "${DURATION}" ]]; then
+    args+=(--duration "${DURATION}")
+  fi
+  args+=(--stable-seconds "${STABLE_SECONDS}")
+  args+=(--stream-timeout "${STREAM_TIMEOUT}")
+  args+=(--max-gap-seconds "${MAX_GAP_SECONDS}")
+  args+=(--restart-delay "${RESTART_DELAY}")
+  for image_topic in "${IMAGE_TOPICS[@]}"; do
+    args+=(--image-topic "${image_topic}")
+  done
+  python3 -m orbbec_camera_auto_test.restart_runner "${args[@]}"
+}
+
 case "${MODE}" in
   functional)
     run_functional
     ;;
   performance)
     run_performance
+    ;;
+  restart)
+    run_restart
     ;;
   all)
     run_functional

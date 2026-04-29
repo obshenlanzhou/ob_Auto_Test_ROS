@@ -205,7 +205,8 @@ h2 {
 
 .status-pill.running,
 .status-pill.starting,
-.status-pill.stopping {
+.status-pill.stopping,
+.status-pill.warning {
   color: var(--warn);
   border-color: #e8cc83;
   background: var(--warn-soft);
@@ -433,6 +434,17 @@ textarea:focus {
   overflow-wrap: anywhere;
 }
 
+.restart-message {
+  border: 1px solid #e8cc83;
+  border-radius: 8px;
+  background: var(--warn-soft);
+  color: #6b5217;
+  padding: 9px 10px;
+  font-size: 12px;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
 .system-table-wrap,
 .fps-table-wrap {
   overflow: auto;
@@ -575,6 +587,11 @@ textarea:focus {
 .badge.passed {
   background: var(--ok-soft);
   color: var(--ok);
+}
+
+.badge.warning {
+  background: var(--warn-soft);
+  color: var(--warn);
 }
 
 .badge.failed,

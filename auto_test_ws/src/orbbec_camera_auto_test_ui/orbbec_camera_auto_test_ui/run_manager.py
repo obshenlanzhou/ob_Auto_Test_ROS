@@ -161,6 +161,20 @@ def _float_value(payload: Dict[str, str], key: str, default: float = 0.0) -> flo
         return default
 
 
+def _duration_like_value(value: str) -> float:
+    raw = str(value).strip().lower()
+    multiplier = 1.0
+    if raw.endswith("s"):
+        raw = raw[:-1]
+    elif raw.endswith("m"):
+        raw = raw[:-1]
+        multiplier = 60.0
+    elif raw.endswith("h"):
+        raw = raw[:-1]
+        multiplier = 3600.0
+    return float(raw) * multiplier
+
+
 def _int_value(payload: Dict[str, str], key: str, default: int = 0) -> int:
     try:
         return int(float(payload.get(key, default) or default))
@@ -346,6 +360,28 @@ def build_performance_metrics(run_root: Path) -> Dict[str, Any]:
     }
 
 
+def build_restart_metrics(run_root: Path) -> Dict[str, Any]:
+    result_path = _latest_file(run_root, "result.json")
+    result = read_json(result_path, {}) if result_path else {}
+    if not isinstance(result, dict) or "successful_restarts" not in result:
+        return {"available": False}
+
+    attempts = result.get("attempts", [])
+    current_attempt = attempts[-1] if attempts else {}
+    return {
+        "available": True,
+        "status": result.get("status", ""),
+        "successful_restarts": int(result.get("successful_restarts", 0) or 0),
+        "launch_attempts": int(result.get("launch_attempts", 0) or 0),
+        "duration_seconds": float(result.get("duration_seconds", 0.0) or 0.0),
+        "stable_seconds_required": float(result.get("stable_seconds_required", 0.0) or 0.0),
+        "current_attempt": current_attempt.get("attempt", ""),
+        "current_attempt_status": current_attempt.get("status", ""),
+        "message": result.get("warning") or current_attempt.get("message", ""),
+        "result_json": str(result_path) if result_path else "",
+    }
+
+
 def load_config() -> Dict[str, Any]:
     config = read_json(CONFIG_PATH, {})
     return {
@@ -358,6 +394,11 @@ def load_config() -> Dict[str, Any]:
         "performance_profile": config.get("performance_profile") or "gemini_330_series",
         "performance_scenario": config.get("performance_scenario") or "",
         "duration": config.get("duration") or "",
+        "stable_seconds": config.get("stable_seconds") or "10",
+        "stream_timeout": config.get("stream_timeout") or "60",
+        "max_gap_seconds": config.get("max_gap_seconds") or "1.5",
+        "restart_delay": config.get("restart_delay") or "2",
+        "image_topics": config.get("image_topics") or "",
     }
 
 
@@ -373,6 +414,11 @@ def save_config(payload: Dict[str, Any]) -> Dict[str, Any]:
         "performance_profile",
         "performance_scenario",
         "duration",
+        "stable_seconds",
+        "stream_timeout",
+        "max_gap_seconds",
+        "restart_delay",
+        "image_topics",
     ):
         if key in payload:
             config[key] = payload[key]
@@ -396,15 +442,26 @@ def _parse_extra_launch_args(raw: Any) -> List[str]:
     return [line.strip() for line in str(raw or "").splitlines() if line.strip()]
 
 
+def _parse_multiline_values(raw: Any) -> List[str]:
+    if isinstance(raw, list):
+        return [str(item).strip() for item in raw if str(item).strip()]
+    return [line.strip() for line in str(raw or "").splitlines() if line.strip()]
+
+
 def _build_runner_args(payload: Dict[str, Any], mode: str, results_dir: Path) -> List[str]:
     module = (
         "orbbec_camera_auto_test.functional_runner"
         if mode == "functional"
-        else "orbbec_camera_auto_test.performance_runner"
+        else (
+            "orbbec_camera_auto_test.restart_runner"
+            if mode == "restart"
+            else "orbbec_camera_auto_test.performance_runner"
+        )
     )
     args = ["python3", "-m", module]
     profile_key = f"{mode}_profile"
-    profile = payload.get(profile_key) or payload.get("profile") or "gemini_330_series"
+    profile = "" if mode == "restart" else "gemini_330_series"
+    profile = payload.get(profile_key) or payload.get("profile") or profile
     _append_arg(args, "--profile", profile)
     _append_arg(args, "--results-dir", str(results_dir))
     _append_arg(args, "--launch-file", payload.get("launch_file"))
@@ -415,7 +472,16 @@ def _build_runner_args(payload: Dict[str, Any], mode: str, results_dir: Path) ->
 
     if mode == "performance":
         _append_arg(args, "--performance-scenario", payload.get("performance_scenario"))
+    if mode == "performance":
         _append_arg(args, "--duration", payload.get("duration"))
+    if mode == "restart":
+        _append_arg(args, "--duration", payload.get("duration"))
+        _append_arg(args, "--stable-seconds", payload.get("stable_seconds"))
+        _append_arg(args, "--stream-timeout", payload.get("stream_timeout"))
+        _append_arg(args, "--max-gap-seconds", payload.get("max_gap_seconds"))
+        _append_arg(args, "--restart-delay", payload.get("restart_delay"))
+        for topic in _parse_multiline_values(payload.get("image_topics")):
+            args.extend(["--image-topic", topic])
 
     for launch_arg in _parse_extra_launch_args(payload.get("launch_args")):
         args.extend(["--launch-arg", launch_arg])
@@ -465,6 +531,11 @@ def _build_shell_script(payload: Dict[str, Any], run_root: Path) -> tuple[str, L
         args = _build_runner_args(payload, "performance", performance_dir)
         displayed.append(_quote_command(args))
         commands.append(_quote_command(args))
+    if mode == "restart":
+        restart_dir = run_root
+        args = _build_runner_args(payload, "restart", restart_dir)
+        displayed.append(_quote_command(args))
+        commands.append(_quote_command(args))
 
     return "\n".join(commands), displayed, shell
 
@@ -472,7 +543,7 @@ def _build_shell_script(payload: Dict[str, Any], run_root: Path) -> tuple[str, L
 def validate_run_payload(payload: Dict[str, Any]) -> List[str]:
     errors: List[str] = []
     mode = _safe_text(payload.get("mode")) or "functional"
-    if mode not in {"functional", "performance", "all"}:
+    if mode not in {"functional", "performance", "restart", "all"}:
         errors.append(f"unsupported mode: {mode}")
 
     if mode in {"functional", "all"} and not _safe_text(
@@ -497,6 +568,25 @@ def validate_run_payload(payload: Dict[str, Any]) -> List[str]:
     for launch_arg in _parse_extra_launch_args(payload.get("launch_args")):
         if "=" not in launch_arg:
             errors.append(f"launch arg must be KEY=VALUE: {launch_arg}")
+    if mode == "restart" and not _safe_text(payload.get("duration")):
+        errors.append("duration is required for restart mode")
+
+    for key in ("duration", "stable_seconds", "stream_timeout", "max_gap_seconds"):
+        value = _safe_text(payload.get(key))
+        if not value:
+            continue
+        try:
+            if _duration_like_value(value) < 0.0:
+                errors.append(f"{key} must be >= 0")
+        except ValueError:
+            errors.append(f"{key} must be numeric or use s/m/h suffix: {value}")
+    restart_delay = _safe_text(payload.get("restart_delay"))
+    if restart_delay:
+        try:
+            if float(restart_delay) < 0.0:
+                errors.append("restart_delay must be >= 0")
+        except ValueError:
+            errors.append(f"restart_delay must be numeric: {restart_delay}")
     return errors
 
 
@@ -540,6 +630,7 @@ class TestJob:
             "command_lines": self.command_lines,
             "shell": self.shell,
             "performance": build_performance_metrics(self.run_root),
+            "restart": build_restart_metrics(self.run_root),
             "log_offset": len(logs),
             "logs": logs[log_offset:],
         }
@@ -588,6 +679,11 @@ class RunManager:
                 or "gemini_330_series",
                 "performance_scenario": payload.get("performance_scenario") or "",
                 "duration": payload.get("duration") or "",
+                "stable_seconds": payload.get("stable_seconds") or "10",
+                "stream_timeout": payload.get("stream_timeout") or "60",
+                "max_gap_seconds": payload.get("max_gap_seconds") or "1.5",
+                "restart_delay": payload.get("restart_delay") or "2",
+                "image_topics": payload.get("image_topics") or "",
             }
         )
         payload = {**payload, **config}
@@ -659,6 +755,8 @@ class RunManager:
                 job.status = "interrupted"
             elif job.exit_code == 0:
                 job.status = "passed"
+            elif job.exit_code == 2:
+                job.status = "warning"
             else:
                 job.status = "failed"
         except Exception as exc:  # noqa: BLE001

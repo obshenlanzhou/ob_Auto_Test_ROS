@@ -132,6 +132,8 @@ def _aggregate_status(run_dir: Path, ui_status: Dict[str, Any]) -> str:
         return "unknown"
     if any(status == "failed" for status in statuses):
         return "failed"
+    if any(status == "warning" for status in statuses):
+        return "warning"
     if any(status == "interrupted" for status in statuses):
         return "interrupted"
     if all(status == "passed" for status in statuses):

@@ -11,6 +11,7 @@ const state = {
 };
 
 const $ = (id) => document.getElementById(id);
+const MAX_VISIBLE_LOG_LINES = 500;
 
 async function api(path, options = {}) {
   const response = await fetch(path, {
@@ -34,6 +35,11 @@ function formPayload() {
     performance_profile: $("performanceProfile").value,
     performance_scenario: $("performanceScenario").value,
     duration: $("duration").value.trim(),
+    stable_seconds: $("stableSeconds").value.trim(),
+    stream_timeout: $("streamTimeout").value.trim(),
+    max_gap_seconds: $("maxGapSeconds").value.trim(),
+    restart_delay: $("restartDelay").value.trim(),
+    image_topics: $("imageTopics").value,
     camera_name: $("cameraName").value.trim(),
     serial_number: $("serialNumber").value.trim(),
     usb_port: $("usbPort").value.trim(),
@@ -67,6 +73,10 @@ function appendLogs(lines = []) {
   const log = $("logOutput");
   const atBottom = log.scrollTop + log.clientHeight >= log.scrollHeight - 20;
   log.textContent += `${lines.join("\n")}\n`;
+  const visibleLines = log.textContent.split("\n");
+  if (visibleLines.length > MAX_VISIBLE_LOG_LINES + 1) {
+    log.textContent = `${visibleLines.slice(-(MAX_VISIBLE_LOG_LINES + 1)).join("\n")}`;
+  }
   if (atBottom) {
     log.scrollTop = log.scrollHeight;
   }
@@ -162,6 +172,27 @@ function renderPerformance(performance = {}) {
   }
 }
 
+function renderRestart(restart = {}, mode = "") {
+  const visible = mode === "restart" || restart.available;
+  $("restartMetrics").classList.toggle("is-hidden", !visible);
+  $("restartMessage").classList.toggle("is-hidden", !visible || !restart.message);
+  if (!visible) return;
+
+  $("restartSuccessCount").textContent = restart.available
+    ? String(restart.successful_restarts || 0)
+    : "--";
+  $("restartAttemptCount").textContent = restart.available
+    ? String(restart.launch_attempts || 0)
+    : "--";
+  $("restartAttemptStatus").textContent = restart.available
+    ? restart.current_attempt_status || "-"
+    : "--";
+  $("restartOverallStatus").textContent = restart.available
+    ? restart.status || "-"
+    : "--";
+  $("restartMessage").textContent = restart.message || "";
+}
+
 function updateScenarioOptions() {
   const selected = state.profiles.performance.find(
     (profile) => profile.name === $("performanceProfile").value
@@ -192,10 +223,13 @@ function updateModeControls() {
   const mode = $("mode").value;
   const needsFunctional = mode === "functional" || mode === "all";
   const needsPerformance = mode === "performance" || mode === "all";
+  const needsPerformanceRuntime = mode === "performance" || mode === "restart" || mode === "all";
+  const needsRestart = mode === "restart";
   $("functionalProfileField").classList.toggle("is-hidden", !needsFunctional);
   $("performanceProfileField").classList.toggle("is-hidden", !needsPerformance);
   $("performanceScenario").closest("label").classList.toggle("is-hidden", !needsPerformance);
-  $("duration").closest("label").classList.toggle("is-hidden", !needsPerformance);
+  $("duration").closest("label").classList.toggle("is-hidden", !needsPerformanceRuntime);
+  $("restartFields").classList.toggle("is-hidden", !needsRestart);
 
   const functional = state.profiles.functional.find(
     (profile) => profile.name === $("functionalProfile").value
@@ -205,9 +239,11 @@ function updateModeControls() {
   );
   state.selectedFunctionalProfile = functional || null;
   state.selectedPerformanceProfile = performance || null;
-  const activeProfile = needsPerformance ? performance : functional;
+  const activeProfile = needsRestart ? null : needsPerformance ? performance : functional;
   if (activeProfile?.launch_file) {
     $("launchFile").placeholder = activeProfile.launch_file;
+  } else if (needsRestart) {
+    $("launchFile").placeholder = "gemini_330_series.launch.py";
   }
 }
 
@@ -232,6 +268,11 @@ async function loadConfig() {
   $("cameraSetup").value = config.camera_setup || "";
   $("mode").value = config.mode || "functional";
   $("duration").value = config.duration || "";
+  $("stableSeconds").value = config.stable_seconds || "10";
+  $("streamTimeout").value = config.stream_timeout || "60";
+  $("maxGapSeconds").value = config.max_gap_seconds || "1.5";
+  $("restartDelay").value = config.restart_delay || "2";
+  $("imageTopics").value = config.image_topics || "";
   $("workspacePath").textContent = `工作区: ${config.auto_test_ws}`;
 }
 
@@ -276,9 +317,10 @@ async function pollStatus() {
       renderCommands(payload.command_lines);
     }
     renderPerformance(payload.performance || {});
+    renderRestart(payload.restart || {}, payload.mode || $("mode").value);
     appendLogs(payload.logs || []);
     state.logOffset = payload.log_offset || state.logOffset;
-    if (["passed", "failed", "interrupted"].includes(payload.status)) {
+    if (["passed", "failed", "interrupted", "warning"].includes(payload.status)) {
       await loadRuns();
     }
   } catch (error) {
@@ -298,6 +340,7 @@ async function startRun(event) {
     });
     setStatus(payload.status);
     renderCommands(payload.command_lines || []);
+    renderRestart(payload.restart || {}, payload.mode || $("mode").value);
     appendLogs(payload.logs || []);
     state.logOffset = payload.log_offset || 0;
   } catch (error) {

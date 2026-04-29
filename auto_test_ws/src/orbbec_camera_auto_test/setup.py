@@ -32,6 +32,7 @@ setup(
         "console_scripts": [
             "run_functional_test = orbbec_camera_auto_test.functional_runner:main",
             "run_performance_test = orbbec_camera_auto_test.performance_runner:main",
+            "run_restart_test = orbbec_camera_auto_test.restart_runner:main",
         ],
     },
 )

@@ -6,10 +6,11 @@
 
 - `gemini_330_series.launch.py`
 
-测试能力分成两个独立模块：
+测试能力分成三个独立模块：
 
 1. 功能测试
 2. 性能压测
+3. launch 重启出流测试
 
 也支持按顺序执行：
 
@@ -33,6 +34,7 @@
 - [performance/gemini_330_series.yaml](/home/slz/ORBBEC/ob_Auto_Test/auto_test_ws/src/orbbec_camera_auto_test/profiles/performance/gemini_330_series.yaml)
 - [functional_runner.py](/home/slz/ORBBEC/ob_Auto_Test/auto_test_ws/src/orbbec_camera_auto_test/orbbec_camera_auto_test/functional_runner.py)
 - [performance_runner.py](/home/slz/ORBBEC/ob_Auto_Test/auto_test_ws/src/orbbec_camera_auto_test/orbbec_camera_auto_test/performance_runner.py)
+- [restart_runner.py](/home/slz/ORBBEC/ob_Auto_Test/auto_test_ws/src/orbbec_camera_auto_test/orbbec_camera_auto_test/restart_runner.py)
 
 
 ## 3. 环境要求
@@ -119,14 +121,38 @@ cd /home/slz/ORBBEC/ob_Auto_Test/auto_test_ws
 - `all` 模式会先跑功能测试
 - 只有功能测试通过后，才会继续跑性能压测
 
+### 5.4 launch 重启出流测试
+
+默认每轮启动指定 launch，等待图像 topic 连续稳定出流 10 秒；成功后关闭 launch 并继续重启测试，直到达到指定压测时间。如果图像一直不出流，会打印 warning，并保持当前 launch 不关闭，方便人工继续确认。
+
+```bash
+./run_camera_auto_test.sh \
+  --mode restart \
+  --duration 30m \
+  --launch-file gemini_330_series.launch.py \
+  --launch-arg camera_name=camera \
+  --launch-arg color_width=1280 \
+  --launch-arg color_height=720 \
+  --image-topic /camera/color/image_raw \
+  --stable-seconds 10 \
+  --stream-timeout 60 \
+  --driver-setup /path/to/install/setup.bash
+```
+
 
 ## 6. 常用参数
 
 脚本支持的主要参数如下：
 
-- `--mode functional|performance|all`
+- `--mode functional|performance|restart|all`
 - `--duration SECONDS`
 - `--profile PROFILE_NAME_OR_PATH`
+- `--performance-scenario NAME`
+- `--stable-seconds SECONDS`
+- `--stream-timeout SECONDS`
+- `--max-gap-seconds SECONDS`
+- `--restart-delay SECONDS`
+- `--image-topic TOPIC`
 - `--camera-name NAME`
 - `--serial-number SERIAL`
 - `--usb-port PORT`
@@ -135,6 +161,13 @@ cd /home/slz/ORBBEC/ob_Auto_Test/auto_test_ws
 - `--results-root PATH`
 - `--launch-file FILE`
 - `--launch-arg KEY=VALUE`
+
+`restart` 模式支持指定 launch 和 launch 参数：
+
+- `--launch-file` 指定要反复启动的 launch 文件
+- `--launch-arg KEY=VALUE` 可重复传入多个 launch 参数
+
+Web UI 中选择 `restart` 后，在底部 `Launch` 区域填写 `Launch file` 和 `Extra launch args` 即可；`Extra launch args` 每行一个 `KEY=VALUE`。
 
 查看帮助：
 

@@ -69,6 +69,7 @@
                 <select id="mode" name="mode">
                   <option value="functional">functional</option>
                   <option value="performance">performance</option>
+                  <option value="restart">restart</option>
                   <option value="all">all</option>
                 </select>
               </label>
@@ -95,6 +96,39 @@
               <label>
                 Duration
                 <input id="duration" name="duration" placeholder="300 / 15m / 2h" />
+              </label>
+            </div>
+
+            <div id="restartFields">
+              <div class="grid two">
+                <label>
+                  Stable seconds
+                  <input id="stableSeconds" name="stable_seconds" placeholder="10" />
+                </label>
+
+                <label>
+                  Stream timeout
+                  <input id="streamTimeout" name="stream_timeout" placeholder="60" />
+                </label>
+              </div>
+
+              <div class="grid two">
+                <label>
+                  Max gap seconds
+                  <input id="maxGapSeconds" name="max_gap_seconds" placeholder="1.5" />
+                </label>
+              </div>
+
+              <div class="grid two">
+                <label>
+                  Restart delay
+                  <input id="restartDelay" name="restart_delay" placeholder="2" />
+                </label>
+              </div>
+
+              <label>
+                Image topics
+                <textarea id="imageTopics" name="image_topics" rows="3" placeholder="/camera/color/image_raw"></textarea>
               </label>
             </div>
 
@@ -174,6 +208,26 @@
                 <strong id="perfPidCount">--</strong>
               </div>
             </div>
+
+            <div class="perf-metrics restart-metrics is-hidden" id="restartMetrics">
+              <div class="perf-metric">
+                <span>已成功重启</span>
+                <strong id="restartSuccessCount">--</strong>
+              </div>
+              <div class="perf-metric">
+                <span>启动轮次</span>
+                <strong id="restartAttemptCount">--</strong>
+              </div>
+              <div class="perf-metric">
+                <span>当前轮状态</span>
+                <strong id="restartAttemptStatus">--</strong>
+              </div>
+              <div class="perf-metric">
+                <span>Restart 状态</span>
+                <strong id="restartOverallStatus">--</strong>
+              </div>
+            </div>
+            <div class="restart-message is-hidden" id="restartMessage"></div>
 
             <div class="system-table-wrap">
               <table class="system-table">
