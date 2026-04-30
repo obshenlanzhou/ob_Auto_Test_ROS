@@ -1,4 +1,5 @@
 .codex
 source_document/*
 auto_test_ws/results/*
+__pycache__/
 *.pyc
