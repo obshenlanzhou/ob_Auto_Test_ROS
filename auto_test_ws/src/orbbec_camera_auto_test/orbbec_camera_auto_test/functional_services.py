@@ -72,10 +72,10 @@ def _build_keepalive_subscriptions(harness, keepalive_topics: List[TopicSpec]):
             received_counts[topic_name] += 1
 
         subscription = harness.node.create_subscription(
-            resolve_message_type(topic.type),
+            resolve_message_type(topic.type, harness.ros_version),
             topic.name,
             callback,
-            make_qos_profile(topic.qos),
+            make_qos_profile(topic.qos, harness.ros_version),
         )
         subscriptions.append(subscription)
     return subscriptions, received_counts
@@ -110,24 +110,24 @@ def run_service_checks(harness, service_specs: List[ServiceSpec], log_path, emit
         _emit_status(emit_status, f"[SERVICE] checking {spec.name} ({spec.mode})")
         try:
             if spec.mode == "advertised":
-                service_type = resolve_service_type(spec.type)
+                service_type = resolve_service_type(spec.type, harness.ros_version)
                 harness.wait_for_service(spec.name, service_type, timeout=30.0)
                 result["message"] = "service advertised"
             elif spec.mode == "read":
-                service_type = resolve_service_type(spec.type)
+                service_type = resolve_service_type(spec.type, harness.ros_version)
                 response = harness.call_service(
                     spec.name, service_type, request_data=spec.request, timeout=30.0
                 )
                 evaluate_response_checks(response, spec.response_checks)
                 result["message"] = "read succeeded"
             elif spec.mode == "roundtrip_bool":
-                getter_type = resolve_service_type(spec.getter_type)
+                getter_type = resolve_service_type(spec.getter_type, harness.ros_version)
                 getter_response = harness.call_service(
                     spec.getter_name, getter_type, request_data={}, timeout=30.0
                 )
                 baseline_value = bool(deep_getattr(getter_response, spec.getter_field))
                 target_value = not baseline_value
-                setter_type = resolve_service_type(spec.type)
+                setter_type = resolve_service_type(spec.type, harness.ros_version)
                 set_response = harness.call_service(
                     spec.name,
                     setter_type,
@@ -167,13 +167,13 @@ def run_service_checks(harness, service_specs: List[ServiceSpec], log_path, emit
                     raise ValueError("state did not recover to baseline")
                 result["message"] = f"roundtrip succeeded (baseline={baseline_value})"
             elif spec.mode == "roundtrip_int":
-                getter_type = resolve_service_type(spec.getter_type)
+                getter_type = resolve_service_type(spec.getter_type, harness.ros_version)
                 getter_response = harness.call_service(
                     spec.getter_name, getter_type, request_data={}, timeout=30.0
                 )
                 baseline_value = int(deep_getattr(getter_response, spec.getter_field))
                 request_data, target_value = _resolve_roundtrip_request(spec, baseline_value)
-                setter_type = resolve_service_type(spec.type)
+                setter_type = resolve_service_type(spec.type, harness.ros_version)
                 set_response = harness.call_service(
                     spec.name,
                     setter_type,
@@ -217,13 +217,13 @@ def run_service_checks(harness, service_specs: List[ServiceSpec], log_path, emit
                     f"roundtrip succeeded (baseline={baseline_value}, target={target_value})"
                 )
             elif spec.mode == "roundtrip_bool_int":
-                getter_type = resolve_service_type(spec.getter_type)
+                getter_type = resolve_service_type(spec.getter_type, harness.ros_version)
                 getter_response = harness.call_service(
                     spec.getter_name, getter_type, request_data={}, timeout=30.0
                 )
                 baseline_value = bool(int(deep_getattr(getter_response, spec.getter_field)))
                 target_value = not baseline_value
-                setter_type = resolve_service_type(spec.type)
+                setter_type = resolve_service_type(spec.type, harness.ros_version)
                 set_response = harness.call_service(
                     spec.name,
                     setter_type,
@@ -300,7 +300,7 @@ def run_artifact_service_checks(
                 _emit_status(emit_status, f"[ARTIFACT] keepalive subscriptions active: {keepalive_names}")
 
             before = _snapshot_files(target_dir)
-            service_type = resolve_service_type(spec.type)
+            service_type = resolve_service_type(spec.type, harness.ros_version)
             response = harness.call_service(spec.name, service_type, request_data=spec.request)
             if hasattr(response, "success") and not response.success:
                 raise ValueError(getattr(response, "message", "artifact service returned false"))
@@ -346,12 +346,12 @@ def run_reboot_check(
     _emit_status(emit_status, f"[REBOOT] checking {reboot_spec.name}")
     result = {"name": reboot_spec.name, "type": reboot_spec.type, "status": "passed", "message": ""}
     try:
-        reboot_type = resolve_service_type(reboot_spec.type)
+        reboot_type = resolve_service_type(reboot_spec.type, harness.ros_version)
         harness.call_service(reboot_spec.name, reboot_type, request_data={}, timeout=30.0)
         time.sleep(3.0)
         harness.wait_for_service(
             f"/{camera_name}/get_sdk_version",
-            resolve_service_type("orbbec_camera_msgs/srv/GetString"),
+            resolve_service_type("orbbec_camera_msgs/srv/GetString", harness.ros_version),
             timeout=120.0,
         )
         if not image_topics:
@@ -359,7 +359,7 @@ def run_reboot_check(
         for topic in image_topics:
             harness.wait_for_message(
                 topic.name,
-                resolve_message_type(topic.type),
+                resolve_message_type(topic.type, harness.ros_version),
                 timeout=120.0,
             )
         verified_topics = ", ".join(topic.name for topic in image_topics)

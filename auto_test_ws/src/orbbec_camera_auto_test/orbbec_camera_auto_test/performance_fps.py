@@ -26,7 +26,9 @@ def _header_stamp(message: Any) -> Optional[float]:
     header = getattr(message, "header", None)
     if header is None or getattr(header, "stamp", None) is None:
         return None
-    stamp = header.stamp.sec + header.stamp.nanosec * 1e-9
+    sec = getattr(header.stamp, "sec", getattr(header.stamp, "secs", 0))
+    nanosec = getattr(header.stamp, "nanosec", getattr(header.stamp, "nsecs", 0))
+    stamp = sec + nanosec * 1e-9
     if stamp <= 0.0:
         return None
     return stamp
@@ -88,6 +90,7 @@ class TopicFpsCollector:
         sample_period: float = 1.0,
         frame_timestamp_dir: Optional[Path] = None,
         frame_timestamp_flush_every_rows: int = 1000,
+        ros_version: str = "2",
     ):
         self.node = node
         self.topic_specs = topic_specs
@@ -99,6 +102,7 @@ class TopicFpsCollector:
         self.subscriptions = []
         self.frame_timestamp_dir = frame_timestamp_dir
         self.frame_timestamp_flush_every_rows = max(frame_timestamp_flush_every_rows, 1)
+        self.ros_version = str(ros_version)
         self.frame_timestamp_files: Dict[str, Any] = {}
         self.frame_timestamp_writers: Dict[str, csv.writer] = {}
         self.frame_timestamp_rows_since_flush: Dict[str, int] = {}
@@ -138,7 +142,7 @@ class TopicFpsCollector:
                 "total_dropped_frames": 0,
             }
             self._open_frame_timestamp_file(spec.name)
-            msg_type = resolve_message_type(spec.type)
+            msg_type = resolve_message_type(spec.type, self.ros_version)
             self.subscriptions.append(
                 self.node.create_subscription(
                     msg_type,

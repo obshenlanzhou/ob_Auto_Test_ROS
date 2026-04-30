@@ -19,7 +19,9 @@ def _message_stamp_nonzero(message: Any) -> bool:
     stamp = getattr(header, "stamp", None)
     if stamp is None:
         return True
-    return bool(stamp.sec or stamp.nanosec)
+    sec = getattr(stamp, "sec", getattr(stamp, "secs", 0))
+    nanosec = getattr(stamp, "nanosec", getattr(stamp, "nsecs", 0))
+    return bool(sec or nanosec)
 
 
 def validate_topic_message(harness, spec: TopicSpec, message: Any, cached_messages: Dict[str, Any]):
@@ -40,7 +42,7 @@ def validate_topic_message(harness, spec: TopicSpec, message: Any, cached_messag
         if image_message is None:
             image_message = harness.wait_for_message(
                 spec.paired_topic,
-                resolve_message_type("sensor_msgs/msg/Image"),
+                resolve_message_type("sensor_msgs/msg/Image", harness.ros_version),
                 timeout=spec.timeout,
             )
             cached_messages[spec.paired_topic] = image_message
@@ -108,9 +110,9 @@ def run_topic_checks(harness, topic_specs: List[TopicSpec], log_path, emit_statu
             else:
                 message = harness.wait_for_message(
                     spec.name,
-                    resolve_message_type(spec.type),
+                    resolve_message_type(spec.type, harness.ros_version),
                     timeout=spec.timeout,
-                    qos_profile=make_qos_profile(spec.qos),
+                    qos_profile=make_qos_profile(spec.qos, harness.ros_version),
                 )
                 cached_messages[spec.name] = message
                 result["metrics"] = validate_topic_message(harness, spec, message, cached_messages)

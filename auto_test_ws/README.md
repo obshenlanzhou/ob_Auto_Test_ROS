@@ -2,9 +2,10 @@
 
 ## 1. 说明
 
-`auto_test_ws` 提供一套面向 Orbbec ROS2 相机的自动化测试工具，当前首版固定支持：
+`auto_test_ws` 提供一套面向 Orbbec ROS 相机的自动化测试工具，当前支持 ROS2 和 ROS1 两种运行方式：
 
-- `gemini_330_series.launch.py`
+- ROS2：`ros2 launch orbbec_camera <launch.py>`
+- ROS1：`roslaunch orbbec_camera <launch>`
 
 测试能力分成三个独立模块：
 
@@ -41,19 +42,21 @@
 
 运行前需要满足以下条件：
 
-- 系统已安装 ROS2 Humble
+- 系统已安装 ROS2 Humble 或 ROS1 Noetic/Melodic
 - `orbbec_camera` 驱动已经可用
 - 目标相机已经连接并能被驱动正常启动
 - Python 依赖可用：
-  - `rclpy`
+  - ROS2 使用 `rclpy`
+  - ROS1 使用 `rospy`
   - `PyYAML`
   - `psutil`
 
 脚本运行时会自动：
 
-- `source /opt/ros/humble/setup.bash`
+- ROS2 默认 `source /opt/ros/humble/setup.bash`
+- ROS1 默认 `source /opt/ros/one/setup.bash`
 - 如提供 `--driver-setup`，则额外 `source` 对应驱动环境
-- 清理旧的 `ROS_DISTRO` / `ROS_ETC_DIR`，避免混用其他 ROS 环境
+- 通过 `--ros-version 1|2` 切换 ROS 版本
 
 
 ## 4. 驱动环境准备
@@ -70,6 +73,16 @@
 
 ```bash
 ./run_camera_auto_test.sh --mode functional --driver-setup /path/to/install/setup.bash
+```
+
+ROS1 示例：
+
+```bash
+./run_camera_auto_test.sh \
+  --mode functional \
+  --ros-version 1 \
+  --ros-setup /opt/ros/one/setup.bash \
+  --driver-setup /home/slz/ORBBEC/orbbecsdk_ros1_v2-main/devel/setup.bash
 ```
 
 2. 通过环境变量提供：
@@ -158,6 +171,8 @@ cd /home/slz/ORBBEC/ob_Auto_Test/auto_test_ws
 - `--usb-port PORT`
 - `--config-file-path PATH`
 - `--driver-setup PATH`
+- `--ros-version 1|2`
+- `--ros-setup PATH`
 - `--results-root PATH`
 - `--launch-file FILE`
 - `--launch-arg KEY=VALUE`
@@ -166,6 +181,8 @@ cd /home/slz/ORBBEC/ob_Auto_Test/auto_test_ws
 
 - `--launch-file` 指定要反复启动的 launch 文件
 - `--launch-arg KEY=VALUE` 可重复传入多个 launch 参数
+- ROS2 launch 通常传 `*.launch.py`
+- ROS1 launch 通常传 `*.launch`
 
 Web UI 中选择 `restart` 后，在底部 `Launch` 区域填写 `Launch file` 和 `Extra launch args` 即可；`Extra launch args` 每行一个 `KEY=VALUE`。
 
@@ -206,13 +223,19 @@ source /opt/ros/humble/setup.bash
 source <页面中填写的 Camera ROS setup.bash 或 setup.zsh>
 ```
 
+页面中可以通过 `ROS version` 选择 ROS2 或 ROS1。选择 ROS1 后，UI 会生成带有 `--ros-version 1` 的测试命令，并默认使用：
+
+```text
+/opt/ros/one/setup.bash
+```
+
 `Camera ROS setup.bash` 默认会自动填入：
 
 ```text
 /home/slz/ORBBEC/orbbecsdk_ros2_v2-main/install/setup.bash
 ```
 
-如果使用 `setup.zsh`，UI 后端会切换到 zsh 执行测试命令，并优先 source `/opt/ros/humble/setup.zsh`。UI 会把测试记录写入：
+如果使用 `setup.zsh`，UI 后端会切换到 zsh 执行测试命令，并优先 source 对应的 `setup.zsh`。UI 会把测试记录写入：
 
 ```text
 results/ui_runs/
@@ -498,7 +521,7 @@ python3 -m orbbec_camera_auto_test.performance_runner --help
 
 当前实现有以下限制：
 
-- 首版只支持 `gemini_330_series.launch.py`
+- 默认 profile 主要覆盖 `gemini_330_series`，ROS2 默认 launch 为 `gemini_330_series.launch.py`，ROS1 会自动切到 `gemini_330_series.launch`
 - 功能测试和性能压测都依赖真实相机在线
 - 性能压测当前只做统计和报告，不做硬阈值判定
 - YAML profile 目前只提供一个机型模板
@@ -522,6 +545,16 @@ ls /opt/ros/humble/setup.bash
 source /path/to/install/setup.bash
 ros2 pkg list | grep orbbec_camera
 ```
+
+ROS1 检查：
+
+```bash
+source /path/to/devel/setup.bash
+rospack find orbbec_camera
+roslaunch orbbec_camera gemini_330_series.launch
+```
+
+如果 ROS1 日志提示 `libOrbbecSDK.so` 找不到，需要确认当前驱动工作区的 SDK 动态库版本和已编译节点一致。
 
 ### 15.3 相机起不来
 

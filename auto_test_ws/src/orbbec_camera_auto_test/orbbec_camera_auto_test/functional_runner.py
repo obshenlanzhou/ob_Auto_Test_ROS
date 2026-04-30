@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -59,6 +60,14 @@ def _build_launch_args(profile: CameraProfile, args) -> Dict[str, Any]:
     return launch_args
 
 
+def _select_launch_file(profile: CameraProfile | None, args) -> str:
+    launch_file = args.launch_file or (profile.launch_file if profile is not None else "")
+    if str(getattr(args, "ros_version", "2")) == "1" and not args.launch_file:
+        if launch_file.endswith(".launch.py"):
+            return launch_file[:-3]
+    return launch_file
+
+
 def _make_status_logger(*log_paths: Path):
     def emit(message: str) -> None:
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -83,16 +92,23 @@ def _wait_for_camera_ready(
     emit_status(f"waiting for service '/{camera_name}/get_sdk_version'")
     harness.wait_for_service(
         f"/{camera_name}/get_sdk_version",
-        resolve_service_type("orbbec_camera_msgs/srv/GetString"),
+        resolve_service_type("orbbec_camera_msgs/srv/GetString", harness.ros_version),
         timeout=60.0,
     )
     emit_status(f"launch is ready for camera '{camera_name}'")
 
 
-def _require_detected_camera(driver_setup: str | None, emit_status) -> Dict[str, Any]:
+def _require_detected_camera(
+    driver_setup: str | None,
+    emit_status,
+    ros_version: str = "2",
+    ros_setup: str | None = None,
+) -> Dict[str, Any]:
     emit_status("probing connected Orbbec devices before launch")
-    discovery = discover_orbbec_devices(driver_setup)
-    if discovery["device_count"] > 0:
+    discovery = discover_orbbec_devices(driver_setup, ros_version=ros_version, ros_setup=ros_setup)
+    if discovery.get("skipped"):
+        emit_status(f"camera discovery skipped: {discovery['message']}")
+    elif discovery["device_count"] > 0:
         emit_status(f"camera discovery succeeded: {discovery['message']}")
     elif discovery["success"]:
         emit_status("camera discovery finished: no camera found")
@@ -103,6 +119,8 @@ def _require_detected_camera(driver_setup: str | None, emit_status) -> Dict[str,
         for line in discovery["output"].splitlines():
             emit_status(f"discovery> {line}")
 
+    if discovery.get("skipped"):
+        return discovery
     if not discovery["success"]:
         raise RuntimeError(f"camera discovery command failed: {discovery['message']}")
     if discovery["device_count"] <= 0:
@@ -111,7 +129,6 @@ def _require_detected_camera(driver_setup: str | None, emit_status) -> Dict[str,
 
 
 def _run_scenario(
-    harness: RosHarness,
     profile: CameraProfile,
     launch_file: str,
     scenario: LaunchScenarioSpec,
@@ -121,6 +138,8 @@ def _run_scenario(
     topic_log_path: Path,
     service_log_path: Path,
     driver_setup: str | None,
+    ros_version: str,
+    ros_setup: str | None,
     emit_status,
 ) -> tuple[Dict[str, Any], Any]:
     scenario_dir = ensure_dir(results_dir / "scenarios" / scenario.name)
@@ -138,6 +157,8 @@ def _run_scenario(
         work_dir=artifacts_dir,
         log_path=launch_log_path,
         driver_setup=driver_setup,
+        ros_version=ros_version,
+        ros_setup=ros_setup,
         status_callback=emit_status,
     )
     regular_services, artifact_services, reboot_service = partition_service_specs(scenario.services)
@@ -156,25 +177,26 @@ def _run_scenario(
     try:
         emit_status(f"starting launch scenario '{scenario.name}'")
         session.start()
-        _wait_for_camera_ready(session, harness, launch_args["camera_name"], emit_status)
-        emit_status(f"collecting ROS graph snapshot for scenario '{scenario.name}'")
-        scenario_result["graph_snapshot"] = harness.graph_snapshot()
-        emit_status(f"testing scenario topics for '{scenario.name}'")
-        scenario_result["topics"] = run_topic_checks(
-            harness, scenario.topics, topic_log_path, emit_status=emit_status
-        )
-        emit_status(f"testing scenario services for '{scenario.name}'")
-        scenario_result["services"] = run_service_checks(
-            harness, regular_services, service_log_path, emit_status=emit_status
-        )
-        emit_status(f"testing scenario artifact services for '{scenario.name}'")
-        scenario_result["artifacts"] = run_artifact_service_checks(
-            harness,
-            artifact_services,
-            artifacts_dir,
-            service_log_path,
-            emit_status=emit_status,
-        )
+        with RosHarness("orbbec_camera_functional_test", ros_version=ros_version) as harness:
+            _wait_for_camera_ready(session, harness, launch_args["camera_name"], emit_status)
+            emit_status(f"collecting ROS graph snapshot for scenario '{scenario.name}'")
+            scenario_result["graph_snapshot"] = harness.graph_snapshot()
+            emit_status(f"testing scenario topics for '{scenario.name}'")
+            scenario_result["topics"] = run_topic_checks(
+                harness, scenario.topics, topic_log_path, emit_status=emit_status
+            )
+            emit_status(f"testing scenario services for '{scenario.name}'")
+            scenario_result["services"] = run_service_checks(
+                harness, regular_services, service_log_path, emit_status=emit_status
+            )
+            emit_status(f"testing scenario artifact services for '{scenario.name}'")
+            scenario_result["artifacts"] = run_artifact_service_checks(
+                harness,
+                artifact_services,
+                artifacts_dir,
+                service_log_path,
+                emit_status=emit_status,
+            )
     except Exception as exc:  # noqa: BLE001
         scenario_result["status"] = "failed"
         scenario_result["message"] = str(exc)
@@ -208,7 +230,7 @@ def run_functional_test(args) -> int:
 
     emit_status(f"loading functional profile '{args.profile}'")
     profile = load_camera_profile(args.profile, profile_type="functional")
-    launch_file = args.launch_file or profile.launch_file
+    launch_file = _select_launch_file(profile, args)
     base_launch_args = _build_launch_args(profile, args)
     camera_name = str(base_launch_args.get("camera_name", "camera"))
     emit_status(f"functional test target launch: {launch_file}")
@@ -221,64 +243,73 @@ def run_functional_test(args) -> int:
 
     result = {
         "profile_name": profile.profile_name,
+        "ros_version": str(args.ros_version),
         "launch_file": launch_file,
         "camera_name": camera_name,
         "status": "passed",
         "scenarios": [],
     }
 
-    with RosHarness("orbbec_camera_functional_test") as harness:
+    try:
+        _require_detected_camera(
+            args.driver_setup,
+            emit_status,
+            ros_version=args.ros_version,
+            ros_setup=args.ros_setup,
+        )
+    except Exception as exc:  # noqa: BLE001
+        result["status"] = "failed"
+        result["preflight_error"] = str(exc)
+        emit_status(f"functional preflight failed: {exc}")
+        write_json(results_dir / "result.json", result)
+        write_markdown(results_dir / "summary.md", build_functional_summary(result))
+        return 1
+
+    deferred_reboots = []
+    emit_status("starting functional launch scenarios")
+    for scenario in profile.launch_scenarios:
+        scenario_result, reboot_spec = _run_scenario(
+            profile=profile,
+            launch_file=launch_file,
+            scenario=scenario,
+            base_launch_args=base_launch_args,
+            results_dir=results_dir,
+            launch_log_path=launch_log_path,
+            topic_log_path=topic_log_path,
+            service_log_path=service_log_path,
+            driver_setup=args.driver_setup,
+            ros_version=args.ros_version,
+            ros_setup=args.ros_setup,
+            emit_status=emit_status,
+        )
+        result["scenarios"].append(scenario_result)
+        if reboot_spec is not None:
+            deferred_reboots.append((scenario, scenario_result, reboot_spec))
+
+    if deferred_reboots:
+        emit_status("starting final reboot recovery checks")
+    for scenario, scenario_result, reboot_spec in deferred_reboots:
+        emit_status(f"running reboot as final step for scenario '{scenario.name}'")
+        reboot_dir = ensure_dir(results_dir / "scenarios" / scenario.name / "reboot")
+        launch_args = dict(base_launch_args)
+        launch_args.update(scenario.launch_args)
+        write_json(
+            reboot_dir / "launch_args.json",
+            {"launch_file": launch_file, "launch_args": launch_args},
+        )
+        reboot_session = TestSession(
+            launch_file=launch_file,
+            launch_args=launch_args,
+            work_dir=reboot_dir,
+            log_path=launch_log_path,
+            driver_setup=args.driver_setup,
+            ros_version=args.ros_version,
+            ros_setup=args.ros_setup,
+            status_callback=emit_status,
+        )
         try:
-            _require_detected_camera(args.driver_setup, emit_status)
-        except Exception as exc:  # noqa: BLE001
-            result["status"] = "failed"
-            result["preflight_error"] = str(exc)
-            emit_status(f"functional preflight failed: {exc}")
-            write_json(results_dir / "result.json", result)
-            write_markdown(results_dir / "summary.md", build_functional_summary(result))
-            return 1
-
-        deferred_reboots = []
-        emit_status("starting functional launch scenarios")
-        for scenario in profile.launch_scenarios:
-            scenario_result, reboot_spec = _run_scenario(
-                harness=harness,
-                profile=profile,
-                launch_file=launch_file,
-                scenario=scenario,
-                base_launch_args=base_launch_args,
-                results_dir=results_dir,
-                launch_log_path=launch_log_path,
-                topic_log_path=topic_log_path,
-                service_log_path=service_log_path,
-                driver_setup=args.driver_setup,
-                emit_status=emit_status,
-            )
-            result["scenarios"].append(scenario_result)
-            if reboot_spec is not None:
-                deferred_reboots.append((scenario, scenario_result, reboot_spec))
-
-        if deferred_reboots:
-            emit_status("starting final reboot recovery checks")
-        for scenario, scenario_result, reboot_spec in deferred_reboots:
-            emit_status(f"running reboot as final step for scenario '{scenario.name}'")
-            reboot_dir = ensure_dir(results_dir / "scenarios" / scenario.name / "reboot")
-            launch_args = dict(base_launch_args)
-            launch_args.update(scenario.launch_args)
-            write_json(
-                reboot_dir / "launch_args.json",
-                {"launch_file": launch_file, "launch_args": launch_args},
-            )
-            reboot_session = TestSession(
-                launch_file=launch_file,
-                launch_args=launch_args,
-                work_dir=reboot_dir,
-                log_path=launch_log_path,
-                driver_setup=args.driver_setup,
-                status_callback=emit_status,
-            )
-            try:
-                reboot_session.start()
+            reboot_session.start()
+            with RosHarness("orbbec_camera_functional_reboot_test", ros_version=args.ros_version) as harness:
                 _wait_for_camera_ready(reboot_session, harness, launch_args["camera_name"], emit_status)
                 image_topics = [topic for topic in scenario.topics if topic.validator == "image"]
                 topic_names = ", ".join(topic.name for topic in image_topics) or "<none>"
@@ -293,15 +324,15 @@ def run_functional_test(args) -> int:
                     service_log_path,
                     emit_status=emit_status,
                 )
-            except Exception as exc:  # noqa: BLE001
-                scenario_result["reboot"] = {"status": "failed", "message": str(exc)}
-                emit_status(f"reboot recovery check failed for '{scenario.name}': {exc}")
-            finally:
-                reboot_session.stop()
+        except Exception as exc:  # noqa: BLE001
+            scenario_result["reboot"] = {"status": "failed", "message": str(exc)}
+            emit_status(f"reboot recovery check failed for '{scenario.name}': {exc}")
+        finally:
+            reboot_session.stop()
 
-            if scenario_result["reboot"].get("status") == "failed":
-                scenario_result["status"] = "failed"
-            write_json(results_dir / "scenarios" / scenario.name / "result.json", scenario_result)
+        if scenario_result["reboot"].get("status") == "failed":
+            scenario_result["status"] = "failed"
+        write_json(results_dir / "scenarios" / scenario.name / "result.json", scenario_result)
 
     if collect_failures(result):
         result["status"] = "failed"
@@ -322,6 +353,17 @@ def parse_args():
     parser.add_argument("--usb-port", default=None)
     parser.add_argument("--config-file-path", default=None)
     parser.add_argument("--driver-setup", default=None)
+    parser.add_argument(
+        "--ros-version",
+        choices=("1", "2"),
+        default=os.environ.get("ORBBEC_ROS_VERSION", "2"),
+        help="ROS major version to use",
+    )
+    parser.add_argument(
+        "--ros-setup",
+        default=os.environ.get("ORBBEC_ROS_SETUP", ""),
+        help="ROS setup.bash/setup.zsh path",
+    )
     parser.add_argument("--results-dir", required=True)
     parser.add_argument("--launch-arg", action="append", default=[], help="Extra KEY=VALUE launch arg")
     return parser.parse_args()

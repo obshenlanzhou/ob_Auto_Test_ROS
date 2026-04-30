@@ -20,6 +20,8 @@ SERIAL_NUMBER=""
 USB_PORT=""
 CONFIG_FILE_PATH=""
 DRIVER_SETUP="${ORBBEC_DRIVER_SETUP:-}"
+ROS_VERSION="${ORBBEC_ROS_VERSION:-2}"
+ROS_SETUP="${ORBBEC_ROS_SETUP:-}"
 RESULTS_ROOT="${WORKSPACE_ROOT}/results"
 LAUNCH_FILE=""
 LAUNCH_ARGS=()
@@ -48,6 +50,8 @@ Options:
   --usb-port PORT
   --config-file-path PATH
   --driver-setup PATH
+  --ros-version 1|2
+  --ros-setup PATH
   --results-root PATH
   --launch-file FILE
   --launch-arg KEY=VALUE
@@ -120,6 +124,14 @@ while [[ $# -gt 0 ]]; do
       DRIVER_SETUP="$2"
       shift 2
       ;;
+    --ros-version)
+      ROS_VERSION="$2"
+      shift 2
+      ;;
+    --ros-setup)
+      ROS_SETUP="$2"
+      shift 2
+      ;;
     --results-root)
       RESULTS_ROOT="$2"
       shift 2
@@ -150,14 +162,39 @@ if [[ -z "${MODE}" ]]; then
   exit 1
 fi
 
-if [[ ! -f /opt/ros/humble/setup.bash ]]; then
-  echo "ROS2 Humble setup not found at /opt/ros/humble/setup.bash" >&2
+if [[ "${ROS_VERSION}" != "1" && "${ROS_VERSION}" != "2" ]]; then
+  echo "--ros-version must be 1 or 2" >&2
   exit 1
 fi
 
-unset ROS_DISTRO
-unset ROS_ETC_DIR
-safe_source /opt/ros/humble/setup.bash
+if [[ -z "${ROS_SETUP}" ]]; then
+  if [[ "${ROS_VERSION}" == "1" ]]; then
+    ROS_SETUP="/opt/ros/one/setup.bash"
+  else
+    ROS_SETUP="/opt/ros/humble/setup.bash"
+  fi
+fi
+
+if [[ ! -f "${ROS_SETUP}" ]]; then
+  echo "ROS setup not found: ${ROS_SETUP}" >&2
+  exit 1
+fi
+
+if [[ "${ROS_VERSION}" == "1" ]]; then
+  unset ROS_DISTRO
+  unset ROS_ETC_DIR
+  unset AMENT_PREFIX_PATH
+  unset COLCON_PREFIX_PATH
+  PATH="$(printf '%s' "${PATH}" | tr ':' '\n' | { grep -v '/opt/ros/humble' || true; } | paste -sd ':' -)"
+  PYTHONPATH="$(printf '%s' "${PYTHONPATH:-}" | tr ':' '\n' | { grep -v '/opt/ros/humble' || true; } | paste -sd ':' -)"
+  LD_LIBRARY_PATH="$(printf '%s' "${LD_LIBRARY_PATH:-}" | tr ':' '\n' | { grep -v '/opt/ros/humble' || true; } | paste -sd ':' -)"
+  export PATH PYTHONPATH LD_LIBRARY_PATH
+else
+  unset ROS_MASTER_URI
+  unset ROS_ROOT
+  unset ROS_PACKAGE_PATH
+fi
+safe_source "${ROS_SETUP}"
 if [[ -n "${DRIVER_SETUP}" ]]; then
   if [[ ! -f "${DRIVER_SETUP}" ]]; then
     echo "Driver setup file not found: ${DRIVER_SETUP}" >&2
@@ -165,6 +202,8 @@ if [[ -n "${DRIVER_SETUP}" ]]; then
   fi
   safe_source "${DRIVER_SETUP}"
 fi
+export ORBBEC_ROS_VERSION="${ROS_VERSION}"
+export ORBBEC_ROS_SETUP="${ROS_SETUP}"
 
 RUN_ID="$(date +%Y%m%d_%H%M%S)"
 RUN_ROOT="${RESULTS_ROOT}/${RUN_ID}"
@@ -172,6 +211,8 @@ mkdir -p "${RUN_ROOT}"
 
 COMMON_ARGS=(
   --results-dir ""
+  --ros-version "${ROS_VERSION}"
+  --ros-setup "${ROS_SETUP}"
 )
 
 if [[ -n "${PROFILE}" ]]; then

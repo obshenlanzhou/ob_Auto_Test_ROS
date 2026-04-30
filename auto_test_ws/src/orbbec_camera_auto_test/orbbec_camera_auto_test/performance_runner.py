@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import sys
 import time
@@ -9,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict
 
-from .functional_runner import _build_launch_args, _require_detected_camera
+from .functional_runner import _build_launch_args, _require_detected_camera, _select_launch_file
 from .environment_info import collect_camera_environment, collect_host_environment
 from .functional_topics import run_topic_checks
 from .performance_fps import TopicFpsCollector
@@ -103,7 +104,7 @@ def _wait_for_camera_ready(
     emit_status(f"waiting for service '/{camera_name}/get_sdk_version'")
     harness.wait_for_service(
         f"/{camera_name}/get_sdk_version",
-        resolve_service_type("orbbec_camera_msgs/srv/GetString"),
+        resolve_service_type("orbbec_camera_msgs/srv/GetString", harness.ros_version),
         timeout=60.0,
     )
     emit_status(f"launch is ready for camera '{camera_name}'")
@@ -171,6 +172,7 @@ def _scenario_result_payload(
 ) -> Dict[str, Any]:
     return {
         "profile_name": profile_name,
+        "ros_version": "",
         "scenario_name": scenario.name,
         "scenario_description": scenario.description,
         "launch_file": launch_file,
@@ -205,6 +207,7 @@ def _multi_camera_result_payload(
 ) -> Dict[str, Any]:
     return {
         "profile_name": profile_name,
+        "ros_version": "",
         "scenario_name": scenario.name,
         "scenario_description": scenario.description,
         "launch_file": launch_file,
@@ -521,6 +524,7 @@ def _run_performance_scenario(
             duration_seconds,
             host_environment,
         )
+    result["ros_version"] = str(args.ros_version)
     result["frame_timestamps"] = {
         **asdict(frame_timestamps),
         "output_dir": str(frame_timestamp_dir) if frame_timestamps.enabled else "",
@@ -528,31 +532,41 @@ def _run_performance_scenario(
     }
     result["stream_config"] = _stream_config_from_launch_args(launch_args)
 
-    with RosHarness(_safe_harness_name(scenario.name)) as harness:
-        try:
-            _require_detected_camera(args.driver_setup, emit_status)
-        except Exception as exc:  # noqa: BLE001
-            result["status"] = "failed"
-            result["error"] = str(exc)
-            emit_status(f"performance scenario '{scenario.name}' preflight failed: {exc}")
-            write_json(results_dir / "result.json", result)
-            write_markdown(results_dir / "summary.md", build_performance_summary(result))
-            return result
-
-        session = TestSession(
-            launch_file=launch_file,
-            launch_args=launch_args,
-            work_dir=results_dir,
-            log_path=launch_log_path,
-            driver_setup=args.driver_setup,
-            status_callback=emit_status,
+    try:
+        _require_detected_camera(
+            args.driver_setup,
+            emit_status,
+            ros_version=args.ros_version,
+            ros_setup=args.ros_setup,
         )
-        collector = None
-        sampler = None
-        load_controller = ExternalLoadController(scenario.load, emit_status=emit_status)
+    except Exception as exc:  # noqa: BLE001
+        result["status"] = "failed"
+        result["error"] = str(exc)
+        emit_status(f"performance scenario '{scenario.name}' preflight failed: {exc}")
+        write_json(results_dir / "result.json", result)
+        write_markdown(results_dir / "summary.md", build_performance_summary(result))
+        return result
+
+    session = TestSession(
+        launch_file=launch_file,
+        launch_args=launch_args,
+        work_dir=results_dir,
+        log_path=launch_log_path,
+        driver_setup=args.driver_setup,
+        ros_version=args.ros_version,
+        ros_setup=args.ros_setup,
+        status_callback=emit_status,
+    )
+    collector = None
+    sampler = None
+    harness_context = None
+    load_controller = ExternalLoadController(scenario.load, emit_status=emit_status)
+    try:
+        emit_status(f"starting clean performance launch for scenario '{scenario.name}'")
+        session.start()
+        harness_context = RosHarness(_safe_harness_name(scenario.name), ros_version=args.ros_version)
+        harness = harness_context.__enter__()
         try:
-            emit_status(f"starting clean performance launch for scenario '{scenario.name}'")
-            session.start()
             if is_multi_camera:
                 _wait_for_cameras_ready(session, harness, camera_names, emit_status)
                 for current_camera in camera_names:
@@ -587,6 +601,7 @@ def _run_performance_scenario(
                 if frame_timestamps.enabled
                 else None,
                 frame_timestamp_flush_every_rows=frame_timestamps.flush_every_rows,
+                ros_version=args.ros_version,
             )
             for line in collector.describe_topics():
                 emit_status(line)
@@ -637,31 +652,40 @@ def _run_performance_scenario(
             result["fps_summary"] = collector.build_summary()
             result["system_summary"] = sampler.build_summary()
             emit_status(f"performance scenario '{scenario.name}' sampling completed")
-        except KeyboardInterrupt:
-            result["status"] = "interrupted"
-            result["error"] = "interrupted by user"
-            append_log(performance_log_path, "[PERF] INTERRUPTED: interrupted by user")
-            emit_status(
-                f"performance scenario '{scenario.name}' interrupted by user, finalizing partial results"
-            )
-        except Exception as exc:  # noqa: BLE001
-            result["status"] = "failed"
-            result["error"] = str(exc)
-            append_log(performance_log_path, f"[PERF] FAIL: {exc}")
-            emit_status(f"performance scenario '{scenario.name}' failed: {exc}")
         finally:
-            total_elapsed = 0.0
             if collector is not None:
-                total_elapsed = time.monotonic() - collector.start_time
-            emit_status(f"total performance duration: {_format_duration_cn(total_elapsed)}")
-            load_controller.close()
-            if collector is not None:
-                result["fps_summary"] = result["fps_summary"] or collector.build_summary()
                 collector.close()
-            if sampler is not None:
-                result["system_summary"] = result["system_summary"] or sampler.build_summary()
-                sampler.close()
-            session.stop()
+                collector = None
+            if harness_context is not None:
+                harness_context.__exit__(None, None, None)
+                harness_context = None
+    except KeyboardInterrupt:
+        result["status"] = "interrupted"
+        result["error"] = "interrupted by user"
+        append_log(performance_log_path, "[PERF] INTERRUPTED: interrupted by user")
+        emit_status(
+            f"performance scenario '{scenario.name}' interrupted by user, finalizing partial results"
+        )
+    except Exception as exc:  # noqa: BLE001
+        result["status"] = "failed"
+        result["error"] = str(exc)
+        append_log(performance_log_path, f"[PERF] FAIL: {exc}")
+        emit_status(f"performance scenario '{scenario.name}' failed: {exc}")
+    finally:
+        total_elapsed = 0.0
+        if collector is not None:
+            total_elapsed = time.monotonic() - collector.start_time
+        emit_status(f"total performance duration: {_format_duration_cn(total_elapsed)}")
+        load_controller.close()
+        if collector is not None:
+            result["fps_summary"] = result["fps_summary"] or collector.build_summary()
+            collector.close()
+        if harness_context is not None:
+            harness_context.__exit__(None, None, None)
+        if sampler is not None:
+            result["system_summary"] = result["system_summary"] or sampler.build_summary()
+            sampler.close()
+        session.stop()
 
     result["stream_config"] = (
         _stream_config_from_launch_log(launch_log_path)
@@ -685,10 +709,14 @@ def run_performance_test(args) -> int:
 
     emit_status(f"loading performance profile '{args.profile}'")
     profile = load_camera_profile(args.profile, profile_type="performance")
-    launch_file = args.launch_file or profile.launch_file
+    launch_file = _select_launch_file(profile, args)
     base_launch_args = _build_launch_args(profile, args)
     selected_scenarios = _select_performance_scenarios(profile, args.performance_scenario)
-    host_environment = collect_host_environment(args.driver_setup)
+    host_environment = collect_host_environment(
+        args.driver_setup,
+        ros_version=args.ros_version,
+        ros_setup=args.ros_setup,
+    )
     emit_status(f"selected performance scenarios: {', '.join(item.name for item in selected_scenarios)}")
 
     if len(selected_scenarios) == 1:
@@ -705,6 +733,7 @@ def run_performance_test(args) -> int:
 
     aggregate_result = {
         "profile_name": profile.profile_name,
+        "ros_version": str(args.ros_version),
         "launch_file": launch_file,
         "camera_name": str(base_launch_args.get("camera_name", "camera")),
         "status": "passed",
@@ -757,6 +786,17 @@ def parse_args():
     parser.add_argument("--usb-port", default=None)
     parser.add_argument("--config-file-path", default=None)
     parser.add_argument("--driver-setup", default=None)
+    parser.add_argument(
+        "--ros-version",
+        choices=("1", "2"),
+        default=os.environ.get("ORBBEC_ROS_VERSION", "2"),
+        help="ROS major version to use",
+    )
+    parser.add_argument(
+        "--ros-setup",
+        default=os.environ.get("ORBBEC_ROS_SETUP", ""),
+        help="ROS setup.bash/setup.zsh path",
+    )
     parser.add_argument("--results-dir", required=True)
     parser.add_argument(
         "--duration",

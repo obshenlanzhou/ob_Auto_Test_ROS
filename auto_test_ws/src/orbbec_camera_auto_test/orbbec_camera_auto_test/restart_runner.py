@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import time
 from dataclasses import asdict
@@ -8,7 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List
 
-from .functional_runner import _parse_launch_args, _require_detected_camera
+from .functional_runner import _parse_launch_args, _require_detected_camera, _select_launch_file
 from .performance_runner import _select_performance_scenarios, _wait_for_camera_ready
 from .profile_loader import CameraProfile, TopicSpec, load_camera_profile
 from .reporter import append_log, ensure_dir, write_json, write_markdown
@@ -158,13 +159,16 @@ class StableImageMonitor:
                 "last_width": 0,
                 "last_height": 0,
             }
-            msg_type = resolve_message_type(topic.type or "sensor_msgs/msg/Image")
+            msg_type = resolve_message_type(
+                topic.type or "sensor_msgs/msg/Image",
+                harness.ros_version,
+            )
             self.subscriptions.append(
                 harness.node.create_subscription(
                     msg_type,
                     topic.name,
                     lambda msg, topic_name=topic.name: self._on_message(topic_name, msg),
-                    make_qos_profile(topic.qos),
+                    make_qos_profile(topic.qos, harness.ros_version),
                 )
             )
 
@@ -319,7 +323,7 @@ def run_restart_test(args) -> int:
         if str(args.profile or "").strip()
         else None
     )
-    launch_file = args.launch_file or (profile.launch_file if profile is not None else "")
+    launch_file = _select_launch_file(profile, args)
     if not launch_file:
         raise ValueError("--launch-file is required when --profile is not set")
     base_launch_args = _build_restart_launch_args(args, profile)
@@ -333,6 +337,7 @@ def run_restart_test(args) -> int:
 
     result: Dict[str, Any] = {
         "profile_name": profile.profile_name if profile is not None else "",
+        "ros_version": str(args.ros_version),
         "launch_file": launch_file,
         "camera_name": camera_name,
         "launch_args": dict(base_launch_args),
@@ -348,49 +353,56 @@ def run_restart_test(args) -> int:
     }
     write_json(results_dir / "launch_args.json", {"launch_file": launch_file, "launch_args": base_launch_args})
 
-    with RosHarness("orbbec_camera_restart_test") as harness:
-        try:
-            _require_detected_camera(args.driver_setup, emit_status)
-        except Exception as exc:  # noqa: BLE001
-            result["status"] = "failed"
-            result["error"] = str(exc)
-            emit_status(f"restart preflight failed: {exc}")
-            write_json(results_dir / "result.json", result)
-            write_markdown(results_dir / "summary.md", _build_restart_summary(result))
-            return 1
+    try:
+        _require_detected_camera(
+            args.driver_setup,
+            emit_status,
+            ros_version=args.ros_version,
+            ros_setup=args.ros_setup,
+        )
+    except Exception as exc:  # noqa: BLE001
+        result["status"] = "failed"
+        result["error"] = str(exc)
+        emit_status(f"restart preflight failed: {exc}")
+        write_json(results_dir / "result.json", result)
+        write_markdown(results_dir / "summary.md", _build_restart_summary(result))
+        return 1
 
-        attempt_index = 0
-        while time.monotonic() < deadline:
-            attempt_index += 1
-            attempt_dir = ensure_dir(results_dir / "attempts" / f"{attempt_index:03d}")
-            session = TestSession(
-                launch_file=launch_file,
-                launch_args=base_launch_args,
-                work_dir=attempt_dir,
-                log_path=launch_log_path,
-                driver_setup=args.driver_setup,
-                status_callback=emit_status,
+    attempt_index = 0
+    while time.monotonic() < deadline:
+        attempt_index += 1
+        attempt_dir = ensure_dir(results_dir / "attempts" / f"{attempt_index:03d}")
+        session = TestSession(
+            launch_file=launch_file,
+            launch_args=base_launch_args,
+            work_dir=attempt_dir,
+            log_path=launch_log_path,
+            driver_setup=args.driver_setup,
+            ros_version=args.ros_version,
+            ros_setup=args.ros_setup,
+            status_callback=emit_status,
+        )
+        attempt = {
+            "attempt": attempt_index,
+            "status": "running",
+            "message": "",
+            "topics": [],
+            "started_at": datetime.now().isoformat(timespec="seconds"),
+            "ended_at": "",
+            "stable_seconds": 0.0,
+        }
+        result["attempts"].append(attempt)
+        result["launch_attempts"] = attempt_index
+        write_json(results_dir / "result.json", result)
+        keep_launch_for_manual_check = False
+        try:
+            emit_status(
+                f"starting restart attempt {attempt_index} "
+                f"(successful restarts={result['successful_restarts']}, "
+                f"remaining={max(deadline - time.monotonic(), 0.0):.1f}s)"
             )
-            attempt = {
-                "attempt": attempt_index,
-                "status": "running",
-                "message": "",
-                "topics": [],
-                "started_at": datetime.now().isoformat(timespec="seconds"),
-                "ended_at": "",
-                "stable_seconds": 0.0,
-            }
-            result["attempts"].append(attempt)
-            result["launch_attempts"] = attempt_index
-            write_json(results_dir / "result.json", result)
-            keep_launch_for_manual_check = False
-            try:
-                emit_status(
-                    f"starting restart attempt {attempt_index} "
-                    f"(successful restarts={result['successful_restarts']}, "
-                    f"remaining={max(deadline - time.monotonic(), 0.0):.1f}s)"
-                )
-                session.start()
+            session.start()
+            with RosHarness("orbbec_camera_restart_test", ros_version=args.ros_version) as harness:
                 _wait_for_camera_ready(session, harness, camera_name, emit_status)
                 ok, snapshot, message = _wait_for_stable_streams(
                     session=session,
@@ -423,50 +435,49 @@ def run_restart_test(args) -> int:
                     write_json(results_dir / "result.json", result)
                     write_markdown(results_dir / "summary.md", _build_restart_summary(result))
                     while session.is_running():
-                        harness.spin_once(0.2)
-                        time.sleep(0.8)
+                        time.sleep(1.0)
                     break
 
                 attempt["status"] = "passed"
                 emit_status(
                     f"restart attempt {attempt_index} passed: {message}"
                 )
-            except KeyboardInterrupt:
-                result["status"] = "interrupted"
-                attempt["status"] = "interrupted"
-                attempt["message"] = "interrupted by user"
-                if keep_launch_for_manual_check:
-                    keep_launch_for_manual_check = False
-                    emit_status(
-                        "restart test interrupted by user; stopping launch left for manual confirmation"
-                    )
-                else:
-                    emit_status("restart test interrupted by user")
-                break
-            except Exception as exc:  # noqa: BLE001
-                result["status"] = "failed"
-                attempt["status"] = "failed"
-                attempt["message"] = str(exc)
-                emit_status(f"restart attempt {attempt_index} failed: {exc}")
-                break
-            finally:
-                attempt["ended_at"] = datetime.now().isoformat(timespec="seconds")
-                if not keep_launch_for_manual_check:
-                    session.stop()
+        except KeyboardInterrupt:
+            result["status"] = "interrupted"
+            attempt["status"] = "interrupted"
+            attempt["message"] = "interrupted by user"
+            if keep_launch_for_manual_check:
+                keep_launch_for_manual_check = False
+                emit_status(
+                    "restart test interrupted by user; stopping launch left for manual confirmation"
+                )
+            else:
+                emit_status("restart test interrupted by user")
+            break
+        except Exception as exc:  # noqa: BLE001
+            result["status"] = "failed"
+            attempt["status"] = "failed"
+            attempt["message"] = str(exc)
+            emit_status(f"restart attempt {attempt_index} failed: {exc}")
+            break
+        finally:
+            attempt["ended_at"] = datetime.now().isoformat(timespec="seconds")
+            if not keep_launch_for_manual_check:
+                session.stop()
 
-            if result["status"] != "passed":
-                break
-            if time.monotonic() >= deadline:
-                emit_status("restart duration reached; no further launch restart will be started")
-                break
+        if result["status"] != "passed":
+            break
+        if time.monotonic() >= deadline:
+            emit_status("restart duration reached; no further launch restart will be started")
+            break
 
-            result["successful_restarts"] += 1
-            emit_status(
-                f"launch restart completed; total successful restarts="
-                f"{result['successful_restarts']}"
-            )
-            time.sleep(min(float(args.restart_delay), max(deadline - time.monotonic(), 0.0)))
-            write_json(results_dir / "result.json", result)
+        result["successful_restarts"] += 1
+        emit_status(
+            f"launch restart completed; total successful restarts="
+            f"{result['successful_restarts']}"
+        )
+        time.sleep(min(float(args.restart_delay), max(deadline - time.monotonic(), 0.0)))
+        write_json(results_dir / "result.json", result)
 
     write_json(results_dir / "result.json", result)
     write_markdown(results_dir / "summary.md", _build_restart_summary(result))
@@ -497,6 +508,17 @@ def parse_args():
     parser.add_argument("--usb-port", default=None)
     parser.add_argument("--config-file-path", default=None)
     parser.add_argument("--driver-setup", default=None)
+    parser.add_argument(
+        "--ros-version",
+        choices=("1", "2"),
+        default=os.environ.get("ORBBEC_ROS_VERSION", "2"),
+        help="ROS major version to use",
+    )
+    parser.add_argument(
+        "--ros-setup",
+        default=os.environ.get("ORBBEC_ROS_SETUP", ""),
+        help="ROS setup.bash/setup.zsh path",
+    )
     parser.add_argument("--results-dir", required=True)
     parser.add_argument("--launch-arg", action="append", default=[], help="Extra KEY=VALUE launch arg")
     parser.add_argument("--image-topic", action="append", default=[], help="Image topic to monitor, may be repeated")

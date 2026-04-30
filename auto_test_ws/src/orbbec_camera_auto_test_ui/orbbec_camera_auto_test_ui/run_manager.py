@@ -16,7 +16,9 @@ from typing import Any, Dict, List, Optional
 
 
 DEFAULT_ROS_SETUP = "/opt/ros/humble/setup.bash"
+DEFAULT_ROS1_SETUP = "/opt/ros/one/setup.bash"
 DEFAULT_CAMERA_SETUP_DIR = Path("/home/slz/ORBBEC/orbbecsdk_ros2_v2-main/install")
+DEFAULT_ROS1_CAMERA_SETUP_DIR = Path("/home/slz/ORBBEC/orbbecsdk_ros1_v2-main/devel")
 
 
 def _first_existing_setup(base_dir: Path) -> str:
@@ -28,6 +30,15 @@ def _first_existing_setup(base_dir: Path) -> str:
 
 
 DEFAULT_CAMERA_SETUP = _first_existing_setup(DEFAULT_CAMERA_SETUP_DIR)
+DEFAULT_ROS1_CAMERA_SETUP = _first_existing_setup(DEFAULT_ROS1_CAMERA_SETUP_DIR)
+
+
+def _default_ros_setup_for_version(ros_version: str) -> str:
+    return DEFAULT_ROS1_SETUP if str(ros_version) == "1" else DEFAULT_ROS_SETUP
+
+
+def _default_camera_setup_for_version(ros_version: str) -> str:
+    return DEFAULT_ROS1_CAMERA_SETUP if str(ros_version) == "1" else DEFAULT_CAMERA_SETUP
 
 
 def _find_auto_test_ws() -> Path:
@@ -384,9 +395,13 @@ def build_restart_metrics(run_root: Path) -> Dict[str, Any]:
 
 def load_config() -> Dict[str, Any]:
     config = read_json(CONFIG_PATH, {})
+    ros_version = str(config.get("ros_version") or "2")
+    if ros_version not in {"1", "2"}:
+        ros_version = "2"
     return {
-        "ros_setup": config.get("ros_setup") or DEFAULT_ROS_SETUP,
-        "camera_setup": config.get("camera_setup") or DEFAULT_CAMERA_SETUP,
+        "ros_version": ros_version,
+        "ros_setup": config.get("ros_setup") or _default_ros_setup_for_version(ros_version),
+        "camera_setup": config.get("camera_setup") or _default_camera_setup_for_version(ros_version),
         "host": config.get("host") or "127.0.0.1",
         "port": int(config.get("port") or 8000),
         "mode": config.get("mode") or "functional",
@@ -406,6 +421,7 @@ def save_config(payload: Dict[str, Any]) -> Dict[str, Any]:
     config = load_config()
     for key in (
         "ros_setup",
+        "ros_version",
         "camera_setup",
         "host",
         "port",
@@ -459,6 +475,9 @@ def _build_runner_args(payload: Dict[str, Any], mode: str, results_dir: Path) ->
         )
     )
     args = ["python3", "-m", module]
+    ros_version = _safe_text(payload.get("ros_version")) or "2"
+    args.extend(["--ros-version", ros_version])
+    _append_arg(args, "--ros-setup", payload.get("ros_setup"))
     profile_key = f"{mode}_profile"
     profile = "" if mode == "restart" else "gemini_330_series"
     profile = payload.get(profile_key) or payload.get("profile") or profile
@@ -469,6 +488,7 @@ def _build_runner_args(payload: Dict[str, Any], mode: str, results_dir: Path) ->
     _append_arg(args, "--serial-number", payload.get("serial_number"))
     _append_arg(args, "--usb-port", payload.get("usb_port"))
     _append_arg(args, "--config-file-path", payload.get("config_file_path"))
+    _append_arg(args, "--driver-setup", payload.get("camera_setup"))
 
     if mode == "performance":
         _append_arg(args, "--performance-scenario", payload.get("performance_scenario"))
@@ -500,23 +520,37 @@ def _matching_setup_variant(path: str, suffix: str) -> str:
     return str(candidate) if candidate.is_file() else path
 
 
-def _shell_for_setup(camera_setup: str) -> str:
-    return "zsh" if camera_setup.endswith(".zsh") else "bash"
+def _shell_for_setup(camera_setup: str, ros_setup: str = "") -> str:
+    return "zsh" if camera_setup.endswith(".zsh") or ros_setup.endswith(".zsh") else "bash"
 
 
 def _build_shell_script(payload: Dict[str, Any], run_root: Path) -> tuple[str, List[str], str]:
     mode = _safe_text(payload.get("mode")) or "functional"
     camera_setup = _safe_text(payload.get("camera_setup"))
-    shell = _shell_for_setup(camera_setup)
-    ros_setup = _safe_text(payload.get("ros_setup")) or DEFAULT_ROS_SETUP
+    ros_version = _safe_text(payload.get("ros_version")) or "2"
+    ros_setup = _safe_text(payload.get("ros_setup")) or _default_ros_setup_for_version(ros_version)
+    shell = _shell_for_setup(camera_setup, ros_setup)
     if shell == "zsh":
         ros_setup = _matching_setup_variant(ros_setup, "zsh")
     commands = [
         "set -e",
-        f"source {shlex.quote(ros_setup)}",
     ]
+    if ros_version == "1":
+        commands.extend(
+            [
+                "unset ROS_DISTRO ROS_ETC_DIR AMENT_PREFIX_PATH COLCON_PREFIX_PATH",
+                "export PATH=$(printf '%s' \"$PATH\" | tr ':' '\\n' | { grep -v '/opt/ros/humble' || true; } | paste -sd ':' -)",
+                "export PYTHONPATH=$(printf '%s' \"${PYTHONPATH:-}\" | tr ':' '\\n' | { grep -v '/opt/ros/humble' || true; } | paste -sd ':' -)",
+                "export LD_LIBRARY_PATH=$(printf '%s' \"${LD_LIBRARY_PATH:-}\" | tr ':' '\\n' | { grep -v '/opt/ros/humble' || true; } | paste -sd ':' -)",
+            ]
+        )
+    else:
+        commands.append("unset ROS_MASTER_URI ROS_ROOT ROS_PACKAGE_PATH")
+    commands.append(f"source {shlex.quote(ros_setup)}")
     if camera_setup:
         commands.append(f"source {shlex.quote(camera_setup)}")
+    commands.append(f"export ORBBEC_ROS_VERSION={shlex.quote(ros_version)}")
+    commands.append(f"export ORBBEC_ROS_SETUP={shlex.quote(ros_setup)}")
     commands.append(f"export PYTHONPATH={shlex.quote(str(CORE_PACKAGE_ROOT))}:\"${{PYTHONPATH:-}}\"")
     commands.append(f"cd {shlex.quote(str(AUTO_TEST_WS))}")
 
@@ -545,6 +579,9 @@ def validate_run_payload(payload: Dict[str, Any]) -> List[str]:
     mode = _safe_text(payload.get("mode")) or "functional"
     if mode not in {"functional", "performance", "restart", "all"}:
         errors.append(f"unsupported mode: {mode}")
+    ros_version = _safe_text(payload.get("ros_version")) or "2"
+    if ros_version not in {"1", "2"}:
+        errors.append(f"unsupported ROS version: {ros_version}")
 
     if mode in {"functional", "all"} and not _safe_text(
         payload.get("functional_profile") or payload.get("profile")
@@ -555,14 +592,14 @@ def validate_run_payload(payload: Dict[str, Any]) -> List[str]:
     ):
         errors.append("performance profile is required")
 
-    ros_setup = Path(_safe_text(payload.get("ros_setup")) or DEFAULT_ROS_SETUP)
+    ros_setup = Path(_safe_text(payload.get("ros_setup")) or _default_ros_setup_for_version(ros_version))
     if not ros_setup.is_file():
         errors.append(f"ROS setup file not found: {ros_setup}")
 
     camera_setup = _safe_text(payload.get("camera_setup"))
     if camera_setup and not Path(camera_setup).is_file():
         errors.append(f"camera ROS setup file not found: {camera_setup}")
-    if camera_setup.endswith(".zsh") and shutil.which("zsh") is None:
+    if (camera_setup.endswith(".zsh") or str(ros_setup).endswith(".zsh")) and shutil.which("zsh") is None:
         errors.append("zsh setup was selected, but zsh was not found in PATH")
 
     for launch_arg in _parse_extra_launch_args(payload.get("launch_args")):
@@ -668,8 +705,11 @@ class RunManager:
 
         config = save_config(
             {
-                "ros_setup": payload.get("ros_setup") or DEFAULT_ROS_SETUP,
-                "camera_setup": payload.get("camera_setup") or DEFAULT_CAMERA_SETUP,
+                "ros_version": payload.get("ros_version") or "2",
+                "ros_setup": payload.get("ros_setup")
+                or _default_ros_setup_for_version(payload.get("ros_version") or "2"),
+                "camera_setup": payload.get("camera_setup")
+                or _default_camera_setup_for_version(payload.get("ros_version") or "2"),
                 "mode": payload.get("mode") or "functional",
                 "functional_profile": payload.get("functional_profile")
                 or payload.get("profile")

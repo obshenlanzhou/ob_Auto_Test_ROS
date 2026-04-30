@@ -50,14 +50,24 @@
 
           <div class="form-section">
             <div class="section-title">环境</div>
+            <div class="grid two">
+              <label>
+                ROS version
+                <select id="rosVersion" name="ros_version">
+                  <option value="2">ROS2</option>
+                  <option value="1">ROS1</option>
+                </select>
+              </label>
+
+              <label>
+                ROS setup
+                <input id="rosSetup" name="ros_setup" autocomplete="off" />
+              </label>
+            </div>
+
             <label>
               Camera ROS setup
               <input id="cameraSetup" name="camera_setup" autocomplete="off" placeholder="/home/slz/ORBBEC/orbbecsdk_ros2_v2-main/install/setup.bash" />
-            </label>
-
-            <label>
-              ROS setup
-              <input id="rosSetup" name="ros_setup" autocomplete="off" />
             </label>
           </div>
 

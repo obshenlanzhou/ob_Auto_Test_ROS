@@ -12,6 +12,18 @@ const state = {
 
 const $ = (id) => document.getElementById(id);
 const MAX_VISIBLE_LOG_LINES = 500;
+const DEFAULT_SETUPS = {
+  "2": {
+    ros: "/opt/ros/humble/setup.bash",
+    camera: "/home/slz/ORBBEC/orbbecsdk_ros2_v2-main/install/setup.bash",
+    launch: "gemini_330_series.launch.py",
+  },
+  "1": {
+    ros: "/opt/ros/one/setup.bash",
+    camera: "/home/slz/ORBBEC/orbbecsdk_ros1_v2-main/devel/setup.bash",
+    launch: "gemini_330_series.launch",
+  },
+};
 
 async function api(path, options = {}) {
   const response = await fetch(path, {
@@ -28,6 +40,7 @@ async function api(path, options = {}) {
 
 function formPayload() {
   return {
+    ros_version: $("rosVersion").value,
     ros_setup: $("rosSetup").value.trim(),
     camera_setup: $("cameraSetup").value.trim(),
     mode: $("mode").value,
@@ -219,6 +232,21 @@ function updateScenarioOptions() {
   }
 }
 
+function updateRosVersionControls({ fillBlank = false } = {}) {
+  const defaults = DEFAULT_SETUPS[$("rosVersion").value] || DEFAULT_SETUPS["2"];
+  $("rosSetup").placeholder = defaults.ros;
+  $("cameraSetup").placeholder = defaults.camera;
+  if (fillBlank) {
+    if (!$("rosSetup").value.trim()) {
+      $("rosSetup").value = defaults.ros;
+    }
+    if (!$("cameraSetup").value.trim()) {
+      $("cameraSetup").value = defaults.camera;
+    }
+  }
+  updateModeControls();
+}
+
 function updateModeControls() {
   const mode = $("mode").value;
   const needsFunctional = mode === "functional" || mode === "all";
@@ -243,7 +271,7 @@ function updateModeControls() {
   if (activeProfile?.launch_file) {
     $("launchFile").placeholder = activeProfile.launch_file;
   } else if (needsRestart) {
-    $("launchFile").placeholder = "gemini_330_series.launch.py";
+    $("launchFile").placeholder = (DEFAULT_SETUPS[$("rosVersion").value] || DEFAULT_SETUPS["2"]).launch;
   }
 }
 
@@ -264,6 +292,7 @@ function fillProfileSelect(selectId, profiles, preferredName) {
 async function loadConfig() {
   const config = await api("/api/config");
   state.config = config;
+  $("rosVersion").value = config.ros_version || "2";
   $("rosSetup").value = config.ros_setup || "";
   $("cameraSetup").value = config.camera_setup || "";
   $("mode").value = config.mode || "functional";
@@ -274,6 +303,7 @@ async function loadConfig() {
   $("restartDelay").value = config.restart_delay || "2";
   $("imageTopics").value = config.image_topics || "";
   $("workspacePath").textContent = `工作区: ${config.auto_test_ws}`;
+  updateRosVersionControls({ fillBlank: true });
 }
 
 async function loadProfiles() {
@@ -476,6 +506,12 @@ async function init() {
   $("stopButton").addEventListener("click", stopRun);
   $("refreshProfiles").addEventListener("click", loadProfiles);
   $("refreshRuns").addEventListener("click", loadRuns);
+  $("rosVersion").addEventListener("change", () => {
+    const defaults = DEFAULT_SETUPS[$("rosVersion").value] || DEFAULT_SETUPS["2"];
+    $("rosSetup").value = defaults.ros;
+    $("cameraSetup").value = defaults.camera;
+    updateRosVersionControls();
+  });
   $("mode").addEventListener("change", updateModeControls);
   $("functionalProfile").addEventListener("change", updateModeControls);
   $("performanceProfile").addEventListener("change", () => {

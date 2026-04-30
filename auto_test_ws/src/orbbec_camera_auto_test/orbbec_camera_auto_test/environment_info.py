@@ -12,6 +12,16 @@ from typing import Any, Dict, Optional
 import psutil
 
 from .ros_utils import resolve_service_type
+from .session import default_ros_setup
+
+
+def _bash_setup_variant(setup_file: str) -> str:
+    path = Path(setup_file)
+    if path.name == "setup.zsh":
+        candidate = path.with_name("setup.bash")
+        if candidate.is_file():
+            return str(candidate)
+    return setup_file
 
 
 def _read_os_pretty_name() -> str:
@@ -47,9 +57,15 @@ def _read_cpu_model() -> str:
     return platform.processor() or platform.machine()
 
 
-def _collect_ros_environment(driver_setup: Optional[str] = None) -> Dict[str, str]:
-    command_parts = ["source /opt/ros/humble/setup.bash >/dev/null 2>&1"]
+def _collect_ros_environment(
+    driver_setup: Optional[str] = None,
+    ros_version: str = "2",
+    ros_setup: Optional[str] = None,
+) -> Dict[str, str]:
+    setup_file = _bash_setup_variant(ros_setup or default_ros_setup(ros_version))
+    command_parts = [f"source {shlex.quote(setup_file)} >/dev/null 2>&1"]
     if driver_setup:
+        driver_setup = _bash_setup_variant(driver_setup)
         command_parts.append(f"source {shlex.quote(driver_setup)} >/dev/null 2>&1")
     command = " && ".join(command_parts) + " && printf '%s\\n%s\\n' \"$ROS_DISTRO\" \"$ROS_VERSION\""
 
@@ -67,7 +83,11 @@ def _collect_ros_environment(driver_setup: Optional[str] = None) -> Dict[str, st
     return {"ros_distro": ros_distro, "ros_version": ros_version}
 
 
-def collect_host_environment(driver_setup: Optional[str] = None) -> Dict[str, Any]:
+def collect_host_environment(
+    driver_setup: Optional[str] = None,
+    ros_version: str = "2",
+    ros_setup: Optional[str] = None,
+) -> Dict[str, Any]:
     memory = psutil.virtual_memory()
     host_environment: Dict[str, Any] = {
         "hostname": socket.gethostname(),
@@ -80,7 +100,10 @@ def collect_host_environment(driver_setup: Optional[str] = None) -> Dict[str, An
         "total_memory_gb": round(memory.total / (1024.0 ** 3), 2),
         "python_version": platform.python_version(),
     }
-    host_environment.update(_collect_ros_environment(driver_setup))
+    host_environment.update(_collect_ros_environment(driver_setup, ros_version, ros_setup))
+    host_environment["requested_ros_version"] = str(ros_version)
+    if ros_setup:
+        host_environment["ros_setup"] = str(ros_setup)
     if driver_setup:
         host_environment["driver_setup"] = str(driver_setup)
     return host_environment
@@ -101,7 +124,7 @@ def collect_camera_environment(
     try:
         sdk_response = harness.call_service(
             f"/{camera_name}/get_sdk_version",
-            resolve_service_type("orbbec_camera_msgs/srv/GetString"),
+            resolve_service_type("orbbec_camera_msgs/srv/GetString", harness.ros_version),
             request_data={},
             timeout=10.0,
         )
@@ -136,7 +159,7 @@ def collect_camera_environment(
     try:
         device_response = harness.call_service(
             f"/{camera_name}/get_device_info",
-            resolve_service_type("orbbec_camera_msgs/srv/GetDeviceInfo"),
+            resolve_service_type("orbbec_camera_msgs/srv/GetDeviceInfo", harness.ros_version),
             request_data={},
             timeout=10.0,
         )

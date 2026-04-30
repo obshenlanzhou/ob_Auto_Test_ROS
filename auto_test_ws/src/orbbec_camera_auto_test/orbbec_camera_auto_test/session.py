@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import platform
 import shlex
 import signal
 import subprocess
@@ -15,6 +16,7 @@ from .reporter import ensure_dir
 
 
 ROS1_VARS = ("ROS_MASTER_URI", "ROS_ROOT", "ROS_PACKAGE_PATH", "ROS_DISTRO", "ROS_ETC_DIR")
+ROS2_VARS = ("AMENT_PREFIX_PATH",)
 PATH_LIKE_VARS = ("PATH", "PYTHONPATH", "LD_LIBRARY_PATH", "AMENT_PREFIX_PATH", "CMAKE_PREFIX_PATH")
 CAMERA_PROCESS_HINTS = (
     "component_container",
@@ -34,36 +36,130 @@ def _parse_env_output(raw_output: bytes) -> Dict[str, str]:
     return env
 
 
-def sanitize_ros_env(source_env: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+def normalize_ros_version(ros_version: str | int | None) -> str:
+    version = str(ros_version or "2").strip()
+    if version not in {"1", "2"}:
+        raise ValueError(f"unsupported ROS version: {ros_version}")
+    return version
+
+
+def default_ros_setup(ros_version: str | int | None = "2") -> str:
+    version = normalize_ros_version(ros_version)
+    if version == "1":
+        return "/opt/ros/one/setup.bash"
+    return "/opt/ros/humble/setup.bash"
+
+
+def _bash_setup_variant(setup_file: str) -> str:
+    path = Path(setup_file)
+    if path.name == "setup.zsh":
+        candidate = path.with_name("setup.bash")
+        if candidate.is_file():
+            return str(candidate)
+    return setup_file
+
+
+def _setup_workspace_root(setup_file: str) -> Path:
+    path = Path(setup_file).resolve()
+    if path.parent.name in {"devel", "install"}:
+        return path.parent.parent
+    return path.parent
+
+
+def _orbbec_sdk_library_dirs(*setup_files: Optional[str]) -> list[str]:
+    arch_dirs = ("x64", "arm64", "arm32")
+    machine = platform.machine().lower()
+    if machine in {"x86_64", "amd64"}:
+        arch_dirs = ("x64", "arm64", "arm32")
+    elif machine in {"aarch64", "arm64"}:
+        arch_dirs = ("arm64", "x64", "arm32")
+
+    found: list[str] = []
+    for setup_file in setup_files:
+        if not setup_file:
+            continue
+        root = _setup_workspace_root(setup_file)
+        candidates = [
+            root / "install" / "orbbec_camera" / "lib",
+            root / "src" / "orbbec-ros-sdk" / "SDK" / "lib",
+            root / "src" / "OrbbecSDK_ROS2" / "orbbec_camera" / "SDK" / "lib",
+        ]
+        for base in candidates:
+            candidate_dirs = [base] if base.name == "lib" and any(base.glob("libOrbbecSDK.so*")) else []
+            candidate_dirs.extend(base / arch for arch in arch_dirs)
+            for candidate in candidate_dirs:
+                if candidate.is_dir() and any(candidate.glob("libOrbbecSDK.so*")):
+                    text = str(candidate)
+                    if text not in found:
+                        found.append(text)
+    return found
+
+
+def _prepend_path_value(current: str, additions: Iterable[str]) -> str:
+    parts = [part for part in current.split(os.pathsep) if part] if current else []
+    result = []
+    for part in list(additions) + parts:
+        if part not in result:
+            result.append(part)
+    return os.pathsep.join(result)
+
+
+def sanitize_ros_env(
+    source_env: Optional[Dict[str, str]] = None,
+    ros_version: str | int | None = "2",
+) -> Dict[str, str]:
+    version = normalize_ros_version(ros_version)
     env = dict(source_env or os.environ)
-    for var_name in ROS1_VARS:
-        env.pop(var_name, None)
+    if version == "2":
+        for var_name in ROS1_VARS:
+            env.pop(var_name, None)
+        remove_markers = ("/opt/ros/one",)
+    else:
+        for var_name in (*ROS2_VARS, "ROS_DISTRO", "ROS_ETC_DIR"):
+            env.pop(var_name, None)
+        remove_markers = ("/opt/ros/humble", "/opt/ros/foxy", "/opt/ros/galactic", "/opt/ros/iron", "/opt/ros/jazzy")
 
     for var_name in PATH_LIKE_VARS:
         value = env.get(var_name)
         if not value:
             continue
         env[var_name] = os.pathsep.join(
-            part for part in value.split(os.pathsep) if "/opt/ros/one" not in part
+            part
+            for part in value.split(os.pathsep)
+            if not any(marker in part for marker in remove_markers)
         )
-    env["ROS_VERSION"] = "2"
+    env["ROS_VERSION"] = version
     env["PYTHONUNBUFFERED"] = "1"
     return env
 
 
-def capture_runtime_env(driver_setup: Optional[str] = None) -> Dict[str, str]:
+def capture_runtime_env(
+    driver_setup: Optional[str] = None,
+    ros_version: str | int | None = "2",
+    ros_setup: Optional[str] = None,
+) -> Dict[str, str]:
+    version = normalize_ros_version(ros_version)
+    setup_file = _bash_setup_variant(ros_setup or default_ros_setup(version))
+    if not Path(setup_file).is_file():
+        raise FileNotFoundError(f"ROS setup file not found: {setup_file}")
+    if driver_setup:
+        driver_setup = _bash_setup_variant(driver_setup)
     if driver_setup and not Path(driver_setup).is_file():
         raise FileNotFoundError(f"Driver setup file not found: {driver_setup}")
 
-    command_parts = ["source /opt/ros/humble/setup.bash >/dev/null 2>&1"]
+    command_parts = [f"source {shlex.quote(setup_file)} >/dev/null 2>&1"]
     if driver_setup:
         command_parts.append(f"source {shlex.quote(driver_setup)} >/dev/null 2>&1")
     command = " && ".join(command_parts) + " && env -0"
     raw = subprocess.check_output(
         ["bash", "-lc", command],
-        env=sanitize_ros_env(),
+        env=sanitize_ros_env(ros_version=version),
     )
-    return sanitize_ros_env(_parse_env_output(raw))
+    env = sanitize_ros_env(_parse_env_output(raw), ros_version=version)
+    sdk_dirs = _orbbec_sdk_library_dirs(setup_file, driver_setup)
+    if sdk_dirs:
+        env["LD_LIBRARY_PATH"] = _prepend_path_value(env.get("LD_LIBRARY_PATH", ""), sdk_dirs)
+    return env
 
 
 def launch_value(value: Any) -> str:
@@ -72,9 +168,18 @@ def launch_value(value: Any) -> str:
     return str(value)
 
 
-def discover_orbbec_devices(driver_setup: Optional[str] = None) -> Dict[str, Any]:
-    runtime_env = capture_runtime_env(driver_setup)
-    command = ["ros2", "run", "orbbec_camera", "list_devices_node"]
+def discover_orbbec_devices(
+    driver_setup: Optional[str] = None,
+    ros_version: str | int | None = "2",
+    ros_setup: Optional[str] = None,
+) -> Dict[str, Any]:
+    version = normalize_ros_version(ros_version)
+    runtime_env = capture_runtime_env(driver_setup, ros_version=version, ros_setup=ros_setup)
+    command = (
+        ["rosrun", "orbbec_camera", "list_devices_node"]
+        if version == "1"
+        else ["ros2", "run", "orbbec_camera", "list_devices_node"]
+    )
     try:
         result = subprocess.run(
             command,
@@ -95,6 +200,15 @@ def discover_orbbec_devices(driver_setup: Optional[str] = None) -> Dict[str, Any
 
     output = (result.stdout or "").strip()
     device_count = output.count("- Name:")
+    if version == "1" and "Couldn't find executable named list_devices_node" in output:
+        return {
+            "success": True,
+            "skipped": True,
+            "device_count": -1,
+            "message": "device discovery command is not available in this ROS1 workspace",
+            "output": output,
+            "returncode": result.returncode,
+        }
     success = result.returncode == 0
     if device_count > 0:
         message = f"found {device_count} Orbbec device(s)"
@@ -120,6 +234,8 @@ class TestSession:
         work_dir: Path,
         log_path: Path,
         driver_setup: Optional[str] = None,
+        ros_version: str | int | None = "2",
+        ros_setup: Optional[str] = None,
         status_callback: Optional[Callable[[str], None]] = None,
     ) -> None:
         self.launch_file = launch_file
@@ -127,6 +243,8 @@ class TestSession:
         self.work_dir = ensure_dir(work_dir)
         self.log_path = log_path
         self.driver_setup = driver_setup
+        self.ros_version = normalize_ros_version(ros_version)
+        self.ros_setup = ros_setup
         self.status_callback = status_callback
         self.process: Optional[subprocess.Popen[str]] = None
         self.root_pid: Optional[int] = None
@@ -138,7 +256,11 @@ class TestSession:
         self.process_group_id: Optional[int] = None
 
     def command(self) -> list[str]:
-        command = ["ros2", "launch", "orbbec_camera", self.launch_file]
+        command = (
+            ["roslaunch", "orbbec_camera", self.launch_file]
+            if self.ros_version == "1"
+            else ["ros2", "launch", "orbbec_camera", self.launch_file]
+        )
         for key, value in sorted(self.launch_args.items()):
             if value is None or value == "":
                 continue
@@ -152,7 +274,11 @@ class TestSession:
     def start(self) -> None:
         if self.process is not None:
             raise RuntimeError("Launch session is already running")
-        runtime_env = capture_runtime_env(self.driver_setup)
+        runtime_env = capture_runtime_env(
+            self.driver_setup,
+            ros_version=self.ros_version,
+            ros_setup=self.ros_setup,
+        )
         command = self.command()
         self._emit_status(f"starting launch: {' '.join(command)}")
         ensure_dir(self.log_path.parent)
