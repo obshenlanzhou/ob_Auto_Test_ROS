@@ -290,11 +290,11 @@ h2 {
 
 .form-section {
   display: grid;
-  gap: 10px;
+  gap: 8px;
   border: 1px solid #e3e8f0;
   border-radius: 8px;
   background: var(--surface-soft);
-  padding: 12px;
+  padding: 10px 12px 12px;
 }
 
 .section-title {
@@ -305,11 +305,23 @@ h2 {
 
 .grid {
   display: grid;
-  gap: 10px;
+  gap: 8px 10px;
 }
 
 .grid.two {
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.test-grid {
+  align-items: end;
+}
+
+.restart-grid {
+  align-items: end;
+}
+
+.grid-span-2 {
+  grid-column: 1 / -1;
 }
 
 .is-hidden {
@@ -318,7 +330,7 @@ h2 {
 
 label {
   display: grid;
-  gap: 6px;
+  gap: 5px;
   color: #3d4755;
   font-size: 12px;
   font-weight: 800;

@@ -11,8 +11,7 @@ from pathlib import Path
 from typing import Any, Dict
 from urllib.parse import parse_qs, unquote, urlparse
 
-import yaml
-
+from orbbec_camera_auto_test.profile.merger import load_merged_profile_data
 from .run_manager import (
     AUTO_TEST_WS,
     CONFIG_PATH,
@@ -40,8 +39,7 @@ def _read_asset(relative_path: str) -> bytes:
 
 def _load_yaml(path: Path) -> Dict[str, Any]:
     try:
-        with path.open("r", encoding="utf-8") as stream:
-            return yaml.safe_load(stream) or {}
+        return load_merged_profile_data(path)
     except Exception as exc:  # noqa: BLE001
         return {"error": str(exc)}
 
@@ -53,9 +51,20 @@ def list_profiles() -> Dict[str, Any]:
 
     def append_profile(path: Path, profile_type: str) -> None:
         data = _load_yaml(path)
+        camera_name = ""
+        try:
+            relative_parts = path.relative_to(profiles_dir).parts
+            if len(relative_parts) >= 4 and relative_parts[0] == "cameras":
+                camera_name = relative_parts[1]
+        except ValueError:
+            pass
+        profile_name = data.get("profile_name") or path.stem
+        profile_id = f"{camera_name}/{profile_name}" if camera_name else profile_name
         item = {
-            "name": data.get("profile_name") or path.stem,
+            "id": profile_id,
+            "name": profile_name,
             "type": profile_type,
+            "camera": camera_name,
             "path": str(path),
             "launch_file": data.get("launch_file", ""),
             "default_launch_args": data.get("default_launch_args", {}),
@@ -81,7 +90,11 @@ def list_profiles() -> Dict[str, Any]:
         all_profiles.append(item)
 
     for profile_type in ("functional", "performance"):
-        for path in sorted((profiles_dir / profile_type).glob("*.yaml")):
+        profile_paths = [
+            *sorted((profiles_dir / profile_type).glob("*.yaml")),
+            *sorted((profiles_dir / "cameras").glob(f"*/{profile_type}/*.yaml")),
+        ]
+        for path in profile_paths:
             append_profile(path, profile_type)
 
     for path in sorted(profiles_dir.glob("*.yaml")):

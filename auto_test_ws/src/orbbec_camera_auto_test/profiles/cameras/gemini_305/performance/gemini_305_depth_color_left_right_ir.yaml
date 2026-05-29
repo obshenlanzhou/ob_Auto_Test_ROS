@@ -1,0 +1,10 @@
+extends: base/depth_color_left_right_ir_performance.yaml
+
+profile_name: gemini_305_depth_color_left_right_ir
+launch_file: gemini305.launch.py
+
+default_launch_args:
+  enable_color: true
+  enable_depth: true
+  enable_left_ir: true
+  enable_right_ir: true

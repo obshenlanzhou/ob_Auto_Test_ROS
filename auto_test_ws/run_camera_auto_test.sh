@@ -245,7 +245,7 @@ run_functional() {
   mkdir -p "${functional_dir}"
   local args=("${COMMON_ARGS[@]}")
   args[1]="${functional_dir}"
-  python3 -m orbbec_camera_auto_test.functional_runner "${args[@]}"
+  python3 -m orbbec_camera_auto_test.runners.functional "${args[@]}"
 }
 
 run_performance() {
@@ -259,7 +259,7 @@ run_performance() {
   if [[ -n "${DURATION}" ]]; then
     args+=(--duration "${DURATION}")
   fi
-  python3 -m orbbec_camera_auto_test.performance_runner "${args[@]}"
+  python3 -m orbbec_camera_auto_test.runners.performance "${args[@]}"
 }
 
 run_restart() {
@@ -280,7 +280,7 @@ run_restart() {
   for image_topic in "${IMAGE_TOPICS[@]}"; do
     args+=(--image-topic "${image_topic}")
   done
-  python3 -m orbbec_camera_auto_test.restart_runner "${args[@]}"
+  python3 -m orbbec_camera_auto_test.runners.restart "${args[@]}"
 }
 
 case "${MODE}" in

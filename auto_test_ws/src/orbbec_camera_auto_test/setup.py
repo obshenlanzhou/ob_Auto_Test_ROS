@@ -1,9 +1,17 @@
-from glob import glob
+from pathlib import Path
 
 from setuptools import find_packages, setup
 
 
 package_name = "orbbec_camera_auto_test"
+
+
+def profile_data_files():
+    entries = []
+    for profile_path in sorted(Path("profiles").glob("**/*.yaml")):
+        destination = Path(f"share/{package_name}") / profile_path.parent
+        entries.append((str(destination), [str(profile_path)]))
+    return entries
 
 
 setup(
@@ -13,15 +21,7 @@ setup(
     data_files=[
         ("share/ament_index/resource_index/packages", [f"resource/{package_name}"]),
         (f"share/{package_name}", ["package.xml"]),
-        (
-            f"share/{package_name}/profiles/functional",
-            glob("profiles/functional/*.yaml"),
-        ),
-        (
-            f"share/{package_name}/profiles/performance",
-            glob("profiles/performance/*.yaml"),
-        ),
-    ],
+    ] + profile_data_files(),
     install_requires=["setuptools"],
     zip_safe=True,
     maintainer="slz",
@@ -30,9 +30,9 @@ setup(
     license="Apache-2.0",
     entry_points={
         "console_scripts": [
-            "run_functional_test = orbbec_camera_auto_test.functional_runner:main",
-            "run_performance_test = orbbec_camera_auto_test.performance_runner:main",
-            "run_restart_test = orbbec_camera_auto_test.restart_runner:main",
+            "run_functional_test = orbbec_camera_auto_test.runners.functional:main",
+            "run_performance_test = orbbec_camera_auto_test.runners.performance:main",
+            "run_restart_test = orbbec_camera_auto_test.runners.restart:main",
         ],
     },
 )

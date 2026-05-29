@@ -7,17 +7,18 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict
 
-from .functional_services import (
+from ..checks.services import (
     partition_service_specs,
     run_artifact_service_checks,
     run_reboot_check,
     run_service_checks,
 )
-from .functional_topics import run_topic_checks
-from .profile_loader import CameraProfile, LaunchScenarioSpec, load_camera_profile
-from .reporter import build_functional_summary, collect_failures, ensure_dir, write_json, write_markdown
-from .ros_utils import RosHarness, resolve_service_type
-from .session import TestSession, discover_orbbec_devices
+from ..checks.topics import run_topic_checks
+from ..core.reporter import build_functional_summary, collect_failures, ensure_dir, write_json, write_markdown
+from ..core.ros_utils import RosHarness, resolve_service_type
+from ..core.session import TestSession, discover_orbbec_devices
+from ..profile.loader import CameraProfile, LaunchScenarioSpec, load_camera_profile
+from ..profile.templating import expand_launch_scenario
 
 
 def _parse_scalar(value: str) -> Any:
@@ -146,6 +147,8 @@ def _run_scenario(
     artifacts_dir = ensure_dir(scenario_dir / "artifacts")
     launch_args = dict(base_launch_args)
     launch_args.update(scenario.launch_args)
+    camera_name = str(launch_args.get("camera_name", "camera"))
+    scenario = expand_launch_scenario(scenario, camera_name)
     write_json(
         scenario_dir / "launch_args.json",
         {"launch_file": launch_file, "launch_args": launch_args},
@@ -178,7 +181,7 @@ def _run_scenario(
         emit_status(f"starting launch scenario '{scenario.name}'")
         session.start()
         with RosHarness("orbbec_camera_functional_test", ros_version=ros_version) as harness:
-            _wait_for_camera_ready(session, harness, launch_args["camera_name"], emit_status)
+            _wait_for_camera_ready(session, harness, camera_name, emit_status)
             emit_status(f"collecting ROS graph snapshot for scenario '{scenario.name}'")
             scenario_result["graph_snapshot"] = harness.graph_snapshot()
             emit_status(f"testing scenario topics for '{scenario.name}'")
@@ -293,6 +296,8 @@ def run_functional_test(args) -> int:
         reboot_dir = ensure_dir(results_dir / "scenarios" / scenario.name / "reboot")
         launch_args = dict(base_launch_args)
         launch_args.update(scenario.launch_args)
+        camera_name = str(launch_args.get("camera_name", "camera"))
+        expanded_scenario = expand_launch_scenario(scenario, camera_name)
         write_json(
             reboot_dir / "launch_args.json",
             {"launch_file": launch_file, "launch_args": launch_args},
@@ -310,8 +315,10 @@ def run_functional_test(args) -> int:
         try:
             reboot_session.start()
             with RosHarness("orbbec_camera_functional_reboot_test", ros_version=args.ros_version) as harness:
-                _wait_for_camera_ready(reboot_session, harness, launch_args["camera_name"], emit_status)
-                image_topics = [topic for topic in scenario.topics if topic.validator == "image"]
+                _wait_for_camera_ready(reboot_session, harness, camera_name, emit_status)
+                image_topics = [
+                    topic for topic in expanded_scenario.topics if topic.validator == "image"
+                ]
                 topic_names = ", ".join(topic.name for topic in image_topics) or "<none>"
                 emit_status(
                     f"calling reboot service and waiting for image streams: {topic_names}"
@@ -320,7 +327,7 @@ def run_functional_test(args) -> int:
                     harness,
                     reboot_spec,
                     image_topics,
-                    launch_args["camera_name"],
+                    camera_name,
                     service_log_path,
                     emit_status=emit_status,
                 )

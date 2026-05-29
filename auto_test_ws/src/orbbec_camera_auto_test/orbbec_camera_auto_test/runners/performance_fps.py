@@ -5,8 +5,8 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from .profile_loader import TopicSpec
-from .ros_utils import resolve_message_type
+from ..core.ros_utils import resolve_message_type
+from ..profile.loader import TopicSpec
 
 _TOPIC_FPS_KEY_RULES = (
     ("/color/image_raw", "color_fps"),

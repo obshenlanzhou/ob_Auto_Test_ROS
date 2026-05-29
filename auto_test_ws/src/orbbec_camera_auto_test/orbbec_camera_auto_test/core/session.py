@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import platform
+import re
 import shlex
 import signal
 import subprocess
@@ -168,6 +169,19 @@ def launch_value(value: Any) -> str:
     return str(value)
 
 
+def _device_count_from_discovery_output(output: str) -> int:
+    patterns = (
+        r"^\s*-\s*Name\s*:",
+        r"\]\s*\[list_device_node\]:\s*name\s*:",
+        r"^\s*name\s*:",
+    )
+    return sum(
+        1
+        for line in output.splitlines()
+        if any(re.search(pattern, line, flags=re.IGNORECASE) for pattern in patterns)
+    )
+
+
 def discover_orbbec_devices(
     driver_setup: Optional[str] = None,
     ros_version: str | int | None = "2",
@@ -199,7 +213,7 @@ def discover_orbbec_devices(
         }
 
     output = (result.stdout or "").strip()
-    device_count = output.count("- Name:")
+    device_count = _device_count_from_discovery_output(output)
     if version == "1" and "Couldn't find executable named list_devices_node" in output:
         return {
             "success": True,
@@ -256,11 +270,19 @@ class TestSession:
         self.process_group_id: Optional[int] = None
 
     def command(self) -> list[str]:
-        command = (
-            ["roslaunch", "orbbec_camera", self.launch_file]
-            if self.ros_version == "1"
-            else ["ros2", "launch", "orbbec_camera", self.launch_file]
-        )
+        launch_path = Path(str(self.launch_file)).expanduser()
+        if launch_path.is_absolute() or launch_path.parent != Path("."):
+            command = (
+                ["roslaunch", str(launch_path)]
+                if self.ros_version == "1"
+                else ["ros2", "launch", str(launch_path)]
+            )
+        else:
+            command = (
+                ["roslaunch", "orbbec_camera", self.launch_file]
+                if self.ros_version == "1"
+                else ["ros2", "launch", "orbbec_camera", self.launch_file]
+            )
         for key, value in sorted(self.launch_args.items()):
             if value is None or value == "":
                 continue

@@ -1,0 +1,14 @@
+extends: base/multi_depth_color_ir_performance.yaml
+
+profile_name: gemini_330_multi_isolated
+launch_file: multi_camera.launch.py
+
+multi_camera:
+  resource_mode: isolated_containers
+  cameras:
+    - name: camera_01
+    - name: camera_02
+
+performance_scenarios:
+  - name: default
+    description: Multi-camera stress test with one component container per camera.

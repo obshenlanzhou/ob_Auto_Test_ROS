@@ -6,6 +6,7 @@ const state = {
   config: {},
   selectedFunctionalProfile: null,
   selectedPerformanceProfile: null,
+  cameras: [],
   logOffset: 0,
   polling: null,
 };
@@ -22,6 +23,16 @@ const DEFAULT_SETUPS = {
     ros: "/opt/ros/one/setup.bash",
     camera: "/home/slz/ORBBEC/orbbecsdk_ros1_v2-main/devel/setup.bash",
     launch: "gemini_330_series.launch",
+  },
+};
+const DEFAULT_LAUNCH_FILES = {
+  "2": {
+    gemini_305: "gemini305.launch.py",
+    gemini_330: "gemini_330_series.launch.py",
+  },
+  "1": {
+    gemini_305: "gemini305.launch",
+    gemini_330: "gemini_330_series.launch",
   },
 };
 
@@ -44,6 +55,7 @@ function formPayload() {
     ros_setup: $("rosSetup").value.trim(),
     camera_setup: $("cameraSetup").value.trim(),
     mode: $("mode").value,
+    camera_model: $("cameraModel").value,
     functional_profile: $("functionalProfile").value,
     performance_profile: $("performanceProfile").value,
     performance_scenario: $("performanceScenario").value,
@@ -206,10 +218,82 @@ function renderRestart(restart = {}, mode = "") {
   $("restartMessage").textContent = restart.message || "";
 }
 
+function profileId(profile) {
+  return profile.id || profile.name || "";
+}
+
+function findProfile(profiles, value) {
+  return profiles.find((profile) => profileId(profile) === value)
+    || profiles.find((profile) => profile.name === value)
+    || null;
+}
+
+function allProfiles() {
+  return [...state.profiles.functional, ...state.profiles.performance];
+}
+
+function selectedCamera() {
+  return $("cameraModel")?.value || "";
+}
+
+function profilesForType(type) {
+  const camera = selectedCamera();
+  const profiles = state.profiles[type] || [];
+  if (!camera) return profiles;
+  return profiles.filter((profile) => profile.camera === camera);
+}
+
+function profileLabel(profile) {
+  if (selectedCamera() && profile.camera === selectedCamera()) {
+    return profile.name;
+  }
+  return profile.camera ? `${profile.camera} / ${profile.name}` : profile.name;
+}
+
+function inferCameraFromConfig() {
+  if (state.config.camera_model) {
+    return state.config.camera_model;
+  }
+  const candidates = [
+    state.config.performance_profile,
+    state.config.functional_profile,
+  ];
+  for (const value of candidates) {
+    const profile = findProfile(allProfiles(), value);
+    if (profile?.camera) return profile.camera;
+  }
+  return state.cameras[0] || "";
+}
+
+function fillCameraSelect(preferredCamera) {
+  const select = $("cameraModel");
+  select.innerHTML = "";
+
+  const allOption = document.createElement("option");
+  allOption.value = "";
+  allOption.textContent = "全部相机";
+  select.appendChild(allOption);
+
+  for (const camera of state.cameras) {
+    const option = document.createElement("option");
+    option.value = camera;
+    option.textContent = camera;
+    select.appendChild(option);
+  }
+
+  if (preferredCamera && state.cameras.includes(preferredCamera)) {
+    select.value = preferredCamera;
+  }
+}
+
+function defaultLaunchFileForCamera() {
+  const rosVersion = $("rosVersion").value || "2";
+  const launchFiles = DEFAULT_LAUNCH_FILES[rosVersion] || DEFAULT_LAUNCH_FILES["2"];
+  return launchFiles[selectedCamera()] || launchFiles.gemini_330;
+}
+
 function updateScenarioOptions() {
-  const selected = state.profiles.performance.find(
-    (profile) => profile.name === $("performanceProfile").value
-  );
+  const selected = findProfile(profilesForType("performance"), $("performanceProfile").value);
   state.selectedPerformanceProfile = selected || null;
   $("performanceScenario").innerHTML = "";
 
@@ -259,19 +343,15 @@ function updateModeControls() {
   $("duration").closest("label").classList.toggle("is-hidden", !needsPerformanceRuntime);
   $("restartFields").classList.toggle("is-hidden", !needsRestart);
 
-  const functional = state.profiles.functional.find(
-    (profile) => profile.name === $("functionalProfile").value
-  );
-  const performance = state.profiles.performance.find(
-    (profile) => profile.name === $("performanceProfile").value
-  );
+  const functional = findProfile(profilesForType("functional"), $("functionalProfile").value);
+  const performance = findProfile(profilesForType("performance"), $("performanceProfile").value);
   state.selectedFunctionalProfile = functional || null;
   state.selectedPerformanceProfile = performance || null;
   const activeProfile = needsRestart ? null : needsPerformance ? performance : functional;
   if (activeProfile?.launch_file) {
     $("launchFile").placeholder = activeProfile.launch_file;
   } else if (needsRestart) {
-    $("launchFile").placeholder = (DEFAULT_SETUPS[$("rosVersion").value] || DEFAULT_SETUPS["2"]).launch;
+    $("launchFile").placeholder = defaultLaunchFileForCamera();
   }
 }
 
@@ -280,13 +360,32 @@ function fillProfileSelect(selectId, profiles, preferredName) {
   select.innerHTML = "";
   for (const profile of profiles) {
     const option = document.createElement("option");
-    option.value = profile.name;
-    option.textContent = profile.name;
+    option.value = profileId(profile);
+    option.textContent = profileLabel(profile);
     select.appendChild(option);
   }
-  if (preferredName && profiles.some((profile) => profile.name === preferredName)) {
-    select.value = preferredName;
+  const preferredProfile = findProfile(profiles, preferredName);
+  if (preferredProfile) {
+    select.value = profileId(preferredProfile);
   }
+}
+
+function refreshProfileSelects(functionalPreferred, performancePreferred) {
+  fillProfileSelect(
+    "functionalProfile",
+    profilesForType("functional"),
+    functionalPreferred || state.config.functional_profile || "gemini_330_series"
+  );
+  fillProfileSelect(
+    "performanceProfile",
+    profilesForType("performance"),
+    performancePreferred || state.config.performance_profile || "gemini_330_series"
+  );
+  updateScenarioOptions();
+  if (state.config.performance_scenario) {
+    $("performanceScenario").value = state.config.performance_scenario;
+  }
+  updateModeControls();
 }
 
 async function loadConfig() {
@@ -312,22 +411,10 @@ async function loadProfiles() {
     functional: payload.profiles_by_type?.functional || [],
     performance: payload.profiles_by_type?.performance || [],
   };
+  state.cameras = [...new Set(allProfiles().map((profile) => profile.camera).filter(Boolean))].sort();
   $("profileCount").textContent = `${state.profiles.functional.length}/${state.profiles.performance.length}`;
-  fillProfileSelect(
-    "functionalProfile",
-    state.profiles.functional,
-    state.config.functional_profile || "gemini_330_series"
-  );
-  fillProfileSelect(
-    "performanceProfile",
-    state.profiles.performance,
-    state.config.performance_profile || "gemini_330_series"
-  );
-  updateScenarioOptions();
-  if (state.config.performance_scenario) {
-    $("performanceScenario").value = state.config.performance_scenario;
-  }
-  updateModeControls();
+  fillCameraSelect(inferCameraFromConfig());
+  refreshProfileSelects();
 }
 
 async function pollStatus() {
@@ -513,6 +600,9 @@ async function init() {
     updateRosVersionControls();
   });
   $("mode").addEventListener("change", updateModeControls);
+  $("cameraModel").addEventListener("change", () => {
+    refreshProfileSelects($("functionalProfile").value, $("performanceProfile").value);
+  });
   $("functionalProfile").addEventListener("change", updateModeControls);
   $("performanceProfile").addEventListener("change", () => {
     updateScenarioOptions();

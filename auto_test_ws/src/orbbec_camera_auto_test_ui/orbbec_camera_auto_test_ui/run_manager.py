@@ -31,6 +31,16 @@ def _first_existing_setup(base_dir: Path) -> str:
 
 DEFAULT_CAMERA_SETUP = _first_existing_setup(DEFAULT_CAMERA_SETUP_DIR)
 DEFAULT_ROS1_CAMERA_SETUP = _first_existing_setup(DEFAULT_ROS1_CAMERA_SETUP_DIR)
+DEFAULT_LAUNCH_FILES = {
+    "2": {
+        "gemini_305": "gemini305.launch.py",
+        "gemini_330": "gemini_330_series.launch.py",
+    },
+    "1": {
+        "gemini_305": "gemini305.launch",
+        "gemini_330": "gemini_330_series.launch",
+    },
+}
 
 
 def _default_ros_setup_for_version(ros_version: str) -> str:
@@ -39,6 +49,11 @@ def _default_ros_setup_for_version(ros_version: str) -> str:
 
 def _default_camera_setup_for_version(ros_version: str) -> str:
     return DEFAULT_ROS1_CAMERA_SETUP if str(ros_version) == "1" else DEFAULT_CAMERA_SETUP
+
+
+def _default_launch_file_for_camera(camera_model: str, ros_version: str) -> str:
+    launch_files = DEFAULT_LAUNCH_FILES.get(str(ros_version), DEFAULT_LAUNCH_FILES["2"])
+    return launch_files.get(str(camera_model or "").strip(), launch_files["gemini_330"])
 
 
 def _find_auto_test_ws() -> Path:
@@ -197,6 +212,8 @@ def _format_topic_label(label: str) -> str:
     if not label:
         return ""
     stream_markers = (
+        ("left_color", "_left_color_"),
+        ("right_color", "_right_color_"),
         ("left_ir", "_left_ir_"),
         ("right_ir", "_right_ir_"),
         ("color", "_color_"),
@@ -217,7 +234,7 @@ def _format_topic_label(label: str) -> str:
 
 
 _FRAME_CONFIG_RE = re.compile(
-    r"\[(?P<node>[^\]]+)\]: (?P<stream>color|depth|left_ir|right_ir|ir) Frame - Width: "
+    r"\[(?P<node>[^\]]+)\]: (?P<stream>left_color|right_color|color|depth|left_ir|right_ir|ir) Frame - Width: "
     r"(?P<width>\d+) Height: (?P<height>\d+) fps: (?P<fps>\d+) Format: (?P<format>\S+)"
 )
 
@@ -247,6 +264,10 @@ def _read_stream_config_from_launch_log(run_root: Path) -> Dict[tuple[str, str],
 
 
 def _stream_key_from_topic(topic_name: str) -> str:
+    if "/left_color/" in topic_name:
+        return "left_color"
+    if "/right_color/" in topic_name:
+        return "right_color"
     if "/left_ir/" in topic_name:
         return "left_ir"
     if "/right_ir/" in topic_name:
@@ -405,6 +426,7 @@ def load_config() -> Dict[str, Any]:
         "host": config.get("host") or "127.0.0.1",
         "port": int(config.get("port") or 8000),
         "mode": config.get("mode") or "functional",
+        "camera_model": config.get("camera_model") or "",
         "functional_profile": config.get("functional_profile") or "gemini_330_series",
         "performance_profile": config.get("performance_profile") or "gemini_330_series",
         "performance_scenario": config.get("performance_scenario") or "",
@@ -426,6 +448,7 @@ def save_config(payload: Dict[str, Any]) -> Dict[str, Any]:
         "host",
         "port",
         "mode",
+        "camera_model",
         "functional_profile",
         "performance_profile",
         "performance_scenario",
@@ -466,12 +489,12 @@ def _parse_multiline_values(raw: Any) -> List[str]:
 
 def _build_runner_args(payload: Dict[str, Any], mode: str, results_dir: Path) -> List[str]:
     module = (
-        "orbbec_camera_auto_test.functional_runner"
+        "orbbec_camera_auto_test.runners.functional"
         if mode == "functional"
         else (
-            "orbbec_camera_auto_test.restart_runner"
+            "orbbec_camera_auto_test.runners.restart"
             if mode == "restart"
-            else "orbbec_camera_auto_test.performance_runner"
+            else "orbbec_camera_auto_test.runners.performance"
         )
     )
     args = ["python3", "-m", module]
@@ -479,11 +502,16 @@ def _build_runner_args(payload: Dict[str, Any], mode: str, results_dir: Path) ->
     args.extend(["--ros-version", ros_version])
     _append_arg(args, "--ros-setup", payload.get("ros_setup"))
     profile_key = f"{mode}_profile"
-    profile = "" if mode == "restart" else "gemini_330_series"
+    profile = "gemini_330_series"
+    if mode == "restart":
+        profile = ""
     profile = payload.get(profile_key) or payload.get("profile") or profile
     _append_arg(args, "--profile", profile)
     _append_arg(args, "--results-dir", str(results_dir))
-    _append_arg(args, "--launch-file", payload.get("launch_file"))
+    launch_file = payload.get("launch_file")
+    if mode == "restart" and not _safe_text(launch_file):
+        launch_file = _default_launch_file_for_camera(payload.get("camera_model", ""), ros_version)
+    _append_arg(args, "--launch-file", launch_file)
     _append_arg(args, "--camera-name", payload.get("camera_name"))
     _append_arg(args, "--serial-number", payload.get("serial_number"))
     _append_arg(args, "--usb-port", payload.get("usb_port"))
@@ -591,7 +619,6 @@ def validate_run_payload(payload: Dict[str, Any]) -> List[str]:
         payload.get("performance_profile") or payload.get("profile")
     ):
         errors.append("performance profile is required")
-
     ros_setup = Path(_safe_text(payload.get("ros_setup")) or _default_ros_setup_for_version(ros_version))
     if not ros_setup.is_file():
         errors.append(f"ROS setup file not found: {ros_setup}")
@@ -711,6 +738,7 @@ class RunManager:
                 "camera_setup": payload.get("camera_setup")
                 or _default_camera_setup_for_version(payload.get("ros_version") or "2"),
                 "mode": payload.get("mode") or "functional",
+                "camera_model": payload.get("camera_model") or "",
                 "functional_profile": payload.get("functional_profile")
                 or payload.get("profile")
                 or "gemini_330_series",

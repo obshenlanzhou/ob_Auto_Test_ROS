@@ -1,0 +1,44 @@
+extends: depth_color_streams.yaml
+
+performance_topic_defaults:
+  timeout: 10
+
+performance_scenarios:
+  - name: default
+    description: default launch
+    duration: 240
+    launch_args: {}
+
+  - name: default_with_stress_ng_load
+    description: default launch with stress-ng high load to observe dropped frames
+    duration: 240
+    launch_args: {}
+    load:
+      type: stress-ng
+      workers: 0
+
+  - name: high_performance_launch
+    description: enable color, depth, ir, and point cloud to observe CPU and memory fluctuation
+    duration: 180
+    launch_args:
+      enable_color: true
+      enable_depth: true
+      enable_ir: true
+      enable_point_cloud: true
+    topics:
+      - name: /{camera}/color/image_raw
+        type: sensor_msgs/msg/Image
+        mode: message
+        validator: image
+      - name: /{camera}/depth/image_raw
+        type: sensor_msgs/msg/Image
+        mode: message
+        validator: image
+      - name: /{camera}/ir/image_raw
+        type: sensor_msgs/msg/Image
+        mode: message
+        validator: image
+      - name: /{camera}/depth/points
+        type: sensor_msgs/msg/PointCloud2
+        mode: message
+        validator: point_cloud

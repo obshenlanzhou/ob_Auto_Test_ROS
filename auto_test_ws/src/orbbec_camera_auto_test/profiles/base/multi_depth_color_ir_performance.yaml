@@ -1,6 +1,3 @@
-profile_name: gemini_330_multi_shared
-launch_file: orbbec_multicamera.launch.py
-
 default_launch_args: {}
 
 launch_scenarios: []
@@ -10,13 +7,6 @@ performance_topic_defaults:
 
 multi_camera:
   enabled: true
-  resource_mode: shared_container
-  container_name: orbbec_container
-  cameras:
-    - name: G330_0
-    - name: G330_1
-    - name: G330_2
-    - name: G330_3
   topic_templates:
     - name: /{camera}/color/image_raw
       type: sensor_msgs/msg/Image
@@ -41,5 +31,4 @@ multi_camera:
 
 performance_scenarios:
   - name: default
-    description: Multi-camera stress test with cameras loaded into one shared component container.
     duration: 300

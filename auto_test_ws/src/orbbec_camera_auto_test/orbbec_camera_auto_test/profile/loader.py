@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-import yaml
+from .merger import load_merged_profile_data
 
 PACKAGE_NAME = "orbbec_camera_auto_test"
 
@@ -244,7 +244,7 @@ def resolve_profile_path(
     base_dirs = (
         [package_root]
         if package_root is not None
-        else [Path(__file__).resolve().parents[1]]
+        else [Path(__file__).resolve().parents[2]]
     )
     try:
         from ament_index_python.packages import get_package_share_directory
@@ -258,7 +258,16 @@ def resolve_profile_path(
         profiles_dir = base_dir / "profiles"
         if profile_type:
             candidates.append(profiles_dir / profile_type / f"{profile}.yaml")
+            candidates.extend(
+                sorted((profiles_dir / "cameras").glob(f"*/{profile_type}/{profile}.yaml"))
+            )
+            if "/" in profile:
+                camera_name, profile_name = profile.split("/", 1)
+                candidates.append(
+                    profiles_dir / "cameras" / camera_name / profile_type / f"{profile_name}.yaml"
+                )
         candidates.append(profiles_dir / f"{profile}.yaml")
+        candidates.extend(sorted(profiles_dir.glob(f"**/{profile}.yaml")))
 
     for resolved in candidates:
         if resolved.is_file():
@@ -276,8 +285,7 @@ def load_camera_profile(
         package_root=package_root,
         profile_type=profile_type,
     )
-    with profile_path.open("r", encoding="utf-8") as stream:
-        data = yaml.safe_load(stream) or {}
+    data = load_merged_profile_data(profile_path)
 
     required_keys = {
         "profile_name",

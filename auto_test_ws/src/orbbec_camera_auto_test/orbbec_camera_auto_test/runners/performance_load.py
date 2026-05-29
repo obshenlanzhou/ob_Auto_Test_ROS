@@ -8,7 +8,7 @@ from typing import Optional
 
 import psutil
 
-from .profile_loader import ExternalLoadSpec
+from ..profile.loader import ExternalLoadSpec
 
 
 class ExternalLoadController:

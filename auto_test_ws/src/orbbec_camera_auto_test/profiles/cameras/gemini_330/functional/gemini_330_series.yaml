@@ -1,0 +1,4 @@
+extends: base/depth_color_left_right_ir_functional.yaml
+
+profile_name: gemini_330_series
+launch_file: gemini_330_series.launch.py

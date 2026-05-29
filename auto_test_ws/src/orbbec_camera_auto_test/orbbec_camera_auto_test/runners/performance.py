@@ -10,21 +10,22 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict
 
-from .functional_runner import _build_launch_args, _require_detected_camera, _select_launch_file
-from .environment_info import collect_camera_environment, collect_host_environment
-from .functional_topics import run_topic_checks
+from .functional import _build_launch_args, _require_detected_camera, _select_launch_file
 from .performance_fps import TopicFpsCollector
 from .performance_load import ExternalLoadController
 from .performance_system import MultiCameraSystemSampler, ProcessTreeSampler
-from .profile_loader import (
+from ..checks.topics import run_topic_checks
+from ..core.environment_info import collect_camera_environment, collect_host_environment
+from ..core.reporter import append_log, build_performance_summary, ensure_dir, write_json, write_markdown
+from ..core.ros_utils import RosHarness, resolve_service_type
+from ..core.session import TestSession
+from ..profile.loader import (
     FrameTimestampSpec,
     PerformanceScenarioSpec,
     TopicSpec,
     load_camera_profile,
 )
-from .reporter import append_log, build_performance_summary, ensure_dir, write_json, write_markdown
-from .ros_utils import RosHarness, resolve_service_type
-from .session import TestSession
+from ..profile.templating import expand_topic_specs
 
 
 def _parse_duration_value(value: Any) -> float:
@@ -266,7 +267,7 @@ def _stream_config_from_launch_args(launch_args: Dict[str, Any]) -> list[Dict[st
 
 
 _FRAME_CONFIG_RE = re.compile(
-    r"\[(?P<node>[^\]]+)\]: (?P<stream>color|depth|left_ir|right_ir|ir) Frame - Width: "
+    r"\[(?P<node>[^\]]+)\]: (?P<stream>left_color|right_color|color|depth|left_ir|right_ir|ir) Frame - Width: "
     r"(?P<width>\d+) Height: (?P<height>\d+) fps: (?P<fps>\d+) Format: (?P<format>\S+)"
 )
 
@@ -275,6 +276,8 @@ def _stream_config_from_launch_log(log_path: Path) -> list[Dict[str, Any]]:
     if not log_path.is_file():
         return []
     labels = {
+        "left_color": "Left Color",
+        "right_color": "Right Color",
         "color": "Color",
         "depth": "Depth",
         "left_ir": "Left IR",
@@ -309,6 +312,10 @@ def _stream_config_from_launch_log(log_path: Path) -> list[Dict[str, Any]]:
 
 
 def _stream_key_from_topic(topic_name: str) -> str:
+    if "/left_color/" in topic_name:
+        return "left_color"
+    if "/right_color/" in topic_name:
+        return "right_color"
     if "/left_ir/" in topic_name:
         return "left_ir"
     if "/right_ir/" in topic_name:
@@ -454,7 +461,9 @@ def _run_performance_scenario(
     is_multi_camera = bool(multi_camera.enabled and multi_camera.cameras)
     camera_names = list(multi_camera.cameras) if is_multi_camera else [camera_name]
     performance_topics = (
-        _expand_multi_camera_topics(profile, scenario) if is_multi_camera else scenario.topics
+        _expand_multi_camera_topics(profile, scenario)
+        if is_multi_camera
+        else expand_topic_specs(scenario.topics, camera_name)
     )
     resource_mode = multi_camera.resource_mode if is_multi_camera else ""
     container_name = multi_camera.container_name if is_multi_camera else ""

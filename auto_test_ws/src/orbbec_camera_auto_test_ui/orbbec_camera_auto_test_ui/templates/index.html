@@ -73,7 +73,7 @@
 
           <div class="form-section">
             <div class="section-title">测试</div>
-            <div class="grid two">
+            <div class="grid two test-grid">
               <label>
                 测试模式
                 <select id="mode" name="mode">
@@ -84,13 +84,16 @@
                 </select>
               </label>
 
+              <label>
+                相机型号
+                <select id="cameraModel" name="camera_model"></select>
+              </label>
+
               <label id="functionalProfileField">
                 功能 Profile
                 <select id="functionalProfile" name="functional_profile"></select>
               </label>
-            </div>
 
-            <div class="grid two">
               <label id="performanceProfileField">
                 性能 Profile
                 <select id="performanceProfile" name="performance_profile"></select>
@@ -100,45 +103,37 @@
                 Performance scenario
                 <select id="performanceScenario" name="performance_scenario"></select>
               </label>
-            </div>
 
-            <div class="grid two">
               <label>
                 Duration
                 <input id="duration" name="duration" placeholder="300 / 15m / 2h" />
               </label>
             </div>
 
-            <div id="restartFields">
-              <div class="grid two">
-                <label>
-                  Stable seconds
-                  <input id="stableSeconds" name="stable_seconds" placeholder="10" />
-                </label>
-
-                <label>
-                  Stream timeout
-                  <input id="streamTimeout" name="stream_timeout" placeholder="60" />
-                </label>
-              </div>
-
-              <div class="grid two">
-                <label>
-                  Max gap seconds
-                  <input id="maxGapSeconds" name="max_gap_seconds" placeholder="1.5" />
-                </label>
-              </div>
-
-              <div class="grid two">
-                <label>
-                  Restart delay
-                  <input id="restartDelay" name="restart_delay" placeholder="2" />
-                </label>
-              </div>
+            <div id="restartFields" class="grid two restart-grid">
+              <label>
+                Stable seconds
+                <input id="stableSeconds" name="stable_seconds" placeholder="10" />
+              </label>
 
               <label>
+                Stream timeout
+                <input id="streamTimeout" name="stream_timeout" placeholder="60" />
+              </label>
+
+              <label>
+                Max gap seconds
+                <input id="maxGapSeconds" name="max_gap_seconds" placeholder="1.5" />
+              </label>
+
+              <label>
+                Restart delay
+                <input id="restartDelay" name="restart_delay" placeholder="2" />
+              </label>
+
+              <label class="grid-span-2">
                 Image topics
-                <textarea id="imageTopics" name="image_topics" rows="3" placeholder="/camera/color/image_raw"></textarea>
+                <textarea id="imageTopics" name="image_topics" rows="3" placeholder="/{camera}/color/image_raw"></textarea>
               </label>
             </div>
 

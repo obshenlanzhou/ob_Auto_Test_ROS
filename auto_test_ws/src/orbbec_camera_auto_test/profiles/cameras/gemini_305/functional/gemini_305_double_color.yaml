@@ -1,0 +1,7 @@
+extends: base/double_color_functional.yaml
+
+profile_name: gemini_305_double_color
+launch_file: gemini305.launch.py
+
+default_launch_args:
+  device_preset: Dual Color Streams

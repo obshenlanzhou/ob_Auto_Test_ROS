@@ -9,12 +9,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List
 
-from .functional_runner import _parse_launch_args, _require_detected_camera, _select_launch_file
-from .performance_runner import _select_performance_scenarios, _wait_for_camera_ready
-from .profile_loader import CameraProfile, TopicSpec, load_camera_profile
-from .reporter import append_log, ensure_dir, write_json, write_markdown
-from .ros_utils import RosHarness, make_qos_profile, resolve_message_type
-from .session import TestSession
+from .functional import _parse_launch_args, _require_detected_camera, _select_launch_file
+from .performance import _select_performance_scenarios, _wait_for_camera_ready
+from ..core.reporter import append_log, ensure_dir, write_json, write_markdown
+from ..core.ros_utils import RosHarness, make_qos_profile, resolve_message_type
+from ..core.session import TestSession
+from ..profile.loader import CameraProfile, TopicSpec, load_camera_profile
+from ..profile.templating import expand_camera_template, expand_topic_specs
 
 
 def _parse_duration_value(value: Any, default: float) -> float:
@@ -55,15 +56,6 @@ def _make_status_logger(*log_paths: Path):
 
 def _topic_label(topic_name: str) -> str:
     return topic_name.strip("/").replace("/", "_") or "image"
-
-
-def _format_topic_name(topic_name: str, camera_name: str) -> str:
-    return (
-        topic_name.replace("{camera}", camera_name)
-        .replace("{camera_name}", camera_name)
-        .replace("${camera}", camera_name)
-        .replace("${camera_name}", camera_name)
-    )
 
 
 def _default_image_topic(camera_name: str) -> TopicSpec:
@@ -110,7 +102,7 @@ def _image_topics_from_args(
     if raw_topics:
         return [
             TopicSpec(
-                name=_format_topic_name(topic, camera_name),
+                name=expand_camera_template(topic, camera_name) or topic,
                 type="sensor_msgs/msg/Image",
                 mode="message",
                 validator="image",
@@ -119,9 +111,10 @@ def _image_topics_from_args(
             for topic in raw_topics
         ]
 
+    expanded_scenario_topics = expand_topic_specs(scenario_topics, camera_name)
     image_topics = [
         TopicSpec(
-            name=_format_topic_name(topic.name, camera_name),
+            name=topic.name,
             type=topic.type or "sensor_msgs/msg/Image",
             mode="message",
             validator="image",
@@ -129,7 +122,7 @@ def _image_topics_from_args(
             timeout=stream_timeout,
             qos=topic.qos,
         )
-        for topic in scenario_topics
+        for topic in expanded_scenario_topics
         if topic.validator == "image" and (topic.type in {"", "sensor_msgs/msg/Image"})
     ]
     if image_topics:

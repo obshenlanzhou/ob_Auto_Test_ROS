@@ -1,0 +1,39 @@
+extends: base/depth_color_left_right_ir_performance.yaml
+
+profile_name: gemini_330_drop_frame
+launch_file: gemini_330_series.launch.py
+
+default_launch_args:
+  enable_point_cloud: true
+  enable_frame_timestamp_csv: true
+  frame_timestamp_csv_file: "{results_dir}/driver_frame_timestamp.csv"
+
+performance_topic_defaults:
+  timeout: 15
+
+frame_timestamps:
+  enabled: true
+  flush_every_rows: 1000
+
+performance_scenarios:
+  - name: default
+    description: default launch with driver and receiver frame timestamp recording for drop-frame analysis
+
+  - name: default_with_stress_ng_load
+    description: default launch with stress-ng high load and driver plus receiver frame timestamp recording for drop-frame analysis
+
+  - name: high_performance_launch
+    description: high performance stream parameters with driver and receiver frame timestamp recording for drop-frame analysis
+    remove:
+      topics:
+        - /{camera}/left_ir/image_raw
+        - /{camera}/right_ir/image_raw
+    topics:
+      - name: /{camera}/color/image_raw
+        type: sensor_msgs/msg/Image
+        mode: message
+        validator: image
+      - name: /{camera}/depth/image_raw
+        type: sensor_msgs/msg/Image
+        mode: message
+        validator: image
