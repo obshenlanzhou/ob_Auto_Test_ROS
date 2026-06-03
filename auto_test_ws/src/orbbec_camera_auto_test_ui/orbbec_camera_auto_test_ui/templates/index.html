@@ -77,10 +77,11 @@
               <label>
                 测试模式
                 <select id="mode" name="mode">
-                  <option value="functional">functional</option>
-                  <option value="performance">performance</option>
-                  <option value="restart">restart</option>
-                  <option value="all">all</option>
+	                  <option value="functional">functional</option>
+	                  <option value="performance">performance</option>
+	                  <option value="restart">restart</option>
+	                  <option value="stream_stall">stream_stall</option>
+	                  <option value="all">all</option>
                 </select>
               </label>
 
@@ -131,7 +132,35 @@
                 <input id="restartDelay" name="restart_delay" placeholder="2" />
               </label>
 
-              <label class="grid-span-2">
+            </div>
+
+            <div id="streamStallFields" class="grid two">
+              <label>
+                Warning interval
+                <input id="warningIntervalSec" name="warning_interval_sec" placeholder="1.0" />
+              </label>
+
+              <label>
+                Warmup seconds
+                <input id="warmupSec" name="warmup_sec" placeholder="2.0" />
+              </label>
+
+              <label>
+                Save CSV
+                <select id="saveCsv" name="save_csv">
+                  <option value="true">true</option>
+                  <option value="false">false</option>
+                </select>
+              </label>
+
+              <label>
+                Queue size
+                <input id="queueSize" name="queue_size" placeholder="10" />
+              </label>
+            </div>
+
+            <div id="streamTopicFields">
+              <label>
                 Image topics
                 <textarea id="imageTopics" name="image_topics" rows="3" placeholder="/{camera}/color/image_raw"></textarea>
               </label>

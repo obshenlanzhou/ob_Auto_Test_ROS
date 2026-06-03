@@ -313,9 +313,9 @@ class _Ros1NodeAdapter:
         self._timers = []
 
     def create_subscription(self, msg_type, topic_name, callback, qos_profile=10):
-        del qos_profile
         topic_name = resolve_topic_name(topic_name, self.ros_version)
-        return self.rospy.Subscriber(topic_name, msg_type, callback, queue_size=10)
+        queue_size = qos_profile if isinstance(qos_profile, int) and qos_profile > 0 else 10
+        return self.rospy.Subscriber(topic_name, msg_type, callback, queue_size=queue_size)
 
     def destroy_subscription(self, subscription) -> None:
         subscription.unregister()

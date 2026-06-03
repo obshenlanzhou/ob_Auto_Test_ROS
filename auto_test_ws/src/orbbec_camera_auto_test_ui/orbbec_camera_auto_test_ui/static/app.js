@@ -65,6 +65,10 @@ function formPayload() {
     max_gap_seconds: $("maxGapSeconds").value.trim(),
     restart_delay: $("restartDelay").value.trim(),
     image_topics: $("imageTopics").value,
+    warning_interval_sec: $("warningIntervalSec").value.trim(),
+    warmup_sec: $("warmupSec").value.trim(),
+    save_csv: $("saveCsv").value,
+    queue_size: $("queueSize").value.trim(),
     camera_name: $("cameraName").value.trim(),
     serial_number: $("serialNumber").value.trim(),
     usb_port: $("usbPort").value.trim(),
@@ -335,13 +339,17 @@ function updateModeControls() {
   const mode = $("mode").value;
   const needsFunctional = mode === "functional" || mode === "all";
   const needsPerformance = mode === "performance" || mode === "all";
-  const needsPerformanceRuntime = mode === "performance" || mode === "restart" || mode === "all";
+  const needsPerformanceRuntime = mode === "performance" || mode === "restart" || mode === "stream_stall" || mode === "all";
   const needsRestart = mode === "restart";
+  const needsStreamStall = mode === "stream_stall";
+  const needsStreamTopics = needsRestart || needsStreamStall;
   $("functionalProfileField").classList.toggle("is-hidden", !needsFunctional);
   $("performanceProfileField").classList.toggle("is-hidden", !needsPerformance);
   $("performanceScenario").closest("label").classList.toggle("is-hidden", !needsPerformance);
   $("duration").closest("label").classList.toggle("is-hidden", !needsPerformanceRuntime);
   $("restartFields").classList.toggle("is-hidden", !needsRestart);
+  $("streamStallFields").classList.toggle("is-hidden", !needsStreamStall);
+  $("streamTopicFields").classList.toggle("is-hidden", !needsStreamTopics);
 
   const functional = findProfile(profilesForType("functional"), $("functionalProfile").value);
   const performance = findProfile(profilesForType("performance"), $("performanceProfile").value);
@@ -351,6 +359,8 @@ function updateModeControls() {
   if (activeProfile?.launch_file) {
     $("launchFile").placeholder = activeProfile.launch_file;
   } else if (needsRestart) {
+    $("launchFile").placeholder = defaultLaunchFileForCamera();
+  } else if (needsStreamStall) {
     $("launchFile").placeholder = defaultLaunchFileForCamera();
   }
 }
@@ -401,6 +411,10 @@ async function loadConfig() {
   $("maxGapSeconds").value = config.max_gap_seconds || "1.5";
   $("restartDelay").value = config.restart_delay || "2";
   $("imageTopics").value = config.image_topics || "";
+  $("warningIntervalSec").value = config.warning_interval_sec || "1.0";
+  $("warmupSec").value = config.warmup_sec || "2.0";
+  $("saveCsv").value = config.save_csv || "true";
+  $("queueSize").value = config.queue_size || "10";
   $("workspacePath").textContent = `工作区: ${config.auto_test_ws}`;
   updateRosVersionControls({ fillBlank: true });
 }

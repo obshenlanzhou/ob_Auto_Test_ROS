@@ -33,6 +33,7 @@ setup(
             "run_functional_test = orbbec_camera_auto_test.runners.functional:main",
             "run_performance_test = orbbec_camera_auto_test.runners.performance:main",
             "run_restart_test = orbbec_camera_auto_test.runners.restart:main",
+            "run_stream_stall_test = orbbec_camera_auto_test.runners.stream_stall:main",
         ],
     },
 )

@@ -436,6 +436,10 @@ def load_config() -> Dict[str, Any]:
         "max_gap_seconds": config.get("max_gap_seconds") or "1.5",
         "restart_delay": config.get("restart_delay") or "2",
         "image_topics": config.get("image_topics") or "",
+        "warning_interval_sec": config.get("warning_interval_sec") or "1.0",
+        "warmup_sec": config.get("warmup_sec") or "2.0",
+        "save_csv": config.get("save_csv") or "true",
+        "queue_size": config.get("queue_size") or "10",
     }
 
 
@@ -458,6 +462,10 @@ def save_config(payload: Dict[str, Any]) -> Dict[str, Any]:
         "max_gap_seconds",
         "restart_delay",
         "image_topics",
+        "warning_interval_sec",
+        "warmup_sec",
+        "save_csv",
+        "queue_size",
     ):
         if key in payload:
             config[key] = payload[key]
@@ -488,28 +496,26 @@ def _parse_multiline_values(raw: Any) -> List[str]:
 
 
 def _build_runner_args(payload: Dict[str, Any], mode: str, results_dir: Path) -> List[str]:
-    module = (
-        "orbbec_camera_auto_test.runners.functional"
-        if mode == "functional"
-        else (
-            "orbbec_camera_auto_test.runners.restart"
-            if mode == "restart"
-            else "orbbec_camera_auto_test.runners.performance"
-        )
-    )
+    modules = {
+        "functional": "orbbec_camera_auto_test.runners.functional",
+        "performance": "orbbec_camera_auto_test.runners.performance",
+        "restart": "orbbec_camera_auto_test.runners.restart",
+        "stream_stall": "orbbec_camera_auto_test.runners.stream_stall",
+    }
+    module = modules.get(mode, "orbbec_camera_auto_test.runners.performance")
     args = ["python3", "-m", module]
     ros_version = _safe_text(payload.get("ros_version")) or "2"
     args.extend(["--ros-version", ros_version])
     _append_arg(args, "--ros-setup", payload.get("ros_setup"))
     profile_key = f"{mode}_profile"
     profile = "gemini_330_series"
-    if mode == "restart":
+    if mode in {"restart", "stream_stall"}:
         profile = ""
     profile = payload.get(profile_key) or payload.get("profile") or profile
     _append_arg(args, "--profile", profile)
     _append_arg(args, "--results-dir", str(results_dir))
     launch_file = payload.get("launch_file")
-    if mode == "restart" and not _safe_text(launch_file):
+    if mode in {"restart", "stream_stall"} and not _safe_text(launch_file):
         launch_file = _default_launch_file_for_camera(payload.get("camera_model", ""), ros_version)
     _append_arg(args, "--launch-file", launch_file)
     _append_arg(args, "--camera-name", payload.get("camera_name"))
@@ -528,6 +534,14 @@ def _build_runner_args(payload: Dict[str, Any], mode: str, results_dir: Path) ->
         _append_arg(args, "--stream-timeout", payload.get("stream_timeout"))
         _append_arg(args, "--max-gap-seconds", payload.get("max_gap_seconds"))
         _append_arg(args, "--restart-delay", payload.get("restart_delay"))
+        for topic in _parse_multiline_values(payload.get("image_topics")):
+            args.extend(["--image-topic", topic])
+    if mode == "stream_stall":
+        _append_arg(args, "--duration", payload.get("duration"))
+        _append_arg(args, "--warning-interval-sec", payload.get("warning_interval_sec"))
+        _append_arg(args, "--warmup-sec", payload.get("warmup_sec"))
+        _append_arg(args, "--save-csv", payload.get("save_csv"))
+        _append_arg(args, "--queue-size", payload.get("queue_size"))
         for topic in _parse_multiline_values(payload.get("image_topics")):
             args.extend(["--image-topic", topic])
 
@@ -598,6 +612,11 @@ def _build_shell_script(payload: Dict[str, Any], run_root: Path) -> tuple[str, L
         args = _build_runner_args(payload, "restart", restart_dir)
         displayed.append(_quote_command(args))
         commands.append(_quote_command(args))
+    if mode == "stream_stall":
+        stream_stall_dir = run_root
+        args = _build_runner_args(payload, "stream_stall", stream_stall_dir)
+        displayed.append(_quote_command(args))
+        commands.append(_quote_command(args))
 
     return "\n".join(commands), displayed, shell
 
@@ -605,7 +624,7 @@ def _build_shell_script(payload: Dict[str, Any], run_root: Path) -> tuple[str, L
 def validate_run_payload(payload: Dict[str, Any]) -> List[str]:
     errors: List[str] = []
     mode = _safe_text(payload.get("mode")) or "functional"
-    if mode not in {"functional", "performance", "restart", "all"}:
+    if mode not in {"functional", "performance", "restart", "stream_stall", "all"}:
         errors.append(f"unsupported mode: {mode}")
     ros_version = _safe_text(payload.get("ros_version")) or "2"
     if ros_version not in {"1", "2"}:
@@ -632,10 +651,10 @@ def validate_run_payload(payload: Dict[str, Any]) -> List[str]:
     for launch_arg in _parse_extra_launch_args(payload.get("launch_args")):
         if "=" not in launch_arg:
             errors.append(f"launch arg must be KEY=VALUE: {launch_arg}")
-    if mode == "restart" and not _safe_text(payload.get("duration")):
-        errors.append("duration is required for restart mode")
+    if mode in {"restart", "stream_stall"} and not _safe_text(payload.get("duration")):
+        errors.append("duration is required for this mode")
 
-    for key in ("duration", "stable_seconds", "stream_timeout", "max_gap_seconds"):
+    for key in ("duration", "stable_seconds", "stream_timeout", "max_gap_seconds", "warmup_sec"):
         value = _safe_text(payload.get(key))
         if not value:
             continue
@@ -651,6 +670,18 @@ def validate_run_payload(payload: Dict[str, Any]) -> List[str]:
                 errors.append("restart_delay must be >= 0")
         except ValueError:
             errors.append(f"restart_delay must be numeric: {restart_delay}")
+    for key in ("warning_interval_sec", "queue_size"):
+        value = _safe_text(payload.get(key))
+        if not value:
+            continue
+        try:
+            if float(value) <= 0.0:
+                errors.append(f"{key} must be > 0")
+        except ValueError:
+            errors.append(f"{key} must be numeric: {value}")
+    save_csv = _safe_text(payload.get("save_csv"))
+    if save_csv and save_csv.lower() not in {"true", "false", "1", "0", "yes", "no", "on", "off"}:
+        errors.append(f"save_csv must be true or false: {save_csv}")
     return errors
 
 
@@ -752,6 +783,10 @@ class RunManager:
                 "max_gap_seconds": payload.get("max_gap_seconds") or "1.5",
                 "restart_delay": payload.get("restart_delay") or "2",
                 "image_topics": payload.get("image_topics") or "",
+                "warning_interval_sec": payload.get("warning_interval_sec") or "1.0",
+                "warmup_sec": payload.get("warmup_sec") or "2.0",
+                "save_csv": payload.get("save_csv") or "true",
+                "queue_size": payload.get("queue_size") or "10",
             }
         )
         payload = {**payload, **config}
