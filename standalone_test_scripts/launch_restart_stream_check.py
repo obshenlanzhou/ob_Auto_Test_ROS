@@ -75,6 +75,18 @@ def _is_image_type(type_name: str) -> bool:
     return type_name in {"sensor_msgs/msg/Image", "sensor_msgs/Image"}
 
 
+def _is_compressed_image_type(type_name: str) -> bool:
+    return type_name in {"sensor_msgs/msg/CompressedImage", "sensor_msgs/CompressedImage"}
+
+
+def _image_topic_kind(type_name: str) -> Optional[str]:
+    if _is_image_type(type_name):
+        return "raw"
+    if _is_compressed_image_type(type_name):
+        return "compressed"
+    return None
+
+
 class StatusLogger:
     def __call__(self, message: str) -> None:
         line = f"[{timestamp()}] {message}"
@@ -237,13 +249,13 @@ class RosImageHarness:
         self._rospy = None
         self.node = None
         self.subscriptions = []
-        self.image_type = None
+        self.message_types = {}
 
     def __enter__(self) -> "RosImageHarness":
         if self.ros_version == "2":
             try:
                 import rclpy
-                from sensor_msgs.msg import Image
+                from sensor_msgs.msg import CompressedImage, Image
             except Exception as exc:  # noqa: BLE001
                 raise RuntimeError(
                     "failed to import ROS2 Python modules. Source ROS2 and camera setup "
@@ -253,11 +265,11 @@ class RosImageHarness:
             rclpy.init(args=None)
             self._rclpy = rclpy
             self.node = rclpy.create_node(self.node_name)
-            self.image_type = Image
+            self.message_types = {"raw": Image, "compressed": CompressedImage}
         else:
             try:
                 import rospy
-                from sensor_msgs.msg import Image
+                from sensor_msgs.msg import CompressedImage, Image
             except Exception as exc:  # noqa: BLE001
                 raise RuntimeError(
                     "failed to import ROS1 Python modules. Source ROS1 and camera setup "
@@ -266,14 +278,41 @@ class RosImageHarness:
                 ) from exc
             rospy.init_node(self.node_name, anonymous=True, disable_signals=True)
             self._rospy = rospy
-            self.image_type = Image
+            self.message_types = {"raw": Image, "compressed": CompressedImage}
         return self
 
-    def create_image_subscription(self, topic: str, callback) -> None:
+    def get_topic_names_and_types(self) -> Dict[str, List[str]]:
         if self.ros_version == "2":
-            sub = self.node.create_subscription(self.image_type, topic, callback, self.queue_size)
+            return {
+                topic_name: list(type_names)
+                for topic_name, type_names in self.node.get_topic_names_and_types()
+            }
+        return {
+            topic_name: [type_name]
+            for topic_name, type_name in self._rospy.get_published_topics(namespace="/")
+        }
+
+    def resolve_image_topic_kind(self, topic: str) -> str:
+        topic_types = self.get_topic_names_and_types()
+        candidate_names = [topic]
+        if not topic.startswith("/"):
+            candidate_names.append(f"/{topic}")
+        for candidate_name in candidate_names:
+            for type_name in topic_types.get(candidate_name, []):
+                kind = _image_topic_kind(type_name)
+                if kind:
+                    return kind
+        if topic.rstrip("/").endswith("/compressed"):
+            return "compressed"
+        return "raw"
+
+    def create_image_subscription(self, topic: str, callback, topic_kind: Optional[str] = None) -> None:
+        topic_kind = topic_kind or self.resolve_image_topic_kind(topic)
+        message_type = self.message_types[topic_kind]
+        if self.ros_version == "2":
+            sub = self.node.create_subscription(message_type, topic, callback, self.queue_size)
         else:
-            sub = self._rospy.Subscriber(topic, self.image_type, callback, queue_size=self.queue_size)
+            sub = self._rospy.Subscriber(topic, message_type, callback, queue_size=self.queue_size)
         self.subscriptions.append(sub)
         return sub
 
@@ -293,14 +332,9 @@ class RosImageHarness:
 
     def list_image_topics(self) -> List[str]:
         topics: List[str] = []
-        if self.ros_version == "2":
-            for topic_name, type_names in self.node.get_topic_names_and_types():
-                if any(_is_image_type(type_name) for type_name in type_names):
-                    topics.append(topic_name)
-        else:
-            for topic_name, type_name in self._rospy.get_published_topics(namespace="/"):
-                if _is_image_type(type_name):
-                    topics.append(topic_name)
+        for topic_name, type_names in self.get_topic_names_and_types().items():
+            if any(_is_image_type(type_name) for type_name in type_names):
+                topics.append(topic_name)
         return sorted(set(topics))
 
     def __exit__(self, exc_type, exc, tb) -> None:
@@ -335,17 +369,21 @@ class StableImageMonitor:
         self.state: Dict[str, Dict[str, Any]] = {}
         self.subscriptions = []
         for topic in topics:
+            topic_kind = self.harness.resolve_image_topic_kind(topic)
             self.state[topic] = {
+                "topic_kind": topic_kind,
                 "message_count": 0,
                 "first_message_at": None,
                 "last_message_at": None,
                 "last_width": 0,
                 "last_height": 0,
+                "last_data_size": 0,
             }
             self.subscriptions.append(
                 self.harness.create_image_subscription(
                     topic,
                     lambda msg, topic_name=topic: self._on_message(topic_name, msg),
+                    topic_kind=topic_kind,
                 )
             )
 
@@ -353,12 +391,19 @@ class StableImageMonitor:
         now = time.monotonic()
         width = int(getattr(message, "width", 0) or 0)
         height = int(getattr(message, "height", 0) or 0)
+        data_size = len(getattr(message, "data", b"") or b"")
         item = self.state[topic_name]
         item["message_count"] += 1
         item["last_message_at"] = now
         item["last_width"] = width
         item["last_height"] = height
-        if item["first_message_at"] is None and width > 0 and height > 0:
+        item["last_data_size"] = data_size
+        has_valid_payload = (
+            data_size > 0
+            if item["topic_kind"] == "compressed"
+            else width > 0 and height > 0
+        )
+        if item["first_message_at"] is None and has_valid_payload:
             item["first_message_at"] = now
 
     def snapshot(self) -> List[Dict[str, Any]]:
@@ -370,9 +415,11 @@ class StableImageMonitor:
             rows.append(
                 {
                     "name": topic_name,
+                    "topic_kind": item["topic_kind"],
                     "message_count": item["message_count"],
                     "width": item["last_width"],
                     "height": item["last_height"],
+                    "data_size": item["last_data_size"],
                     "seconds_since_last_message": (
                         now - last_message_at if last_message_at is not None else None
                     ),
@@ -752,7 +799,7 @@ def parse_args():
         action="append",
         default=[],
         help=(
-            "Image topic to monitor; can repeat. If omitted, sensor_msgs/Image "
+            "Image or compressed image topic to monitor; can repeat. If omitted, sensor_msgs/Image "
             "topics are auto discovered during the first launch attempt and then reused."
         ),
     )
