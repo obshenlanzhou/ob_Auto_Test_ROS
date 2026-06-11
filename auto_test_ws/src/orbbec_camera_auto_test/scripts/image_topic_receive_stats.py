@@ -7,8 +7,8 @@ Image topics must be provided explicitly through --topics or the private ROS
 parameter ~topics.
 
 Each topic is written to its own CSV file. For every received frame the script
-records the ROS message timestamp, the host wall and monotonic receive clocks,
-and the interval from the previous frame on the same topic. A compact
+records the ROS header timestamp, the host system and steady receive clocks,
+and the delta from the previous frame on the same topic. A compact
 summary.csv is always updated periodically, even when per-frame CSV saving is
 disabled.
 """
@@ -32,41 +32,42 @@ DEFAULT_SAVE_CSV = True
 SUMMARY_UPDATE_INTERVAL_SEC = 10.0
 MIN_WARNING_CHECK_INTERVAL_SEC = 0.05
 MAX_WARNING_CHECK_INTERVAL_SEC = 1.0
-NANOSECONDS_PER_SECOND = 1000000000
+NANOSECONDS_PER_MICROSECOND = 1000
+MICROSECONDS_PER_SECOND = 1000000
 
 CSV_HEADER = [
     "frame_index",
     "topic",
     "header_seq",
-    "message_stamp",
-    "message_stamp_interval_sec",
-    "receive_wall_time",
-    "receive_monotonic",
-    "receive_monotonic_interval_sec",
+    "ros_header_stamp_sec",
+    "ros_header_stamp_delta_us",
+    "receive_system_ts_sec",
+    "receive_steady_ts_sec",
+    "receive_steady_delta_us",
 ]
 
 SUMMARY_HEADER = [
     "topic",
-    "interval_count",
-    "receive_monotonic_interval_min_sec",
-    "receive_monotonic_interval_max_sec",
-    "receive_monotonic_interval_average_sec",
-    "receive_monotonic_interval_warning_count",
+    "delta_count",
+    "receive_steady_delta_min_us",
+    "receive_steady_delta_max_us",
+    "receive_steady_delta_average_us",
+    "receive_steady_delta_warning_count",
     "no_frame_warning_count",
-    "max_receive_monotonic_interval_header_seq",
-    "max_receive_monotonic_interval_wall_time",
-    "message_stamp_interval_min_sec",
-    "message_stamp_interval_max_sec",
-    "message_stamp_interval_average_sec",
-    "message_stamp_non_positive_interval_count",
+    "max_receive_steady_delta_header_seq",
+    "max_receive_steady_delta_system_ts_sec",
+    "ros_header_stamp_delta_min_us",
+    "ros_header_stamp_delta_max_us",
+    "ros_header_stamp_delta_average_us",
+    "ros_header_stamp_non_positive_delta_count",
 ]
 
 
 def parse_args():
     parser = argparse.ArgumentParser(
         description=(
-            "Record per-frame ROS image timestamps, host wall receive timestamps, "
-            "and monotonic receive intervals to one CSV file per topic."
+            "Record per-frame ROS image timestamps, host system receive timestamps, "
+            "and steady-clock receive deltas to one CSV file per topic."
         )
     )
     parser.add_argument("--output_dir", default=None, help="Directory for output CSV files.")
@@ -79,7 +80,7 @@ def parse_args():
         "--warning_interval_sec",
         type=float,
         default=None,
-        help="Warn when consecutive receive intervals on a topic exceed this value.",
+        help="Warn when consecutive receive deltas on a topic exceed this value.",
     )
     parser.add_argument(
         "--warmup_sec",
@@ -168,43 +169,55 @@ def safe_csv_name(topic):
     return "{}.csv".format(name)
 
 
-def seconds_to_ns(seconds):
-    return int(round(seconds * NANOSECONDS_PER_SECOND))
+def ns_to_us(ns_value):
+    if ns_value < 0:
+        return -((-ns_value) // NANOSECONDS_PER_MICROSECOND)
+    return ns_value // NANOSECONDS_PER_MICROSECOND
 
 
-def monotonic_time_ns():
+def seconds_to_us(seconds):
+    return int(round(seconds * MICROSECONDS_PER_SECOND))
+
+
+def steady_time_us():
     if hasattr(time, "monotonic_ns"):
-        return time.monotonic_ns()
-    return seconds_to_ns(time.monotonic())
+        return ns_to_us(time.monotonic_ns())
+    return seconds_to_us(time.monotonic())
 
 
-def wall_time_ns():
+def system_time_us():
     if hasattr(time, "time_ns"):
-        return time.time_ns()
-    return seconds_to_ns(time.time())
+        return ns_to_us(time.time_ns())
+    return seconds_to_us(time.time())
 
 
-def format_ns_as_sec(ns_value):
-    sign = "-" if ns_value < 0 else ""
-    absolute_ns = abs(ns_value)
-    return "{}{}.{:09d}".format(
+def format_us_as_sec(us_value):
+    sign = "-" if us_value < 0 else ""
+    absolute_us = abs(us_value)
+    return "{}{}.{:06d}".format(
         sign,
-        absolute_ns // NANOSECONDS_PER_SECOND,
-        absolute_ns % NANOSECONDS_PER_SECOND,
+        absolute_us // MICROSECONDS_PER_SECOND,
+        absolute_us % MICROSECONDS_PER_SECOND,
     )
 
 
-def format_optional_ns_as_sec(value):
+def format_optional_us(value):
     if value is None or value == "":
         return ""
-    return format_ns_as_sec(value)
+    return str(value)
 
 
-def rounded_average_ns(total_ns, count):
+def format_optional_us_as_sec(value):
+    if value is None or value == "":
+        return ""
+    return format_us_as_sec(value)
+
+
+def rounded_average_us(total_us, count):
     if count <= 0:
         return None
-    sign = -1 if total_ns < 0 else 1
-    return sign * ((abs(total_ns) + count // 2) // count)
+    sign = -1 if total_us < 0 else 1
+    return sign * ((abs(total_us) + count // 2) // count)
 
 
 def warning_check_interval_sec(warning_interval_sec):
@@ -260,37 +273,37 @@ class TopicCsvLogger:
         topic,
         csv_file,
         warning_interval_sec,
-        warmup_end_monotonic_ns,
+        warmup_end_steady_us,
         warning_log_writer,
         save_csv,
     ):
         self.topic = topic
         self.csv_file = csv_file
         self.warning_interval_sec = warning_interval_sec
-        self.warning_interval_ns = seconds_to_ns(warning_interval_sec)
-        self.warmup_end_monotonic_ns = warmup_end_monotonic_ns
+        self.warning_interval_us = seconds_to_us(warning_interval_sec)
+        self.warmup_end_steady_us = warmup_end_steady_us
         self.warning_log_writer = warning_log_writer
         self.save_csv = save_csv
         self.lock = threading.Lock()
         self.frame_index = 0
-        self.prev_msg_stamp_ns = None
-        self.prev_receive_monotonic_ns = None
-        self.prev_receive_wall_time_ns = None
+        self.prev_ros_header_stamp_us = None
+        self.prev_receive_steady_us = None
+        self.prev_receive_system_us = None
         self.prev_header_seq = None
         self.no_frame_warning_active = False
         self.no_frame_warning_count = 0
-        self.interval_count = 0
-        self.receive_interval_min_ns = None
-        self.receive_interval_max_ns = None
-        self.receive_interval_total_ns = 0
-        self.receive_interval_warning_count = 0
-        self.max_receive_interval_header_seq = None
-        self.max_receive_interval_wall_time_ns = None
-        self.msg_stamp_interval_min_ns = None
-        self.msg_stamp_interval_max_ns = None
-        self.msg_stamp_positive_interval_count = 0
-        self.msg_stamp_positive_interval_total_ns = 0
-        self.msg_stamp_non_positive_interval_count = 0
+        self.delta_count = 0
+        self.receive_steady_delta_min_us = None
+        self.receive_steady_delta_max_us = None
+        self.receive_steady_delta_total_us = 0
+        self.receive_steady_delta_warning_count = 0
+        self.max_receive_steady_delta_header_seq = None
+        self.max_receive_steady_delta_system_us = None
+        self.ros_header_stamp_delta_min_us = None
+        self.ros_header_stamp_delta_max_us = None
+        self.ros_header_stamp_positive_delta_count = 0
+        self.ros_header_stamp_positive_delta_total_us = 0
+        self.ros_header_stamp_non_positive_delta_count = 0
         self.closed = False
 
         self.csv_fh = None
@@ -301,89 +314,89 @@ class TopicCsvLogger:
             self.csv_writer.writerow(CSV_HEADER)
             self.csv_fh.flush()
 
-    def _record_intervals(
+    def _record_deltas(
         self,
-        msg_stamp_interval_ns,
-        receive_monotonic_interval_ns,
+        ros_header_stamp_delta_us,
+        receive_steady_delta_us,
         header_seq,
-        receive_wall_time_ns,
+        receive_system_us,
     ):
-        self.interval_count += 1
+        self.delta_count += 1
 
         if (
-            self.receive_interval_min_ns is None
-            or receive_monotonic_interval_ns < self.receive_interval_min_ns
+            self.receive_steady_delta_min_us is None
+            or receive_steady_delta_us < self.receive_steady_delta_min_us
         ):
-            self.receive_interval_min_ns = receive_monotonic_interval_ns
+            self.receive_steady_delta_min_us = receive_steady_delta_us
         if (
-            self.receive_interval_max_ns is None
-            or receive_monotonic_interval_ns > self.receive_interval_max_ns
+            self.receive_steady_delta_max_us is None
+            or receive_steady_delta_us > self.receive_steady_delta_max_us
         ):
-            self.receive_interval_max_ns = receive_monotonic_interval_ns
-            self.max_receive_interval_header_seq = header_seq
-            self.max_receive_interval_wall_time_ns = receive_wall_time_ns
-        self.receive_interval_total_ns += receive_monotonic_interval_ns
+            self.receive_steady_delta_max_us = receive_steady_delta_us
+            self.max_receive_steady_delta_header_seq = header_seq
+            self.max_receive_steady_delta_system_us = receive_system_us
+        self.receive_steady_delta_total_us += receive_steady_delta_us
 
-        if receive_monotonic_interval_ns > self.warning_interval_ns:
-            self.receive_interval_warning_count += 1
+        if receive_steady_delta_us > self.warning_interval_us:
+            self.receive_steady_delta_warning_count += 1
 
         if (
-            self.msg_stamp_interval_min_ns is None
-            or msg_stamp_interval_ns < self.msg_stamp_interval_min_ns
+            self.ros_header_stamp_delta_min_us is None
+            or ros_header_stamp_delta_us < self.ros_header_stamp_delta_min_us
         ):
-            self.msg_stamp_interval_min_ns = msg_stamp_interval_ns
+            self.ros_header_stamp_delta_min_us = ros_header_stamp_delta_us
         if (
-            self.msg_stamp_interval_max_ns is None
-            or msg_stamp_interval_ns > self.msg_stamp_interval_max_ns
+            self.ros_header_stamp_delta_max_us is None
+            or ros_header_stamp_delta_us > self.ros_header_stamp_delta_max_us
         ):
-            self.msg_stamp_interval_max_ns = msg_stamp_interval_ns
-        if msg_stamp_interval_ns > 0:
-            self.msg_stamp_positive_interval_count += 1
-            self.msg_stamp_positive_interval_total_ns += msg_stamp_interval_ns
+            self.ros_header_stamp_delta_max_us = ros_header_stamp_delta_us
+        if ros_header_stamp_delta_us > 0:
+            self.ros_header_stamp_positive_delta_count += 1
+            self.ros_header_stamp_positive_delta_total_us += ros_header_stamp_delta_us
         else:
-            self.msg_stamp_non_positive_interval_count += 1
+            self.ros_header_stamp_non_positive_delta_count += 1
 
     def write(self, msg):
-        receive_wall_time_ns = wall_time_ns()
-        receive_monotonic_ns = monotonic_time_ns()
-        msg_stamp_ns = msg.header.stamp.to_nsec()
+        receive_system_us = system_time_us()
+        receive_steady_us = steady_time_us()
+        ros_header_stamp_us = ns_to_us(msg.header.stamp.to_nsec())
 
         with self.lock:
             if self.closed:
                 return
 
-            if receive_monotonic_ns < self.warmup_end_monotonic_ns:
-                self.prev_msg_stamp_ns = None
-                self.prev_receive_monotonic_ns = None
-                self.prev_receive_wall_time_ns = None
+            if receive_steady_us < self.warmup_end_steady_us:
+                self.prev_ros_header_stamp_us = None
+                self.prev_receive_steady_us = None
+                self.prev_receive_system_us = None
                 self.prev_header_seq = None
                 self.no_frame_warning_active = False
                 return
 
-            msg_stamp_interval_ns = ""
-            receive_monotonic_interval_ns = ""
-            if self.prev_msg_stamp_ns is not None:
-                msg_stamp_interval_ns = msg_stamp_ns - self.prev_msg_stamp_ns
-            if self.prev_receive_monotonic_ns is not None:
-                receive_monotonic_interval_ns = (
-                    receive_monotonic_ns - self.prev_receive_monotonic_ns
+            ros_header_stamp_delta_us = ""
+            receive_steady_delta_us = ""
+            if self.prev_ros_header_stamp_us is not None:
+                ros_header_stamp_delta_us = (
+                    ros_header_stamp_us - self.prev_ros_header_stamp_us
                 )
+            if self.prev_receive_steady_us is not None:
+                receive_steady_delta_us = receive_steady_us - self.prev_receive_steady_us
 
-            self.prev_msg_stamp_ns = msg_stamp_ns
-            self.prev_receive_monotonic_ns = receive_monotonic_ns
-            self.prev_receive_wall_time_ns = receive_wall_time_ns
+            self.prev_ros_header_stamp_us = ros_header_stamp_us
+            self.prev_receive_steady_us = receive_steady_us
+            self.prev_receive_system_us = receive_system_us
             self.prev_header_seq = msg.header.seq
             self.no_frame_warning_active = False
 
-            should_warn = receive_monotonic_interval_ns != "" and (
-                receive_monotonic_interval_ns > self.warning_interval_ns
+            should_warn = receive_steady_delta_us != "" and (
+                receive_steady_delta_us > self.warning_interval_us
             )
-            if receive_monotonic_interval_ns != "":
-                self._record_intervals(
-                    msg_stamp_interval_ns,
-                    receive_monotonic_interval_ns,
+            if receive_steady_delta_us != "":
+                self._record_deltas(
+                    ros_header_stamp_delta_us,
+                    receive_steady_delta_us,
                     msg.header.seq,
-                    receive_wall_time_ns,
+                    receive_system_us,
                 )
 
             if self.save_csv and self.csv_fh is not None and not self.csv_fh.closed:
@@ -393,41 +406,41 @@ class TopicCsvLogger:
                         self.frame_index,
                         self.topic,
                         msg.header.seq,
-                        format_ns_as_sec(msg_stamp_ns),
-                        format_optional_ns_as_sec(msg_stamp_interval_ns),
-                        format_ns_as_sec(receive_wall_time_ns),
-                        format_ns_as_sec(receive_monotonic_ns),
-                        format_optional_ns_as_sec(receive_monotonic_interval_ns),
+                        format_us_as_sec(ros_header_stamp_us),
+                        format_optional_us(ros_header_stamp_delta_us),
+                        format_us_as_sec(receive_system_us),
+                        format_us_as_sec(receive_steady_us),
+                        format_optional_us(receive_steady_delta_us),
                     ]
                 )
                 self.csv_fh.flush()
 
         if should_warn:
             warning_message = (
-                "Image receive interval exceeded {:.3f}s: topic={}, seq={}, "
-                "receive_monotonic_interval={}s, message_stamp_interval={}"
+                "Image receive delta exceeded {:.3f}s: topic={}, seq={}, "
+                "receive_steady_delta_us={}, ros_header_stamp_delta_us={}"
             ).format(
                 self.warning_interval_sec,
                 self.topic,
                 msg.header.seq,
-                format_ns_as_sec(receive_monotonic_interval_ns),
-                format_optional_ns_as_sec(msg_stamp_interval_ns),
+                receive_steady_delta_us,
+                format_optional_us(ros_header_stamp_delta_us),
             )
             rospy.logwarn("%s", warning_message)
             self.warning_log_writer.write(warning_message)
 
-    def check_no_frame_warning(self, now_monotonic_ns):
+    def check_no_frame_warning(self, now_steady_us):
         with self.lock:
-            if self.closed or now_monotonic_ns < self.warmup_end_monotonic_ns:
+            if self.closed or now_steady_us < self.warmup_end_steady_us:
                 return None
 
-            if self.prev_receive_monotonic_ns is None:
-                no_frame_duration_ns = now_monotonic_ns - self.warmup_end_monotonic_ns
+            if self.prev_receive_steady_us is None:
+                no_frame_duration_us = now_steady_us - self.warmup_end_steady_us
             else:
-                no_frame_duration_ns = now_monotonic_ns - self.prev_receive_monotonic_ns
+                no_frame_duration_us = now_steady_us - self.prev_receive_steady_us
 
             if (
-                no_frame_duration_ns <= self.warning_interval_ns
+                no_frame_duration_us <= self.warning_interval_us
                 or self.no_frame_warning_active
             ):
                 return None
@@ -436,44 +449,44 @@ class TopicCsvLogger:
             self.no_frame_warning_count += 1
             return (
                 "Image topic no frame for more than {:.3f}s: topic={}, "
-                "no_frame_duration={}s, last_header_seq={}, "
-                "last_receive_wall_time={}"
+                "no_frame_duration_us={}, last_header_seq={}, "
+                "last_receive_system_ts_sec={}"
             ).format(
                 self.warning_interval_sec,
                 self.topic,
-                format_ns_as_sec(no_frame_duration_ns),
+                no_frame_duration_us,
                 self.prev_header_seq if self.prev_header_seq is not None else "",
-                format_optional_ns_as_sec(self.prev_receive_wall_time_ns),
+                format_optional_us_as_sec(self.prev_receive_system_us),
             )
 
     def summary_row(self):
         with self.lock:
-            receive_interval_average_ns = rounded_average_ns(
-                self.receive_interval_total_ns,
-                self.interval_count,
+            receive_steady_delta_average_us = rounded_average_us(
+                self.receive_steady_delta_total_us,
+                self.delta_count,
             )
-            msg_stamp_interval_average_ns = rounded_average_ns(
-                self.msg_stamp_positive_interval_total_ns,
-                self.msg_stamp_positive_interval_count,
+            ros_header_stamp_delta_average_us = rounded_average_us(
+                self.ros_header_stamp_positive_delta_total_us,
+                self.ros_header_stamp_positive_delta_count,
             )
             return [
                 self.topic,
-                self.interval_count,
-                format_optional_ns_as_sec(self.receive_interval_min_ns),
-                format_optional_ns_as_sec(self.receive_interval_max_ns),
-                format_optional_ns_as_sec(receive_interval_average_ns),
-                self.receive_interval_warning_count,
+                self.delta_count,
+                format_optional_us(self.receive_steady_delta_min_us),
+                format_optional_us(self.receive_steady_delta_max_us),
+                format_optional_us(receive_steady_delta_average_us),
+                self.receive_steady_delta_warning_count,
                 self.no_frame_warning_count,
                 (
-                    self.max_receive_interval_header_seq
-                    if self.max_receive_interval_header_seq is not None
+                    self.max_receive_steady_delta_header_seq
+                    if self.max_receive_steady_delta_header_seq is not None
                     else ""
                 ),
-                format_optional_ns_as_sec(self.max_receive_interval_wall_time_ns),
-                format_optional_ns_as_sec(self.msg_stamp_interval_min_ns),
-                format_optional_ns_as_sec(self.msg_stamp_interval_max_ns),
-                format_optional_ns_as_sec(msg_stamp_interval_average_ns),
-                self.msg_stamp_non_positive_interval_count,
+                format_optional_us_as_sec(self.max_receive_steady_delta_system_us),
+                format_optional_us(self.ros_header_stamp_delta_min_us),
+                format_optional_us(self.ros_header_stamp_delta_max_us),
+                format_optional_us(ros_header_stamp_delta_average_us),
+                self.ros_header_stamp_non_positive_delta_count,
             ]
 
     def close(self):
@@ -516,7 +529,7 @@ class MultiImageReceiveStatsNode:
 
         ensure_dir(self.output_dir)
         self.warning_log_writer = WarningLogWriter(os.path.join(self.output_dir, "warnings.log"))
-        warmup_end_monotonic_ns = monotonic_time_ns() + seconds_to_ns(self.warmup_sec)
+        warmup_end_steady_us = steady_time_us() + seconds_to_us(self.warmup_sec)
 
         used_csv_files = {self.summary_file}
         for topic in self.topics:
@@ -529,7 +542,7 @@ class MultiImageReceiveStatsNode:
                 topic,
                 csv_file,
                 self.warning_interval_sec,
-                warmup_end_monotonic_ns,
+                warmup_end_steady_us,
                 self.warning_log_writer,
                 self.save_csv,
             )
@@ -569,7 +582,7 @@ class MultiImageReceiveStatsNode:
             self.warning_check_interval_sec,
         )
         rospy.loginfo("Per-frame CSV saving: %s", "enabled" if self.save_csv else "disabled")
-        rospy.loginfo("Warmup time before recording intervals: %.3fs", self.warmup_sec)
+        rospy.loginfo("Warmup time before recording deltas: %.3fs", self.warmup_sec)
         for topic in self.topics:
             if self.save_csv:
                 rospy.loginfo(
@@ -613,12 +626,12 @@ class MultiImageReceiveStatsNode:
                 rospy.logerr("Failed to update summary CSV %s: %s", self.summary_file, exc)
 
     def warning_timer_callback(self, _event):
-        now_monotonic_ns = monotonic_time_ns()
+        now_steady_us = steady_time_us()
         for topic in self.topics:
             with self.callback_condition:
                 if self.closed:
                     return
-            warning_message = self.loggers[topic].check_no_frame_warning(now_monotonic_ns)
+            warning_message = self.loggers[topic].check_no_frame_warning(now_steady_us)
             if warning_message:
                 rospy.logwarn("%s", warning_message)
                 self.warning_log_writer.write(warning_message)
@@ -627,21 +640,21 @@ class MultiImageReceiveStatsNode:
         for row in rows:
             summary = dict(zip(SUMMARY_HEADER, row))
             rospy.loginfo(
-                "Image receive summary: topic=%s, intervals=%s, "
-                "receive_sec[min/max/average]=%s/%s/%s, interval_warnings=%s, "
+                "Image receive summary: topic=%s, deltas=%s, "
+                "receive_steady_delta_us[min/max/average]=%s/%s/%s, delta_warnings=%s, "
                 "no_frame_warnings=%s, "
-                "message_stamp_sec[min/max/average]=%s/%s/%s, non_positive=%s",
+                "ros_header_stamp_delta_us[min/max/average]=%s/%s/%s, non_positive=%s",
                 summary["topic"],
-                summary["interval_count"],
-                summary["receive_monotonic_interval_min_sec"],
-                summary["receive_monotonic_interval_max_sec"],
-                summary["receive_monotonic_interval_average_sec"],
-                summary["receive_monotonic_interval_warning_count"],
+                summary["delta_count"],
+                summary["receive_steady_delta_min_us"],
+                summary["receive_steady_delta_max_us"],
+                summary["receive_steady_delta_average_us"],
+                summary["receive_steady_delta_warning_count"],
                 summary["no_frame_warning_count"],
-                summary["message_stamp_interval_min_sec"],
-                summary["message_stamp_interval_max_sec"],
-                summary["message_stamp_interval_average_sec"],
-                summary["message_stamp_non_positive_interval_count"],
+                summary["ros_header_stamp_delta_min_us"],
+                summary["ros_header_stamp_delta_max_us"],
+                summary["ros_header_stamp_delta_average_us"],
+                summary["ros_header_stamp_non_positive_delta_count"],
             )
 
     def close(self):
