@@ -41,25 +41,25 @@ CSV_HEADER = [
     "topic",
     "header_seq",
     "ros_header_stamp_sec",
-    "ros_header_stamp_delta_us",
+    "ros_header_stamp_delta_sec",
     "receive_system_ts_sec",
     "receive_steady_ts_sec",
-    "receive_steady_delta_us",
+    "receive_steady_delta_sec",
 ]
 
 SUMMARY_HEADER = [
     "topic",
     "delta_count",
-    "receive_steady_delta_min_us",
-    "receive_steady_delta_max_us",
-    "receive_steady_delta_average_us",
+    "receive_steady_delta_min_sec",
+    "receive_steady_delta_max_sec",
+    "receive_steady_delta_average_sec",
     "receive_steady_delta_warning_count",
     "no_frame_warning_count",
     "max_receive_steady_delta_header_seq",
     "max_receive_steady_delta_system_ts_sec",
-    "ros_header_stamp_delta_min_us",
-    "ros_header_stamp_delta_max_us",
-    "ros_header_stamp_delta_average_us",
+    "ros_header_stamp_delta_min_sec",
+    "ros_header_stamp_delta_max_sec",
+    "ros_header_stamp_delta_average_sec",
     "ros_header_stamp_non_positive_delta_count",
     "header_seq_gap_count",
     "header_seq_backward_count",
@@ -211,12 +211,6 @@ def format_us_as_sec(us_value):
         absolute_us // MICROSECONDS_PER_SECOND,
         absolute_us % MICROSECONDS_PER_SECOND,
     )
-
-
-def format_optional_us(value):
-    if value is None or value == "":
-        return ""
-    return str(value)
 
 
 def format_optional_us_as_sec(value):
@@ -447,10 +441,10 @@ class TopicCsvLogger:
                         self.topic,
                         header_seq,
                         format_us_as_sec(ros_header_stamp_us),
-                        format_optional_us(ros_header_stamp_delta_us),
+                        format_optional_us_as_sec(ros_header_stamp_delta_us),
                         format_us_as_sec(receive_system_us),
                         format_us_as_sec(receive_steady_us),
-                        format_optional_us(receive_steady_delta_us),
+                        format_optional_us_as_sec(receive_steady_delta_us),
                     ]
                 )
                 self.csv_fh.flush()
@@ -458,13 +452,13 @@ class TopicCsvLogger:
         if should_warn:
             warning_message = (
                 "Image receive delta exceeded {:.3f}s: topic={}, seq={}, "
-                "receive_steady_delta_us={}, ros_header_stamp_delta_us={}"
+                "receive_steady_delta_sec={}, ros_header_stamp_delta_sec={}"
             ).format(
                 self.warning_interval_sec,
                 self.topic,
                 header_seq,
-                receive_steady_delta_us,
-                format_optional_us(ros_header_stamp_delta_us),
+                format_us_as_sec(receive_steady_delta_us),
+                format_optional_us_as_sec(ros_header_stamp_delta_us),
             )
             rospy.logwarn("%s", warning_message)
             self.warning_log_writer.write(warning_message)
@@ -489,12 +483,12 @@ class TopicCsvLogger:
             self.no_frame_warning_count += 1
             return (
                 "Image topic no frame for more than {:.3f}s: topic={}, "
-                "no_frame_duration_us={}, last_header_seq={}, "
+                "no_frame_duration_sec={}, last_header_seq={}, "
                 "last_receive_system_ts_sec={}"
             ).format(
                 self.warning_interval_sec,
                 self.topic,
-                no_frame_duration_us,
+                format_us_as_sec(no_frame_duration_us),
                 self.prev_header_seq if self.prev_header_seq is not None else "",
                 format_optional_us_as_sec(self.prev_receive_system_us),
             )
@@ -512,9 +506,9 @@ class TopicCsvLogger:
             return [
                 self.topic,
                 self.delta_count,
-                format_optional_us(self.receive_steady_delta_min_us),
-                format_optional_us(self.receive_steady_delta_max_us),
-                format_optional_us(receive_steady_delta_average_us),
+                format_optional_us_as_sec(self.receive_steady_delta_min_us),
+                format_optional_us_as_sec(self.receive_steady_delta_max_us),
+                format_optional_us_as_sec(receive_steady_delta_average_us),
                 self.receive_steady_delta_warning_count,
                 self.no_frame_warning_count,
                 (
@@ -523,9 +517,9 @@ class TopicCsvLogger:
                     else ""
                 ),
                 format_optional_us_as_sec(self.max_receive_steady_delta_system_us),
-                format_optional_us(self.ros_header_stamp_delta_min_us),
-                format_optional_us(self.ros_header_stamp_delta_max_us),
-                format_optional_us(ros_header_stamp_delta_average_us),
+                format_optional_us_as_sec(self.ros_header_stamp_delta_min_us),
+                format_optional_us_as_sec(self.ros_header_stamp_delta_max_us),
+                format_optional_us_as_sec(ros_header_stamp_delta_average_us),
                 self.ros_header_stamp_non_positive_delta_count,
                 self.header_seq_gap_count,
                 self.header_seq_backward_count,
@@ -705,21 +699,21 @@ class MultiImageReceiveStatsNode:
             summary = dict(zip(SUMMARY_HEADER, row))
             rospy.loginfo(
                 "Image receive summary: topic=%s, deltas=%s, "
-                "receive_steady_delta_us[min/max/average]=%s/%s/%s, delta_warnings=%s, "
+                "receive_steady_delta_sec[min/max/average]=%s/%s/%s, delta_warnings=%s, "
                 "no_frame_warnings=%s, "
-                "ros_header_stamp_delta_us[min/max/average]=%s/%s/%s, non_positive=%s, "
+                "ros_header_stamp_delta_sec[min/max/average]=%s/%s/%s, non_positive=%s, "
                 "header_seq[gap/backward/duplicate]=%s/%s/%s, "
                 "image_info_changes=%s, zero_data=%s",
                 summary["topic"],
                 summary["delta_count"],
-                summary["receive_steady_delta_min_us"],
-                summary["receive_steady_delta_max_us"],
-                summary["receive_steady_delta_average_us"],
+                summary["receive_steady_delta_min_sec"],
+                summary["receive_steady_delta_max_sec"],
+                summary["receive_steady_delta_average_sec"],
                 summary["receive_steady_delta_warning_count"],
                 summary["no_frame_warning_count"],
-                summary["ros_header_stamp_delta_min_us"],
-                summary["ros_header_stamp_delta_max_us"],
-                summary["ros_header_stamp_delta_average_us"],
+                summary["ros_header_stamp_delta_min_sec"],
+                summary["ros_header_stamp_delta_max_sec"],
+                summary["ros_header_stamp_delta_average_sec"],
                 summary["ros_header_stamp_non_positive_delta_count"],
                 summary["header_seq_gap_count"],
                 summary["header_seq_backward_count"],
