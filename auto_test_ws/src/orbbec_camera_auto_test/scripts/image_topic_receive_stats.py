@@ -27,6 +27,7 @@ from sensor_msgs.msg import Image
 
 DEFAULT_WARNING_INTERVAL_SEC = 1.0
 DEFAULT_QUEUE_SIZE = 10
+DEFAULT_BUFF_SIZE_MB = 16
 DEFAULT_WARMUP_SEC = 2.0
 DEFAULT_SAVE_CSV = True
 SUMMARY_UPDATE_INTERVAL_SEC = 10.0
@@ -60,6 +61,11 @@ SUMMARY_HEADER = [
     "ros_header_stamp_delta_max_us",
     "ros_header_stamp_delta_average_us",
     "ros_header_stamp_non_positive_delta_count",
+    "header_seq_gap_count",
+    "header_seq_backward_count",
+    "header_seq_duplicate_count",
+    "image_info_change_count",
+    "zero_data_count",
 ]
 
 
@@ -104,6 +110,12 @@ def parse_args():
         help="Disable per-frame CSV while keeping summary.csv and warning logs enabled.",
     )
     parser.add_argument("--queue_size", type=int, default=None, help="Subscriber queue size.")
+    parser.add_argument(
+        "--buff_size",
+        type=int,
+        default=None,
+        help="Subscriber socket buffer size in MB.",
+    )
     return parser.parse_args(rospy.myargv()[1:])
 
 
@@ -304,6 +316,12 @@ class TopicCsvLogger:
         self.ros_header_stamp_positive_delta_count = 0
         self.ros_header_stamp_positive_delta_total_us = 0
         self.ros_header_stamp_non_positive_delta_count = 0
+        self.header_seq_gap_count = 0
+        self.header_seq_backward_count = 0
+        self.header_seq_duplicate_count = 0
+        self.prev_image_info = None
+        self.image_info_change_count = 0
+        self.zero_data_count = 0
         self.closed = False
 
         self.csv_fh = None
@@ -356,10 +374,29 @@ class TopicCsvLogger:
         else:
             self.ros_header_stamp_non_positive_delta_count += 1
 
+    def _record_header_seq(self, header_seq):
+        if self.prev_header_seq is None:
+            return
+        if header_seq > self.prev_header_seq + 1:
+            self.header_seq_gap_count += 1
+        elif header_seq < self.prev_header_seq:
+            self.header_seq_backward_count += 1
+        elif header_seq == self.prev_header_seq:
+            self.header_seq_duplicate_count += 1
+
+    def _record_image_info(self, msg):
+        image_info = (msg.width, msg.height, msg.encoding, msg.step, len(msg.data))
+        if self.prev_image_info is not None and image_info != self.prev_image_info:
+            self.image_info_change_count += 1
+        self.prev_image_info = image_info
+        if len(msg.data) == 0:
+            self.zero_data_count += 1
+
     def write(self, msg):
         receive_system_us = system_time_us()
         receive_steady_us = steady_time_us()
         ros_header_stamp_us = ns_to_us(msg.header.stamp.to_nsec())
+        header_seq = msg.header.seq
 
         with self.lock:
             if self.closed:
@@ -370,6 +407,7 @@ class TopicCsvLogger:
                 self.prev_receive_steady_us = None
                 self.prev_receive_system_us = None
                 self.prev_header_seq = None
+                self.prev_image_info = None
                 self.no_frame_warning_active = False
                 return
 
@@ -385,7 +423,6 @@ class TopicCsvLogger:
             self.prev_ros_header_stamp_us = ros_header_stamp_us
             self.prev_receive_steady_us = receive_steady_us
             self.prev_receive_system_us = receive_system_us
-            self.prev_header_seq = msg.header.seq
             self.no_frame_warning_active = False
 
             should_warn = receive_steady_delta_us != "" and (
@@ -395,9 +432,12 @@ class TopicCsvLogger:
                 self._record_deltas(
                     ros_header_stamp_delta_us,
                     receive_steady_delta_us,
-                    msg.header.seq,
+                    header_seq,
                     receive_system_us,
                 )
+            self._record_header_seq(header_seq)
+            self._record_image_info(msg)
+            self.prev_header_seq = header_seq
 
             if self.save_csv and self.csv_fh is not None and not self.csv_fh.closed:
                 self.frame_index += 1
@@ -405,7 +445,7 @@ class TopicCsvLogger:
                     [
                         self.frame_index,
                         self.topic,
-                        msg.header.seq,
+                        header_seq,
                         format_us_as_sec(ros_header_stamp_us),
                         format_optional_us(ros_header_stamp_delta_us),
                         format_us_as_sec(receive_system_us),
@@ -422,7 +462,7 @@ class TopicCsvLogger:
             ).format(
                 self.warning_interval_sec,
                 self.topic,
-                msg.header.seq,
+                header_seq,
                 receive_steady_delta_us,
                 format_optional_us(ros_header_stamp_delta_us),
             )
@@ -487,6 +527,11 @@ class TopicCsvLogger:
                 format_optional_us(self.ros_header_stamp_delta_max_us),
                 format_optional_us(ros_header_stamp_delta_average_us),
                 self.ros_header_stamp_non_positive_delta_count,
+                self.header_seq_gap_count,
+                self.header_seq_backward_count,
+                self.header_seq_duplicate_count,
+                self.image_info_change_count,
+                self.zero_data_count,
             ]
 
     def close(self):
@@ -498,13 +543,24 @@ class TopicCsvLogger:
 
 
 class MultiImageReceiveStatsNode:
-    def __init__(self, topics, output_dir, warning_interval_sec, queue_size, warmup_sec, save_csv):
+    def __init__(
+        self,
+        topics,
+        output_dir,
+        warning_interval_sec,
+        queue_size,
+        buff_size_mb,
+        warmup_sec,
+        save_csv,
+    ):
         if not topics:
             raise ValueError("No image topics configured.")
         if warning_interval_sec <= 0:
             raise ValueError("warning_interval_sec must be greater than 0.")
         if queue_size == 0:
             raise ValueError("queue_size must be greater than 0, or -1 for unlimited.")
+        if buff_size_mb <= 0:
+            raise ValueError("buff_size must be greater than 0 MB.")
         if warmup_sec < 0:
             raise ValueError("warmup_sec must be greater than or equal to 0.")
 
@@ -513,6 +569,8 @@ class MultiImageReceiveStatsNode:
         self.warning_interval_sec = warning_interval_sec
         self.warning_check_interval_sec = warning_check_interval_sec(warning_interval_sec)
         self.queue_size = queue_size
+        self.buff_size_mb = buff_size_mb
+        self.buff_size_bytes = buff_size_mb * 1024 * 1024
         self.warmup_sec = warmup_sec
         self.save_csv = save_csv
         self.loggers = {}
@@ -557,7 +615,7 @@ class MultiImageReceiveStatsNode:
                     self.image_callback,
                     callback_args=topic,
                     queue_size=self.queue_size,
-                    buff_size=2 ** 24,
+                    buff_size=self.buff_size_bytes,
                 )
             )
 
@@ -580,6 +638,12 @@ class MultiImageReceiveStatsNode:
         rospy.loginfo(
             "Checking no-frame warnings every %.3fs",
             self.warning_check_interval_sec,
+        )
+        rospy.loginfo(
+            "Subscriber queue_size=%d buff_size=%dMB (%d bytes)",
+            self.queue_size,
+            self.buff_size_mb,
+            self.buff_size_bytes,
         )
         rospy.loginfo("Per-frame CSV saving: %s", "enabled" if self.save_csv else "disabled")
         rospy.loginfo("Warmup time before recording deltas: %.3fs", self.warmup_sec)
@@ -643,7 +707,9 @@ class MultiImageReceiveStatsNode:
                 "Image receive summary: topic=%s, deltas=%s, "
                 "receive_steady_delta_us[min/max/average]=%s/%s/%s, delta_warnings=%s, "
                 "no_frame_warnings=%s, "
-                "ros_header_stamp_delta_us[min/max/average]=%s/%s/%s, non_positive=%s",
+                "ros_header_stamp_delta_us[min/max/average]=%s/%s/%s, non_positive=%s, "
+                "header_seq[gap/backward/duplicate]=%s/%s/%s, "
+                "image_info_changes=%s, zero_data=%s",
                 summary["topic"],
                 summary["delta_count"],
                 summary["receive_steady_delta_min_us"],
@@ -655,6 +721,11 @@ class MultiImageReceiveStatsNode:
                 summary["ros_header_stamp_delta_max_us"],
                 summary["ros_header_stamp_delta_average_us"],
                 summary["ros_header_stamp_non_positive_delta_count"],
+                summary["header_seq_gap_count"],
+                summary["header_seq_backward_count"],
+                summary["header_seq_duplicate_count"],
+                summary["image_info_change_count"],
+                summary["zero_data_count"],
             )
 
     def close(self):
@@ -715,6 +786,9 @@ def main():
             )
         ),
         queue_size=int(private_param_or_default("queue_size", args.queue_size, DEFAULT_QUEUE_SIZE)),
+        buff_size_mb=int(
+            private_param_or_default("buff_size", args.buff_size, DEFAULT_BUFF_SIZE_MB)
+        ),
         warmup_sec=float(
             private_param_or_default("warmup_sec", args.warmup_sec, DEFAULT_WARMUP_SEC)
         ),
