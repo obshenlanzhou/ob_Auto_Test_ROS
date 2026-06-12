@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Subscribe multiple ROS image topics and write per-topic receive statistics to CSV.
+Subscribe multiple ROS2 image topics and write per-topic receive statistics to CSV.
 
-Image topics must be provided explicitly through --topics or the private ROS
-parameter ~topics.
+Image topics must be provided explicitly through --topics or the ROS2 node
+parameter topics.
 
 Each topic is written to its own CSV file. For every received frame the script
 records the ROS header timestamp, the host system and steady receive clocks,
@@ -22,15 +22,24 @@ import re
 import threading
 import time
 
-import rospy
+import rclpy
+from rclpy.node import Node
+from rclpy.qos import (
+    DurabilityPolicy,
+    HistoryPolicy,
+    QoSProfile,
+    ReliabilityPolicy,
+    qos_profile_sensor_data,
+)
+from rclpy.utilities import remove_ros_args
 from sensor_msgs.msg import Image
 
 
 DEFAULT_WARNING_INTERVAL_SEC = 1.0
 DEFAULT_QUEUE_SIZE = 10
-DEFAULT_BUFF_SIZE_MB = 16
 DEFAULT_WARMUP_SEC = 2.0
 DEFAULT_SAVE_CSV = True
+DEFAULT_QOS = "sensor_data"
 SUMMARY_UPDATE_INTERVAL_SEC = 10.0
 MIN_WARNING_CHECK_INTERVAL_SEC = 0.05
 MAX_WARNING_CHECK_INTERVAL_SEC = 1.0
@@ -40,7 +49,6 @@ MICROSECONDS_PER_SECOND = 1000000
 CSV_HEADER = [
     "frame_index",
     "topic",
-    "header_seq",
     "ros_header_stamp_sec",
     "ros_header_stamp_delta_sec",
     "receive_system_ts_sec",
@@ -56,15 +64,12 @@ SUMMARY_HEADER = [
     "receive_steady_delta_average_sec",
     "receive_steady_delta_warning_count",
     "no_frame_warning_count",
-    "max_receive_steady_delta_header_seq",
+    "max_receive_steady_delta_frame_index",
     "max_receive_steady_delta_system_ts_sec",
     "ros_header_stamp_delta_min_sec",
     "ros_header_stamp_delta_max_sec",
     "ros_header_stamp_delta_average_sec",
     "ros_header_stamp_non_positive_delta_count",
-    "header_seq_gap_count",
-    "header_seq_backward_count",
-    "header_seq_duplicate_count",
     "image_info_change_count",
     "zero_data_count",
 ]
@@ -73,7 +78,7 @@ SUMMARY_HEADER = [
 def parse_args():
     parser = argparse.ArgumentParser(
         description=(
-            "Record per-frame ROS image timestamps, host system receive timestamps, "
+            "Record per-frame ROS2 image timestamps, host system receive timestamps, "
             "and steady-clock receive deltas to one CSV file per topic."
         )
     )
@@ -81,7 +86,7 @@ def parse_args():
     parser.add_argument(
         "--topics",
         default=None,
-        help="Required comma-separated sensor_msgs/Image topics. ROS param: _topics:='[...]'",
+        help="Required comma-separated sensor_msgs/msg/Image topics. ROS param: topics:='[...]'",
     )
     parser.add_argument(
         "--warning_interval_sec",
@@ -101,7 +106,7 @@ def parse_args():
         choices=["true", "false", "1", "0", "yes", "no", "on", "off"],
         help=(
             "Enable or disable per-frame CSV saving; summary.csv is always enabled. "
-            "ROS param: _save_csv:=false"
+            "ROS param: save_csv:=false"
         ),
     )
     parser.add_argument(
@@ -112,18 +117,12 @@ def parse_args():
     )
     parser.add_argument("--queue_size", type=int, default=None, help="Subscriber queue size.")
     parser.add_argument(
-        "--buff_size",
-        type=int,
+        "--qos",
         default=None,
-        help="Subscriber socket buffer size in MB.",
+        choices=["sensor_data", "default", "reliable", "best_effort"],
+        help="Subscriber QoS profile.",
     )
-    return parser.parse_args(rospy.myargv()[1:])
-
-
-def private_param_or_default(name, command_line_value, default_value):
-    if command_line_value is not None:
-        return command_line_value
-    return rospy.get_param("~" + name, default_value)
+    return parser.parse_args(remove_ros_args()[1:])
 
 
 def parse_topics(value):
@@ -131,24 +130,10 @@ def parse_topics(value):
         return [str(topic).strip() for topic in value if str(topic).strip()]
     if not value:
         return []
-    return [topic.strip() for topic in str(value).split(",") if topic.strip()]
-
-
-def resolve_topics(topics):
-    resolved_topics = [rospy.resolve_name(topic) for topic in topics]
-    seen_topics = set()
-    duplicate_topics = []
-    for topic in resolved_topics:
-        if topic in seen_topics and topic not in duplicate_topics:
-            duplicate_topics.append(topic)
-        seen_topics.add(topic)
-    if duplicate_topics:
-        raise ValueError(
-            "Duplicate image topics after ROS name resolution: {}".format(
-                ", ".join(duplicate_topics)
-            )
-        )
-    return resolved_topics
+    normalized = str(value).strip()
+    if normalized.startswith("[") and normalized.endswith("]"):
+        normalized = normalized[1:-1]
+    return [topic.strip().strip("'\"") for topic in normalized.split(",") if topic.strip()]
 
 
 def parse_bool(value):
@@ -164,9 +149,15 @@ def parse_bool(value):
     raise ValueError("Invalid boolean value: {}".format(value))
 
 
+def get_parameter_or_default(node, name, command_line_value, default_value):
+    if command_line_value is not None:
+        return command_line_value
+    return node.get_parameter(name).value if node.has_parameter(name) else default_value
+
+
 def default_output_dir():
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    return os.path.abspath("image_receive_stats_{}".format(timestamp))
+    return os.path.abspath("image_receive_stats_ros2_{}".format(timestamp))
 
 
 def ensure_dir(path):
@@ -271,6 +262,31 @@ def write_json_atomic(json_file, data):
         raise
 
 
+def make_qos_profile(qos_name, queue_size):
+    depth = queue_size if queue_size > 0 else 10
+    if qos_name == "sensor_data":
+        return qos_profile_sensor_data
+    if qos_name == "reliable":
+        return QoSProfile(
+            history=HistoryPolicy.KEEP_LAST,
+            depth=depth,
+            reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.VOLATILE,
+        )
+    if qos_name == "best_effort":
+        return QoSProfile(
+            history=HistoryPolicy.KEEP_LAST,
+            depth=depth,
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            durability=DurabilityPolicy.VOLATILE,
+        )
+    return QoSProfile(depth=depth)
+
+
+def stamp_to_us(stamp):
+    return seconds_to_us(stamp.sec) + ns_to_us(stamp.nanosec)
+
+
 class WarningLogWriter:
     def __init__(self, log_file):
         self.log_file = log_file
@@ -314,7 +330,6 @@ class TopicCsvLogger:
         self.prev_ros_header_stamp_us = None
         self.prev_receive_steady_us = None
         self.prev_receive_system_us = None
-        self.prev_header_seq = None
         self.no_frame_warning_active = False
         self.no_frame_warning_count = 0
         self.delta_count = 0
@@ -322,16 +337,13 @@ class TopicCsvLogger:
         self.receive_steady_delta_max_us = None
         self.receive_steady_delta_total_us = 0
         self.receive_steady_delta_warning_count = 0
-        self.max_receive_steady_delta_header_seq = None
+        self.max_receive_steady_delta_frame_index = None
         self.max_receive_steady_delta_system_us = None
         self.ros_header_stamp_delta_min_us = None
         self.ros_header_stamp_delta_max_us = None
         self.ros_header_stamp_positive_delta_count = 0
         self.ros_header_stamp_positive_delta_total_us = 0
         self.ros_header_stamp_non_positive_delta_count = 0
-        self.header_seq_gap_count = 0
-        self.header_seq_backward_count = 0
-        self.header_seq_duplicate_count = 0
         self.prev_image_info = None
         self.image_info_change_count = 0
         self.zero_data_count = 0
@@ -349,7 +361,7 @@ class TopicCsvLogger:
         self,
         ros_header_stamp_delta_us,
         receive_steady_delta_us,
-        header_seq,
+        frame_index,
         receive_system_us,
     ):
         self.delta_count += 1
@@ -364,7 +376,7 @@ class TopicCsvLogger:
             or receive_steady_delta_us > self.receive_steady_delta_max_us
         ):
             self.receive_steady_delta_max_us = receive_steady_delta_us
-            self.max_receive_steady_delta_header_seq = header_seq
+            self.max_receive_steady_delta_frame_index = frame_index
             self.max_receive_steady_delta_system_us = receive_system_us
         self.receive_steady_delta_total_us += receive_steady_delta_us
 
@@ -387,16 +399,6 @@ class TopicCsvLogger:
         else:
             self.ros_header_stamp_non_positive_delta_count += 1
 
-    def _record_header_seq(self, header_seq):
-        if self.prev_header_seq is None:
-            return
-        if header_seq > self.prev_header_seq + 1:
-            self.header_seq_gap_count += 1
-        elif header_seq < self.prev_header_seq:
-            self.header_seq_backward_count += 1
-        elif header_seq == self.prev_header_seq:
-            self.header_seq_duplicate_count += 1
-
     def _record_image_info(self, msg):
         image_info = (msg.width, msg.height, msg.encoding, msg.step, len(msg.data))
         if self.prev_image_info is not None and image_info != self.prev_image_info:
@@ -405,11 +407,10 @@ class TopicCsvLogger:
         if len(msg.data) == 0:
             self.zero_data_count += 1
 
-    def write(self, msg):
+    def write(self, node_logger, msg):
         receive_system_us = system_time_us()
         receive_steady_us = steady_time_us()
-        ros_header_stamp_us = ns_to_us(msg.header.stamp.to_nsec())
-        header_seq = msg.header.seq
+        ros_header_stamp_us = stamp_to_us(msg.header.stamp)
 
         with self.lock:
             if self.closed:
@@ -419,10 +420,12 @@ class TopicCsvLogger:
                 self.prev_ros_header_stamp_us = None
                 self.prev_receive_steady_us = None
                 self.prev_receive_system_us = None
-                self.prev_header_seq = None
                 self.prev_image_info = None
                 self.no_frame_warning_active = False
                 return
+
+            self.frame_index += 1
+            frame_index = self.frame_index
 
             ros_header_stamp_delta_us = ""
             receive_steady_delta_us = ""
@@ -445,20 +448,16 @@ class TopicCsvLogger:
                 self._record_deltas(
                     ros_header_stamp_delta_us,
                     receive_steady_delta_us,
-                    header_seq,
+                    frame_index,
                     receive_system_us,
                 )
-            self._record_header_seq(header_seq)
             self._record_image_info(msg)
-            self.prev_header_seq = header_seq
 
             if self.save_csv and self.csv_fh is not None and not self.csv_fh.closed:
-                self.frame_index += 1
                 self.csv_writer.writerow(
                     [
-                        self.frame_index,
+                        frame_index,
                         self.topic,
-                        header_seq,
                         format_us_as_sec(ros_header_stamp_us),
                         format_optional_us_as_sec(ros_header_stamp_delta_us),
                         format_us_as_sec(receive_system_us),
@@ -470,16 +469,16 @@ class TopicCsvLogger:
 
         if should_warn:
             warning_message = (
-                "Image receive delta exceeded {:.3f}s: topic={}, seq={}, "
+                "Image receive delta exceeded {:.3f}s: topic={}, frame_index={}, "
                 "receive_steady_delta_sec={}, ros_header_stamp_delta_sec={}"
             ).format(
                 self.warning_interval_sec,
                 self.topic,
-                header_seq,
+                frame_index,
                 format_us_as_sec(receive_steady_delta_us),
                 format_optional_us_as_sec(ros_header_stamp_delta_us),
             )
-            rospy.logwarn("%s", warning_message)
+            node_logger.warn(warning_message)
             self.warning_log_writer.write(warning_message)
 
     def check_no_frame_warning(self, now_steady_us):
@@ -502,13 +501,13 @@ class TopicCsvLogger:
             self.no_frame_warning_count += 1
             return (
                 "Image topic no frame for more than {:.3f}s: topic={}, "
-                "no_frame_duration_sec={}, last_header_seq={}, "
+                "no_frame_duration_sec={}, last_frame_index={}, "
                 "last_receive_system_ts_sec={}"
             ).format(
                 self.warning_interval_sec,
                 self.topic,
                 format_us_as_sec(no_frame_duration_us),
-                self.prev_header_seq if self.prev_header_seq is not None else "",
+                self.frame_index if self.frame_index > 0 else "",
                 format_optional_us_as_sec(self.prev_receive_system_us),
             )
 
@@ -531,8 +530,8 @@ class TopicCsvLogger:
                 self.receive_steady_delta_warning_count,
                 self.no_frame_warning_count,
                 (
-                    self.max_receive_steady_delta_header_seq
-                    if self.max_receive_steady_delta_header_seq is not None
+                    self.max_receive_steady_delta_frame_index
+                    if self.max_receive_steady_delta_frame_index is not None
                     else ""
                 ),
                 format_optional_us_as_sec(self.max_receive_steady_delta_system_us),
@@ -540,9 +539,6 @@ class TopicCsvLogger:
                 format_optional_us_as_sec(self.ros_header_stamp_delta_max_us),
                 format_optional_us_as_sec(ros_header_stamp_delta_average_us),
                 self.ros_header_stamp_non_positive_delta_count,
-                self.header_seq_gap_count,
-                self.header_seq_backward_count,
-                self.header_seq_duplicate_count,
                 self.image_info_change_count,
                 self.zero_data_count,
             ]
@@ -555,35 +551,43 @@ class TopicCsvLogger:
                 self.csv_fh.close()
 
 
-class MultiImageReceiveStatsNode:
+class MultiImageReceiveStatsNode(Node):
     def __init__(
         self,
         topics,
         output_dir,
         warning_interval_sec,
         queue_size,
-        buff_size_mb,
+        qos,
         warmup_sec,
         save_csv,
     ):
+        super().__init__("image_topic_receive_stats_ros2")
+
         if not topics:
             raise ValueError("No image topics configured.")
         if warning_interval_sec <= 0:
             raise ValueError("warning_interval_sec must be greater than 0.")
         if queue_size == 0:
             raise ValueError("queue_size must be greater than 0, or -1 for unlimited.")
-        if buff_size_mb <= 0:
-            raise ValueError("buff_size must be greater than 0 MB.")
         if warmup_sec < 0:
             raise ValueError("warmup_sec must be greater than or equal to 0.")
 
-        self.topics = topics
+        self.topics = [self.resolve_topic_name(topic) for topic in topics]
+        duplicate_topics = sorted({topic for topic in self.topics if self.topics.count(topic) > 1})
+        if duplicate_topics:
+            raise ValueError(
+                "Duplicate image topics after ROS name resolution: {}".format(
+                    ", ".join(duplicate_topics)
+                )
+            )
+
         self.output_dir = output_dir
         self.warning_interval_sec = warning_interval_sec
         self.warning_check_interval_sec = warning_check_interval_sec(warning_interval_sec)
         self.queue_size = queue_size
-        self.buff_size_mb = buff_size_mb
-        self.buff_size_bytes = buff_size_mb * 1024 * 1024
+        self.qos = qos
+        self.qos_profile = make_qos_profile(qos, queue_size)
         self.warmup_sec = warmup_sec
         self.save_csv = save_csv
         self.loggers = {}
@@ -591,8 +595,6 @@ class MultiImageReceiveStatsNode:
         self.warning_log_writer = None
         self.summary_file = os.path.join(self.output_dir, "summary.csv")
         self.metadata_file = os.path.join(self.output_dir, "metadata.json")
-        self.summary_timer = None
-        self.warning_timer = None
         self.summary_update_lock = threading.Lock()
         self.callback_condition = threading.Condition()
         self.active_callback_count = 0
@@ -624,54 +626,50 @@ class MultiImageReceiveStatsNode:
 
         for topic in self.topics:
             self.subscribers.append(
-                rospy.Subscriber(
-                    topic,
+                self.create_subscription(
                     Image,
-                    self.image_callback,
-                    callback_args=topic,
-                    queue_size=self.queue_size,
-                    buff_size=self.buff_size_bytes,
+                    topic,
+                    lambda msg, topic=topic: self.image_callback(msg, topic),
+                    self.qos_profile,
                 )
             )
 
-        self.summary_timer = rospy.Timer(
-            rospy.Duration.from_sec(SUMMARY_UPDATE_INTERVAL_SEC),
+        self.summary_timer = self.create_timer(
+            SUMMARY_UPDATE_INTERVAL_SEC,
             self.summary_timer_callback,
         )
-        self.warning_timer = rospy.Timer(
-            rospy.Duration.from_sec(self.warning_check_interval_sec),
+        self.warning_timer = self.create_timer(
+            self.warning_check_interval_sec,
             self.warning_timer_callback,
         )
-        rospy.on_shutdown(self.close)
-        rospy.loginfo("Recording image receive stats to directory: %s", self.output_dir)
-        rospy.loginfo("Recording metadata to: %s", self.metadata_file)
-        rospy.loginfo("Recording warning log to: %s", self.warning_log_writer.log_file)
-        rospy.loginfo(
-            "Recording cumulative summary every %.1fs to: %s",
-            SUMMARY_UPDATE_INTERVAL_SEC,
-            self.summary_file,
+        logger = self.get_logger()
+        logger.info("Recording image receive stats to directory: {}".format(self.output_dir))
+        logger.info("Recording metadata to: {}".format(self.metadata_file))
+        logger.info("Recording warning log to: {}".format(self.warning_log_writer.log_file))
+        logger.info(
+            "Recording cumulative summary every {:.1f}s to: {}".format(
+                SUMMARY_UPDATE_INTERVAL_SEC,
+                self.summary_file,
+            )
         )
-        rospy.loginfo(
-            "Checking no-frame warnings every %.3fs",
-            self.warning_check_interval_sec,
+        logger.info(
+            "Checking no-frame warnings every {:.3f}s".format(
+                self.warning_check_interval_sec
+            )
         )
-        rospy.loginfo(
-            "Subscriber queue_size=%d buff_size=%dMB (%d bytes)",
-            self.queue_size,
-            self.buff_size_mb,
-            self.buff_size_bytes,
-        )
-        rospy.loginfo("Per-frame CSV saving: %s", "enabled" if self.save_csv else "disabled")
-        rospy.loginfo("Warmup time before recording deltas: %.3fs", self.warmup_sec)
+        logger.info("Subscriber queue_size={} qos={}".format(self.queue_size, self.qos))
+        logger.info("Per-frame CSV saving: {}".format("enabled" if self.save_csv else "disabled"))
+        logger.info("Warmup time before recording deltas: {:.3f}s".format(self.warmup_sec))
         for topic in self.topics:
             if self.save_csv:
-                rospy.loginfo(
-                    "Subscribing image topic: %s -> %s",
-                    topic,
-                    self.loggers[topic].csv_file,
+                logger.info(
+                    "Subscribing image topic: {} -> {}".format(
+                        topic,
+                        self.loggers[topic].csv_file,
+                    )
                 )
             else:
-                rospy.loginfo("Subscribing image topic: %s", topic)
+                logger.info("Subscribing image topic: {}".format(topic))
 
     def write_metadata(self):
         write_json_atomic(
@@ -683,11 +681,11 @@ class MultiImageReceiveStatsNode:
                 "warning_interval_sec": self.warning_interval_sec,
                 "warning_check_interval_sec": self.warning_check_interval_sec,
                 "queue_size": self.queue_size,
-                "buff_size_mb": self.buff_size_mb,
-                "buff_size_bytes": self.buff_size_bytes,
+                "qos": self.qos,
                 "warmup_sec": self.warmup_sec,
                 "save_csv": self.save_csv,
                 "ros_distro": os.environ.get("ROS_DISTRO", ""),
+                "rmw_implementation": os.environ.get("RMW_IMPLEMENTATION", ""),
             },
         )
 
@@ -697,7 +695,7 @@ class MultiImageReceiveStatsNode:
                 return
             self.active_callback_count += 1
         try:
-            self.loggers[topic].write(msg)
+            self.loggers[topic].write(self.get_logger(), msg)
         finally:
             with self.callback_condition:
                 self.active_callback_count -= 1
@@ -713,7 +711,7 @@ class MultiImageReceiveStatsNode:
             write_csv_atomic(self.summary_file, SUMMARY_HEADER, rows)
             return rows
 
-    def summary_timer_callback(self, _event):
+    def summary_timer_callback(self):
         with self.summary_update_lock:
             if self.closed:
                 return
@@ -721,9 +719,11 @@ class MultiImageReceiveStatsNode:
                 rows = self.collect_summary_rows()
                 write_csv_atomic(self.summary_file, SUMMARY_HEADER, rows)
             except Exception as exc:
-                rospy.logerr("Failed to update summary CSV %s: %s", self.summary_file, exc)
+                self.get_logger().error(
+                    "Failed to update summary CSV {}: {}".format(self.summary_file, exc)
+                )
 
-    def warning_timer_callback(self, _event):
+    def warning_timer_callback(self):
         now_steady_us = steady_time_us()
         for topic in self.topics:
             with self.callback_condition:
@@ -731,35 +731,32 @@ class MultiImageReceiveStatsNode:
                     return
             warning_message = self.loggers[topic].check_no_frame_warning(now_steady_us)
             if warning_message:
-                rospy.logwarn("%s", warning_message)
+                self.get_logger().warn(warning_message)
                 self.warning_log_writer.write(warning_message)
 
     def log_summary(self, rows):
         for row in rows:
             summary = dict(zip(SUMMARY_HEADER, row))
-            rospy.loginfo(
-                "Image receive summary: topic=%s, deltas=%s, "
-                "receive_steady_delta_sec[min/max/average]=%s/%s/%s, delta_warnings=%s, "
-                "no_frame_warnings=%s, "
-                "ros_header_stamp_delta_sec[min/max/average]=%s/%s/%s, non_positive=%s, "
-                "header_seq[gap/backward/duplicate]=%s/%s/%s, "
-                "image_info_changes=%s, zero_data=%s",
-                summary["topic"],
-                summary["delta_count"],
-                summary["receive_steady_delta_min_sec"],
-                summary["receive_steady_delta_max_sec"],
-                summary["receive_steady_delta_average_sec"],
-                summary["receive_steady_delta_warning_count"],
-                summary["no_frame_warning_count"],
-                summary["ros_header_stamp_delta_min_sec"],
-                summary["ros_header_stamp_delta_max_sec"],
-                summary["ros_header_stamp_delta_average_sec"],
-                summary["ros_header_stamp_non_positive_delta_count"],
-                summary["header_seq_gap_count"],
-                summary["header_seq_backward_count"],
-                summary["header_seq_duplicate_count"],
-                summary["image_info_change_count"],
-                summary["zero_data_count"],
+            self.get_logger().info(
+                "Image receive summary: topic={}, deltas={}, "
+                "receive_steady_delta_sec[min/max/average]={}/{}/{}, delta_warnings={}, "
+                "no_frame_warnings={}, "
+                "ros_header_stamp_delta_sec[min/max/average]={}/{}/{}, non_positive={}, "
+                "image_info_changes={}, zero_data={}".format(
+                    summary["topic"],
+                    summary["delta_count"],
+                    summary["receive_steady_delta_min_sec"],
+                    summary["receive_steady_delta_max_sec"],
+                    summary["receive_steady_delta_average_sec"],
+                    summary["receive_steady_delta_warning_count"],
+                    summary["no_frame_warning_count"],
+                    summary["ros_header_stamp_delta_min_sec"],
+                    summary["ros_header_stamp_delta_max_sec"],
+                    summary["ros_header_stamp_delta_average_sec"],
+                    summary["ros_header_stamp_non_positive_delta_count"],
+                    summary["image_info_change_count"],
+                    summary["zero_data_count"],
+                )
             )
 
     def close(self):
@@ -769,10 +766,8 @@ class MultiImageReceiveStatsNode:
                     return
                 self.closed = True
 
-            if self.summary_timer is not None:
-                self.summary_timer.shutdown()
-            if self.warning_timer is not None:
-                self.warning_timer.shutdown()
+            self.summary_timer.cancel()
+            self.warning_timer.cancel()
 
             with self.callback_condition:
                 while self.active_callback_count > 0:
@@ -783,7 +778,12 @@ class MultiImageReceiveStatsNode:
                 try:
                     write_csv_atomic(self.summary_file, SUMMARY_HEADER, rows)
                 except Exception as exc:
-                    rospy.logerr("Failed to write final summary CSV %s: %s", self.summary_file, exc)
+                    self.get_logger().error(
+                        "Failed to write final summary CSV {}: {}".format(
+                            self.summary_file,
+                            exc,
+                        )
+                    )
                 self.log_summary(rows)
 
             for logger in self.loggers.values():
@@ -792,44 +792,89 @@ class MultiImageReceiveStatsNode:
                 self.warning_log_writer.close()
 
 
+def declare_parameters(node):
+    node.declare_parameter("topics", "")
+    node.declare_parameter("output_dir", "")
+    node.declare_parameter("warning_interval_sec", DEFAULT_WARNING_INTERVAL_SEC)
+    node.declare_parameter("warmup_sec", DEFAULT_WARMUP_SEC)
+    node.declare_parameter("save_csv", DEFAULT_SAVE_CSV)
+    node.declare_parameter("disable_csv", False)
+    node.declare_parameter("queue_size", DEFAULT_QUEUE_SIZE)
+    node.declare_parameter("qos", DEFAULT_QOS)
+
+
 def main():
-    rospy.init_node("image_topic_receive_stats", anonymous=True)
+    rclpy.init()
     args = parse_args()
 
-    topics_param = private_param_or_default("topics", args.topics, "")
-    configured_topics = parse_topics(topics_param)
-    if not configured_topics:
-        raise ValueError(
-            "No image topics configured. Set --topics or the private ROS parameter ~topics."
-        )
-    topics = resolve_topics(configured_topics)
+    parameter_node = Node("image_topic_receive_stats_ros2_params")
+    declare_parameters(parameter_node)
 
-    save_csv = parse_bool(private_param_or_default("save_csv", args.save_csv, DEFAULT_SAVE_CSV))
-    disable_csv = parse_bool(private_param_or_default("disable_csv", args.disable_csv, False))
-    if disable_csv:
-        save_csv = False
-
-    node = MultiImageReceiveStatsNode(
-        topics=topics,
-        output_dir=private_param_or_default("output_dir", args.output_dir, default_output_dir()),
-        warning_interval_sec=float(
-            private_param_or_default(
-                "warning_interval_sec",
-                args.warning_interval_sec,
-                DEFAULT_WARNING_INTERVAL_SEC,
+    try:
+        topics_param = get_parameter_or_default(parameter_node, "topics", args.topics, "")
+        configured_topics = parse_topics(topics_param)
+        if not configured_topics:
+            raise ValueError(
+                "No image topics configured. Set --topics or the ROS2 parameter topics."
             )
-        ),
-        queue_size=int(private_param_or_default("queue_size", args.queue_size, DEFAULT_QUEUE_SIZE)),
-        buff_size_mb=int(
-            private_param_or_default("buff_size", args.buff_size, DEFAULT_BUFF_SIZE_MB)
-        ),
-        warmup_sec=float(
-            private_param_or_default("warmup_sec", args.warmup_sec, DEFAULT_WARMUP_SEC)
-        ),
-        save_csv=save_csv,
-    )
-    rospy.spin()
-    node.close()
+
+        save_csv = parse_bool(
+            get_parameter_or_default(parameter_node, "save_csv", args.save_csv, DEFAULT_SAVE_CSV)
+        )
+        disable_csv = parse_bool(
+            get_parameter_or_default(parameter_node, "disable_csv", args.disable_csv, False)
+        )
+        if disable_csv:
+            save_csv = False
+
+        output_dir = get_parameter_or_default(
+            parameter_node,
+            "output_dir",
+            args.output_dir,
+            "",
+        )
+        if not output_dir:
+            output_dir = default_output_dir()
+
+        node = MultiImageReceiveStatsNode(
+            topics=configured_topics,
+            output_dir=output_dir,
+            warning_interval_sec=float(
+                get_parameter_or_default(
+                    parameter_node,
+                    "warning_interval_sec",
+                    args.warning_interval_sec,
+                    DEFAULT_WARNING_INTERVAL_SEC,
+                )
+            ),
+            queue_size=int(
+                get_parameter_or_default(
+                    parameter_node,
+                    "queue_size",
+                    args.queue_size,
+                    DEFAULT_QUEUE_SIZE,
+                )
+            ),
+            qos=str(get_parameter_or_default(parameter_node, "qos", args.qos, DEFAULT_QOS)),
+            warmup_sec=float(
+                get_parameter_or_default(
+                    parameter_node,
+                    "warmup_sec",
+                    args.warmup_sec,
+                    DEFAULT_WARMUP_SEC,
+                )
+            ),
+            save_csv=save_csv,
+        )
+    finally:
+        parameter_node.destroy_node()
+
+    try:
+        rclpy.spin(node)
+    finally:
+        node.close()
+        node.destroy_node()
+        rclpy.shutdown()
 
 
 if __name__ == "__main__":
