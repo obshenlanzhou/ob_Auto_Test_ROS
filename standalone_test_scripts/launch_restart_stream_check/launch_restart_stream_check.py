@@ -560,7 +560,8 @@ def run(args) -> int:
     apply_python_paths(runtime_env)
 
     run_id = datetime.now().strftime("%Y%m%d_%H%M%S_restart_stream")
-    results_dir = ensure_dir(Path(args.results_dir or f"results/restart_stream/{run_id}").resolve())
+    default_results_dir = Path(__file__).resolve().parent / "results" / run_id
+    results_dir = ensure_dir(Path(args.results_dir).resolve() if args.results_dir else default_results_dir)
     emit = StatusLogger()
 
     launch_file = select_launch_file(args)
@@ -700,15 +701,18 @@ def run(args) -> int:
                     result["status"] = "failed"
                     result["manual_confirmation_required"] = True
                     result["manual_confirmation_message"] = (
-                        f"attempt {attempt_index}: {message}; launch is left running "
-                        "for manual stream check"
+                        f"attempt {attempt_index}: {message}; launch was kept running "
+                        "until manual stream check finished"
                     )
                     keep_launch_running = True
                     emit(
                         f"attempt {attempt_index}: streams not stable within "
                         f"{stream_timeout:.1f}s, launch kept running for manual check"
                     )
-                    emit("please manually check whether image streams are publishing, press Ctrl+C to finish")
+                    emit(
+                        "please manually check whether image streams are publishing, "
+                        "press Ctrl+C to stop launch and finish"
+                    )
                     while session.poll() is None:
                         time.sleep(1.0)
                     break
@@ -727,6 +731,7 @@ def run(args) -> int:
     except KeyboardInterrupt:
         if result.get("manual_confirmation_required"):
             emit("manual check finished by user")
+            keep_launch_running = False
         else:
             result["status"] = "interrupted"
             emit("test interrupted by user")
@@ -773,13 +778,13 @@ def parse_args():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Examples:\n"
-            "  python3 launch_restart_stream_check.py --ros-version 2 "
+            "  python3 ./launch_restart_stream_check/launch_restart_stream_check.py --ros-version 2 "
             "--ros-setup /opt/ros/humble/setup.bash "
             "--driver-setup /path/to/camera_ws/install/setup.bash "
             "--camera-model gemini_305 --duration 1h\n\n"
-            "  python3 launch_restart_stream_check.py --launch-file /path/to/multi_camera.launch.py "
+            "  python3 ./launch_restart_stream_check/launch_restart_stream_check.py --launch-file /path/to/multi_camera.launch.py "
             "--duration 1h\n\n"
-            "  python3 launch_restart_stream_check.py --launch-file /path/to/test.launch.py "
+            "  python3 ./launch_restart_stream_check/launch_restart_stream_check.py --launch-file /path/to/test.launch.py "
             "--image-topic /camera/color/image_raw --stable-seconds 5\n"
         ),
     )

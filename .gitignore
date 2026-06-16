@@ -4,5 +4,5 @@ auto_test_ws/results/*
 standalone_test_scripts/results/*
 __pycache__/
 *.pyc
-
+results/
 AGENTS.md

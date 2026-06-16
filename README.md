@@ -25,8 +25,10 @@ ob_Auto_Test_ROS/
 └── standalone_test_scripts/
     ├── README.md
     ├── README.zh-CN.md
-    ├── launch_restart_stream_check.py
-    └── results/                  # 运行时生成
+    ├── export_load_stress_test/
+    │   └── results/              # 运行时生成
+    └── launch_restart_stream_check/
+        └── results/              # 运行时生成
 ```
 
 ## 快速入口
@@ -59,7 +61,7 @@ http://127.0.0.1:8000
 
 ```bash
 cd /home/slz/ORBBEC/ob_Auto_Test_ROS/standalone_test_scripts
-python3 ./launch_restart_stream_check.py --help
+python3 ./launch_restart_stream_check/launch_restart_stream_check.py --help
 ```
 
 ## 适用场景
