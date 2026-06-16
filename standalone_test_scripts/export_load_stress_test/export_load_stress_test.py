@@ -1142,7 +1142,7 @@ def parse_args():
     parser.add_argument("--ros-setup", default=os.environ.get("ORBBEC_ROS_SETUP", ""))
     parser.add_argument("--driver-setup", default=os.environ.get("ORBBEC_CAMERA_SETUP", ""))
     parser.add_argument("--launch-package", default="orbbec_camera")
-    parser.add_argument("--launch-file", default="gemini_330_series.launch.py")
+    parser.add_argument("--launch-file", default="gemini_330_series_sdk_json.launch.py")
     parser.add_argument("--launch-arg", action="append", default=[], help="Extra launch arg, KEY=VALUE or KEY:=VALUE")
     parser.add_argument("--config-json", action="append", default=[], help="Config JSON file, repeat at least twice")
     parser.add_argument(

@@ -20,7 +20,7 @@ python3 ./export_load_stress_test/export_load_stress_test.py \
   --ros-version 2 \
   --ros-setup /opt/ros/humble/setup.bash \
   --driver-setup /home/slz/ORBBEC/orbbecsdk_ros2_v2-main/install/setup.bash \
-  --launch-file gemini_330_series.launch.py \
+  --launch-file gemini_330_series_sdk_json.launch.py \
   --camera camera \
   --test-count 10
 ```
@@ -32,7 +32,7 @@ python3 ./export_load_stress_test/export_load_stress_test.py \
   --ros-version 2 \
   --ros-setup /opt/ros/humble/setup.bash \
   --driver-setup /home/slz/ORBBEC/orbbecsdk_ros2_v2-main/install/setup.bash \
-  --launch-file gemini_330_series.launch.py \
+  --launch-file gemini_330_series_sdk_json.launch.py \
   --camera camera_01,usb_port=2-1 \
   --camera camera_02,usb_port=2-3 \
   --test-count 10
