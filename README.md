@@ -27,6 +27,8 @@ ob_Auto_Test_ROS/
     ├── README.zh-CN.md
     ├── export_load_stress_test/
     │   └── results/              # 运行时生成
+    ├── preset_upgrade_stress_test/
+    │   └── results/              # 运行时生成
     └── launch_restart_stream_check/
         └── results/              # 运行时生成
 ```

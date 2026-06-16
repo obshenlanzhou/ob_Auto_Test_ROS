@@ -18,6 +18,12 @@ standalone_test_scripts/
 │   ├── export_load_stress_test.py
 │   ├── config/
 │   └── results/                  # 运行时生成
+├── preset_upgrade_stress_test/
+│   ├── README.md
+│   ├── README.zh-CN.md
+│   ├── preset_upgrade_stress_test.py
+│   ├── config/
+│   └── results/                  # 运行时生成
 ├── launch_restart_stream_check/
 │   ├── README.md
 │   ├── README.zh-CN.md
@@ -42,6 +48,7 @@ standalone_test_scripts/
 | --- | --- | --- |
 | [launch_restart_stream_check](launch_restart_stream_check/README.zh-CN.md) | 反复重启 launch 并检查图像流恢复 | 适合重启出流稳定性压测 |
 | [export_load_stress_test](export_load_stress_test/README.zh-CN.md) | 交替导入/导出 JSON 并比较参数 | 适合参数导入导出一致性压测 |
+| [preset_upgrade_stress_test](preset_upgrade_stress_test/README.zh-CN.md) | 交替升级 preset 并验证出流 | 适合 optional depth preset 升级压测 |
 
 ## 新增独立脚本规范
 
