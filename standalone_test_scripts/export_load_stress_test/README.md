@@ -5,8 +5,9 @@
 ## Purpose
 
 ```text
-Alternate between config JSON files for a fixed test count, start camera launch per camera, wait for stable streams, export the current
-JSON settings, and compare only the parameters field.
+Alternate between config JSON files for a fixed test count, start camera launch
+per camera, wait for stable streams, save JPG images, export the current JSON
+settings, and compare only the parameters field.
 ```
 
 ## Basic Usage
@@ -22,6 +23,7 @@ python3 ./export_load_stress_test/export_load_stress_test.py \
   --driver-setup /home/slz/ORBBEC/orbbecsdk_ros2_v2-main/install/setup.bash \
   --launch-file gemini_330_series_sdk_json.launch.py \
   --camera camera \
+  --save-image-count 1 \
   --test-count 10
 ```
 
@@ -35,6 +37,7 @@ python3 ./export_load_stress_test/export_load_stress_test.py \
   --launch-file gemini_330_series_sdk_json.launch.py \
   --camera camera_01,usb_port=2-1 \
   --camera camera_02,usb_port=2-3 \
+  --save-image-count 1 \
   --test-count 10
 ```
 
@@ -60,7 +63,36 @@ load_config_json_file_path
 usb_port or serial_number, when configured
 ```
 
-After streams are stable, the script calls:
+After streams are stable, the script saves 1 JPG image for each color and depth
+image topic by default. Use `--save-image-count` to change the per-topic image
+count for each test; set it to `0` to disable image saving.
+
+```bash
+--save-image-count 3
+```
+
+Default monitored and saved topics:
+
+```text
+/{camera}/color/image_raw
+/{camera}/depth/image_raw
+```
+
+Pass `--image-topic` repeatedly to specify any image topic, such as IR or
+left/right IR:
+
+```bash
+--image-topic /{camera}/color/image_raw \
+--image-topic /{camera}/depth/image_raw \
+--image-topic /{camera}/ir/image_raw
+```
+
+```bash
+--image-topic /{camera}/left_ir/image_raw \
+--image-topic /{camera}/right_ir/image_raw
+```
+
+Then the script calls:
 
 ```text
 /{camera}/export_config_json
@@ -85,5 +117,6 @@ Files:
 ```text
 summary.md            # Final result and per-test status
 result.json           # Full machine-readable result
+images/               # Saved JPG images per test/camera/topic
 exports/              # Exported JSON files and failure diffs per test/camera
 ```

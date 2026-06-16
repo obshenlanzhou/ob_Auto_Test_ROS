@@ -21,6 +21,10 @@ DEFAULT_CONFIG_JSONS = [
     Path(__file__).resolve().parent / "config" / "Gemini_336L_1.json",
     Path(__file__).resolve().parent / "config" / "Gemini_336L_2.json",
 ]
+DEFAULT_IMAGE_TOPIC_TEMPLATES = [
+    "/{camera}/color/image_raw",
+    "/{camera}/depth/image_raw",
+]
 
 
 @dataclass
@@ -110,6 +114,13 @@ def parse_camera_spec(raw: str) -> CameraSpec:
 
 def expand_camera_template(value: str, camera_name: str) -> str:
     return value.replace("{camera}", camera_name).replace("${camera}", camera_name)
+
+
+def sanitize_path_part(value: str) -> str:
+    text = value.strip().strip("/")
+    if not text:
+        return "root"
+    return "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in text)
 
 
 def launch_value(value: Any) -> str:
@@ -564,6 +575,170 @@ class StableImageMonitor:
         self.subscriptions = []
 
 
+class JpgImageSaver:
+    def __init__(
+        self,
+        *,
+        harness: RosHarness,
+        topics: List[str],
+        topic_cameras: Dict[str, str],
+        output_root: Path,
+        count_per_topic: int,
+        jpg_quality: int,
+    ) -> None:
+        self.harness = harness
+        self.topics = topics
+        self.topic_cameras = topic_cameras
+        self.output_root = output_root
+        self.count_per_topic = count_per_topic
+        self.jpg_quality = jpg_quality
+        self.saved: Dict[str, List[str]] = {topic: [] for topic in topics}
+        self.metadata: Dict[str, Dict[str, Any]] = {topic: {} for topic in topics}
+        self.subscriptions = []
+        self._bridge = None
+        self._cv2 = None
+
+        for topic in topics:
+            topic_kind = self.harness.resolve_image_topic_kind(topic)
+            self.metadata[topic]["topic_kind"] = topic_kind
+            self.subscriptions.append(
+                self.harness.create_image_subscription(
+                    topic,
+                    lambda msg, topic_name=topic: self._on_message(topic_name, msg),
+                    topic_kind=topic_kind,
+                )
+            )
+
+    def _ensure_cv_tools(self):
+        if self._bridge is not None and self._cv2 is not None:
+            return self._bridge, self._cv2
+        try:
+            import cv2
+            from cv_bridge import CvBridge
+        except Exception as exc:  # noqa: BLE001
+            raise RuntimeError(
+                "saving JPG images requires cv_bridge and OpenCV Python modules. "
+                "Source the camera driver environment or set --save-image-count 0 "
+                f"to disable image saving. Original error: {exc}"
+            ) from exc
+        self._bridge = CvBridge()
+        self._cv2 = cv2
+        return self._bridge, self._cv2
+
+    def _target_path(self, topic_name: str, index: int) -> Path:
+        camera_name = self.topic_cameras.get(topic_name, "unknown_camera")
+        topic_dir = sanitize_path_part(topic_name)
+        return self.output_root / sanitize_path_part(camera_name) / topic_dir / f"image_{index:04d}.jpg"
+
+    def _write_jpg(self, topic_name: str, message: Any, target_path: Path) -> None:
+        topic_kind = self.metadata[topic_name].get("topic_kind", "raw")
+        ensure_dir(target_path.parent)
+        if topic_kind == "compressed":
+            data = bytes(getattr(message, "data", b"") or b"")
+            fmt = str(getattr(message, "format", "") or "").lower()
+            if "jpeg" in fmt or "jpg" in fmt or data.startswith(b"\xff\xd8"):
+                target_path.write_bytes(data)
+                return
+
+            bridge, cv2 = self._ensure_cv_tools()
+            image = bridge.compressed_imgmsg_to_cv2(message, desired_encoding="bgr8")
+            if not cv2.imwrite(str(target_path), image, [int(cv2.IMWRITE_JPEG_QUALITY), self.jpg_quality]):
+                raise RuntimeError(f"failed to write JPG image: {target_path}")
+            return
+
+        bridge, cv2 = self._ensure_cv_tools()
+        encoding = str(getattr(message, "encoding", "") or "")
+        image = bridge.imgmsg_to_cv2(message, desired_encoding="passthrough")
+        if encoding.lower() == "rgb8":
+            image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+        elif encoding.lower() in {"mono16", "16uc1"}:
+            image = cv2.normalize(image, None, 0, 255, cv2.NORM_MINMAX)
+            image = image.astype("uint8")
+        if not cv2.imwrite(str(target_path), image, [int(cv2.IMWRITE_JPEG_QUALITY), self.jpg_quality]):
+            raise RuntimeError(f"failed to write JPG image: {target_path}")
+
+    def _on_message(self, topic_name: str, message: Any) -> None:
+        saved_files = self.saved[topic_name]
+        if len(saved_files) >= self.count_per_topic:
+            return
+        index = len(saved_files) + 1
+        target_path = self._target_path(topic_name, index)
+        self._write_jpg(topic_name, message, target_path)
+        saved_files.append(str(target_path))
+        self.metadata[topic_name].update(
+            {
+                "width": int(getattr(message, "width", 0) or 0),
+                "height": int(getattr(message, "height", 0) or 0),
+                "encoding": str(getattr(message, "encoding", "") or ""),
+                "format": str(getattr(message, "format", "") or ""),
+            }
+        )
+
+    def complete(self) -> bool:
+        return all(len(files) >= self.count_per_topic for files in self.saved.values())
+
+    def snapshot(self) -> List[Dict[str, Any]]:
+        rows = []
+        for topic_name, files in self.saved.items():
+            rows.append(
+                {
+                    "topic": topic_name,
+                    "camera": self.topic_cameras.get(topic_name, ""),
+                    "saved_count": len(files),
+                    "expected_count": self.count_per_topic,
+                    "files": list(files),
+                    **self.metadata.get(topic_name, {}),
+                }
+            )
+        return rows
+
+    def close(self) -> None:
+        for subscription in list(self.subscriptions):
+            self.harness.destroy_subscription(subscription)
+        self.subscriptions = []
+
+
+def save_jpg_images(
+    *,
+    sessions: List[LaunchSession],
+    harness: RosHarness,
+    topics: List[str],
+    topic_cameras: Dict[str, str],
+    output_root: Path,
+    count_per_topic: int,
+    timeout: float,
+    jpg_quality: int,
+    emit: StatusLogger,
+) -> tuple[bool, List[Dict[str, Any]], str]:
+    if count_per_topic <= 0:
+        return True, [], "image saving disabled"
+    saver = JpgImageSaver(
+        harness=harness,
+        topics=topics,
+        topic_cameras=topic_cameras,
+        output_root=output_root,
+        count_per_topic=count_per_topic,
+        jpg_quality=jpg_quality,
+    )
+    deadline = time.monotonic() + timeout
+    try:
+        while time.monotonic() < deadline:
+            for session in sessions:
+                session.assert_running()
+            harness.spin_once(0.1)
+            if saver.complete():
+                snapshot = saver.snapshot()
+                saved_count = sum(item["saved_count"] for item in snapshot)
+                return True, snapshot, f"saved {saved_count} JPG images"
+        return (
+            False,
+            saver.snapshot(),
+            f"did not save {count_per_topic} JPG image(s) per topic within {timeout:.1f}s",
+        )
+    finally:
+        saver.close()
+
+
 def wait_for_stable_streams(
     *,
     sessions: List[LaunchSession],
@@ -776,6 +951,7 @@ def build_summary(result: Dict[str, Any]) -> str:
         f"- Completed tests: {len(tests)}",
         f"- Failed tests: {len(failed_tests)}",
         f"- Elapsed seconds: {float(result.get('elapsed_seconds', 0.0) or 0.0):.1f}",
+        f"- JPG images per topic per test: {result.get('save_image_count', 0)}",
         "",
         "## Cameras",
         "",
@@ -904,18 +1080,30 @@ def run(args) -> int:
     max_gap_seconds = parse_duration(args.max_gap_seconds, 1.5)
     restart_delay = parse_duration(args.restart_delay, 2.0)
     service_timeout = parse_duration(args.service_timeout, 30.0)
+    save_image_count = int(args.save_image_count)
+    if save_image_count < 0:
+        raise ValueError("--save-image-count must be >= 0")
+    save_image_timeout = parse_duration(args.save_image_timeout, 30.0)
+    jpg_quality = int(args.jpg_quality)
+    if jpg_quality < 1 or jpg_quality > 100:
+        raise ValueError("--jpg-quality must be between 1 and 100")
 
     run_id = datetime.now().strftime("%Y%m%d_%H%M%S_export_load")
     default_results_dir = Path(__file__).resolve().parent / "results" / run_id
     results_dir = ensure_dir(Path(args.results_dir).resolve() if args.results_dir else default_results_dir)
     exports_dir = ensure_dir(results_dir / "exports")
 
-    image_topic_templates = args.image_topic or ["/{camera}/color/image_raw"]
+    image_topic_templates = args.image_topic or DEFAULT_IMAGE_TOPIC_TEMPLATES
     image_topics = [
         expand_camera_template(topic_template, camera.name)
         for camera in cameras
         for topic_template in image_topic_templates
     ]
+    topic_cameras = {
+        expand_camera_template(topic_template, camera.name): camera.name
+        for camera in cameras
+        for topic_template in image_topic_templates
+    }
 
     result: Dict[str, Any] = {
         "status": "passed",
@@ -931,6 +1119,9 @@ def run(args) -> int:
         "stream_timeout_seconds": stream_timeout,
         "max_gap_seconds": max_gap_seconds,
         "restart_delay_seconds": restart_delay,
+        "save_image_count": save_image_count,
+        "save_image_timeout_seconds": save_image_timeout,
+        "jpg_quality": jpg_quality,
         "tests": [],
         "elapsed_seconds": 0.0,
     }
@@ -940,6 +1131,10 @@ def run(args) -> int:
     emit(f"cameras: {', '.join(camera.name for camera in cameras)}")
     emit(f"config JSON cycle: {', '.join(str(path) for path in config_jsons)}")
     emit(f"monitor topics: {', '.join(image_topics)}")
+    if save_image_count > 0:
+        emit(f"save JPG images: {save_image_count} per topic")
+    else:
+        emit("save JPG images: disabled")
 
     test_start_monotonic = time.monotonic()
     active_sessions: List[LaunchSession] = []
@@ -961,6 +1156,7 @@ def run(args) -> int:
                     "ended_at": "",
                     "launches": [],
                     "topics": [],
+                    "images": [],
                     "exports": [],
                 }
                 current_test = test_payload
@@ -1026,6 +1222,35 @@ def run(args) -> int:
                     while any(session.poll() is None for session in sessions):
                         time.sleep(1.0)
                     break
+
+                ok, image_snapshot, image_message = save_jpg_images(
+                    sessions=sessions,
+                    harness=harness,
+                    topics=image_topics,
+                    topic_cameras=topic_cameras,
+                    output_root=results_dir / "images" / test_name,
+                    count_per_topic=save_image_count,
+                    timeout=save_image_timeout,
+                    jpg_quality=jpg_quality,
+                    emit=emit,
+                )
+                test_payload["images"] = image_snapshot
+                if not ok:
+                    test_payload["status"] = "failed"
+                    test_payload["message"] = image_message
+                    result["status"] = "failed"
+                    result["manual_confirmation_required"] = True
+                    result["manual_confirmation_message"] = (
+                        f"{test_name}: {image_message}; launches were kept running until manual "
+                        "check finished"
+                    )
+                    keep_launch_running = True
+                    emit(f"{test_name}: JPG image save failed")
+                    emit("please manually check the launches, press Ctrl+C to stop them and finish")
+                    while any(session.poll() is None for session in sessions):
+                        time.sleep(1.0)
+                    break
+                emit(f"{test_name}: {image_message}")
 
                 emit(f"{test_name}: streams stable, export and compare JSON")
                 camera_results = []
@@ -1159,13 +1384,24 @@ def parse_args():
         "--image-topic",
         action="append",
         default=[],
-        help="Image topic template to monitor, supports {camera}; default /{camera}/color/image_raw",
+        help=(
+            "Image topic template to monitor and save, supports {camera}; can repeat. "
+            "Default: /{camera}/color/image_raw and /{camera}/depth/image_raw"
+        ),
     )
     parser.add_argument("--stable-seconds", default="5")
     parser.add_argument("--stream-timeout", default="60")
     parser.add_argument("--max-gap-seconds", default="1.5")
     parser.add_argument("--restart-delay", default="2")
     parser.add_argument("--queue-size", type=int, default=10)
+    parser.add_argument(
+        "--save-image-count",
+        type=int,
+        default=1,
+        help="JPG images to save per image topic for each test; use 0 to disable",
+    )
+    parser.add_argument("--save-image-timeout", default="30", help="Max wait time for JPG image saving")
+    parser.add_argument("--jpg-quality", type=int, default=95, help="JPG quality, 1-100")
     parser.add_argument("--export-service", default="/{camera}/export_config_json")
     parser.add_argument("--export-service-type", default="orbbec_camera_msgs/srv/SetString")
     parser.add_argument("--service-timeout", default="30")
