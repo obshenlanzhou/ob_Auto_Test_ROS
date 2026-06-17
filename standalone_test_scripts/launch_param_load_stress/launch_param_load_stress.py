@@ -1095,7 +1095,7 @@ def build_summary(result: Dict[str, Any]) -> str:
     repeat_total = result.get("repeat_total", 1)
     repeat_passed = result.get("repeat_passed", 0)
     lines = [
-        "# Config File Path Effect Check",
+        "# Launch Param Load Stress",
         "",
         "## Command",
         "",

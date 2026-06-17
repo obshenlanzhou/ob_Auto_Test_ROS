@@ -2,19 +2,18 @@
 
 English: [VERIFICATION.md](VERIFICATION.md)
 
-该工具通过三层逻辑判断 `config_file_path` YAML 设置是否生效。不同参数的额外验证方式不同。
+该工具通过三层逻辑判断 `config_file_path` YAML 设置是否生效。不同参数的验证方式不同。
 
 ## 1. 参数层验证
 
-YAML 顶层的每个 key 都会先和启动后的驱动参数做比较。
+YAML 顶层的每个 key 都会和启动后的驱动参数做比较。
 
-- ROS2：`ros2 param get /<camera_name>/ob_camera_node <param>`
-- ROS1：`rosparam get /<camera_name>/<camera_name>/<param>`
+- ROS 2：`ros2 param dump /<camera_name>/<camera_name>`（批量查询，失败时退回逐个查询）
+- ROS 1：`rosparam get /<camera_name>/<camera_name>`（批量查询，失败时退回逐个查询）
 
-工具会在比较前统一 bool、数字字符串等类型，所以 `true` 和 `"true"` 会被视为相同。
+比较前会统一 bool 和数字字符串类型，`true` 和 `"true"` 视为相同。
 
-如果脚本能解析到 launch 文件，YAML 中未在该 launch 声明的 key 会标记为
-`skipped`。
+如果脚本能解析到 launch 文件，YAML 中未在该 launch 声明的 key 会标记为 `skipped`。
 
 ## 2. Topic 行为验证
 
@@ -36,30 +35,31 @@ YAML 顶层的每个 key 都会先和启动后的驱动参数做比较。
 
 ## 3. Getter Service 验证
 
-以下参数会在当前设备和驱动暴露对应只读 getter service 时，继续读取设备状态验证。
+以下参数会通过只读 getter service 读回设备真实状态来验证。仅在当前驱动和设备
+暴露对应 service 时执行。
 
-| YAML key | Getter service | ROS1 类型 | ROS2 类型 |
-| --- | --- | --- | --- |
-| `color_exposure` | `/<camera_name>/get_color_exposure` | `orbbec_camera/GetInt32` | `orbbec_camera_msgs/srv/GetInt32` |
-| `color_gain` | `/<camera_name>/get_color_gain` | `orbbec_camera/GetInt32` | `orbbec_camera_msgs/srv/GetInt32` |
-| `color_white_balance` | `/<camera_name>/get_white_balance` | `orbbec_camera/GetInt32` | `orbbec_camera_msgs/srv/GetInt32` |
-| `depth_exposure` | `/<camera_name>/get_depth_exposure` | `orbbec_camera/GetInt32` | `orbbec_camera_msgs/srv/GetInt32` |
-| `depth_gain` | `/<camera_name>/get_depth_gain` | `orbbec_camera/GetInt32` | `orbbec_camera_msgs/srv/GetInt32` |
-| `ir_exposure` | `/<camera_name>/get_ir_exposure` | `orbbec_camera/GetInt32` | `orbbec_camera_msgs/srv/GetInt32` |
-| `ir_gain` | `/<camera_name>/get_ir_gain` | `orbbec_camera/GetInt32` | `orbbec_camera_msgs/srv/GetInt32` |
-| `left_ir_exposure` | `/<camera_name>/get_left_ir_exposure` | `orbbec_camera/GetInt32` | `orbbec_camera_msgs/srv/GetInt32` |
-| `left_ir_gain` | `/<camera_name>/get_left_ir_gain` | `orbbec_camera/GetInt32` | `orbbec_camera_msgs/srv/GetInt32` |
-| `right_ir_exposure` | `/<camera_name>/get_right_ir_exposure` | `orbbec_camera/GetInt32` | `orbbec_camera_msgs/srv/GetInt32` |
-| `right_ir_gain` | `/<camera_name>/get_right_ir_gain` | `orbbec_camera/GetInt32` | `orbbec_camera_msgs/srv/GetInt32` |
-| `enable_laser` | `/<camera_name>/get_laser_status` | `orbbec_camera/GetBool` | `orbbec_camera_msgs/srv/GetBool` |
-| `enable_ldp` | `/<camera_name>/get_ldp_status` | `orbbec_camera/GetBool` | `orbbec_camera_msgs/srv/GetBool` |
-| `enable_ptp_config` | `/<camera_name>/get_ptp_config` | `orbbec_camera/GetBool` | `orbbec_camera_msgs/srv/GetBool` |
-| `point_cloud_decimation_filter_factor` | `/<camera_name>/get_point_cloud_decimation` | `orbbec_camera/GetInt32` | `orbbec_camera_msgs/srv/GetInt32` |
+| YAML key | Getter service |
+| --- | --- |
+| `color_exposure` | `/<camera_name>/get_color_exposure` |
+| `color_gain` | `/<camera_name>/get_color_gain` |
+| `color_white_balance` | `/<camera_name>/get_white_balance` |
+| `depth_exposure` | `/<camera_name>/get_depth_exposure` |
+| `depth_gain` | `/<camera_name>/get_depth_gain` |
+| `ir_exposure` | `/<camera_name>/get_ir_exposure` |
+| `ir_gain` | `/<camera_name>/get_ir_gain` |
+| `left_ir_exposure` | `/<camera_name>/get_left_ir_exposure` |
+| `left_ir_gain` | `/<camera_name>/get_left_ir_gain` |
+| `right_ir_exposure` | `/<camera_name>/get_right_ir_exposure` |
+| `right_ir_gain` | `/<camera_name>/get_right_ir_gain` |
+| `enable_laser` | `/<camera_name>/get_laser_status` |
+| `enable_ldp` | `/<camera_name>/get_ldp_status` |
+| `enable_ptp_config` | `/<camera_name>/get_ptp_config` |
+| `point_cloud_decimation_filter_factor` | `/<camera_name>/get_point_cloud_decimation` |
 
-`-1`、空字符串、`ANY`、`none`、`null` 这类占位值在 service 层会被跳过，
-因为驱动可能会使用设备默认值或自动选择值。
+`-1`、空字符串、`ANY`、`none`、`null` 等占位值在 service 层会被跳过，
+驱动会使用设备默认值。
 
-未暴露的 getter service 会记录为 `unsupported`，不会直接导致测试失败。
+未暴露的 getter service 会记录为 `unsupported`，不会导致测试失败。
 
 ## 4. 结果含义
 

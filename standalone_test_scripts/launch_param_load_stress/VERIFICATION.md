@@ -3,24 +3,24 @@
 中文文档: [VERIFICATION.zh-CN.md](VERIFICATION.zh-CN.md)
 
 This tool checks whether `config_file_path` YAML settings take effect in three
-layers. Different parameters use different extra checks.
+layers. Different parameters use different verification methods.
 
 ## 1. Parameter Check
 
-Every top-level YAML key is checked against the launched driver parameter.
+Every top-level YAML key is compared against the launched driver parameter.
 
-- ROS2: `ros2 param get /<camera_name>/ob_camera_node <param>`
-- ROS1: `rosparam get /<camera_name>/<camera_name>/<param>`
+- ROS 2: `ros2 param dump /<camera_name>/<camera_name>` (bulk, falls back to per-param)
+- ROS 1: `rosparam get /<camera_name>/<camera_name>` (bulk, falls back to per-param)
 
-The tool normalizes booleans and numeric strings before comparing, so `true`
-and `"true"` are treated as the same value.
+Booleans and numeric strings are normalized before comparing, so `true` and
+`"true"` are treated as equal.
 
-If the launch file can be resolved, YAML keys that are not declared by the
-launch file are marked `skipped`.
+If the launch file can be resolved, YAML keys not declared by it are marked
+`skipped`.
 
 ## 2. Topic Behavior Check
 
-Stream switch parameters are also checked by image topic behavior.
+Stream-switch parameters are also verified by image topic behavior.
 
 | YAML key | Topic |
 | --- | --- |
@@ -32,40 +32,40 @@ Stream switch parameters are also checked by image topic behavior.
 | `enable_left_color` | `/<camera_name>/left_color/image_raw` |
 | `enable_right_color` | `/<camera_name>/right_color/image_raw` |
 
-Expected `true`: one image message must be received before `--topic-timeout`.
+Expected `true`: one image message must be received within `--topic-timeout`.
 
 Expected `false`: no image message should be received during the disabled-stream
-check.
+check window.
 
 ## 3. Getter Service Check
 
-The following parameters are also checked by read-only getter services when the
-current device and driver advertise them.
+The following parameters are also read back from the device via read-only getter
+services. The service check runs only when the service is advertised by the
+current driver and device.
 
-| YAML key | Getter service | ROS1 type | ROS2 type |
-| --- | --- | --- | --- |
-| `color_exposure` | `/<camera_name>/get_color_exposure` | `orbbec_camera/GetInt32` | `orbbec_camera_msgs/srv/GetInt32` |
-| `color_gain` | `/<camera_name>/get_color_gain` | `orbbec_camera/GetInt32` | `orbbec_camera_msgs/srv/GetInt32` |
-| `color_white_balance` | `/<camera_name>/get_white_balance` | `orbbec_camera/GetInt32` | `orbbec_camera_msgs/srv/GetInt32` |
-| `depth_exposure` | `/<camera_name>/get_depth_exposure` | `orbbec_camera/GetInt32` | `orbbec_camera_msgs/srv/GetInt32` |
-| `depth_gain` | `/<camera_name>/get_depth_gain` | `orbbec_camera/GetInt32` | `orbbec_camera_msgs/srv/GetInt32` |
-| `ir_exposure` | `/<camera_name>/get_ir_exposure` | `orbbec_camera/GetInt32` | `orbbec_camera_msgs/srv/GetInt32` |
-| `ir_gain` | `/<camera_name>/get_ir_gain` | `orbbec_camera/GetInt32` | `orbbec_camera_msgs/srv/GetInt32` |
-| `left_ir_exposure` | `/<camera_name>/get_left_ir_exposure` | `orbbec_camera/GetInt32` | `orbbec_camera_msgs/srv/GetInt32` |
-| `left_ir_gain` | `/<camera_name>/get_left_ir_gain` | `orbbec_camera/GetInt32` | `orbbec_camera_msgs/srv/GetInt32` |
-| `right_ir_exposure` | `/<camera_name>/get_right_ir_exposure` | `orbbec_camera/GetInt32` | `orbbec_camera_msgs/srv/GetInt32` |
-| `right_ir_gain` | `/<camera_name>/get_right_ir_gain` | `orbbec_camera/GetInt32` | `orbbec_camera_msgs/srv/GetInt32` |
-| `enable_laser` | `/<camera_name>/get_laser_status` | `orbbec_camera/GetBool` | `orbbec_camera_msgs/srv/GetBool` |
-| `enable_ldp` | `/<camera_name>/get_ldp_status` | `orbbec_camera/GetBool` | `orbbec_camera_msgs/srv/GetBool` |
-| `enable_ptp_config` | `/<camera_name>/get_ptp_config` | `orbbec_camera/GetBool` | `orbbec_camera_msgs/srv/GetBool` |
-| `point_cloud_decimation_filter_factor` | `/<camera_name>/get_point_cloud_decimation` | `orbbec_camera/GetInt32` | `orbbec_camera_msgs/srv/GetInt32` |
+| YAML key | Getter service |
+| --- | --- |
+| `color_exposure` | `/<camera_name>/get_color_exposure` |
+| `color_gain` | `/<camera_name>/get_color_gain` |
+| `color_white_balance` | `/<camera_name>/get_white_balance` |
+| `depth_exposure` | `/<camera_name>/get_depth_exposure` |
+| `depth_gain` | `/<camera_name>/get_depth_gain` |
+| `ir_exposure` | `/<camera_name>/get_ir_exposure` |
+| `ir_gain` | `/<camera_name>/get_ir_gain` |
+| `left_ir_exposure` | `/<camera_name>/get_left_ir_exposure` |
+| `left_ir_gain` | `/<camera_name>/get_left_ir_gain` |
+| `right_ir_exposure` | `/<camera_name>/get_right_ir_exposure` |
+| `right_ir_gain` | `/<camera_name>/get_right_ir_gain` |
+| `enable_laser` | `/<camera_name>/get_laser_status` |
+| `enable_ldp` | `/<camera_name>/get_ldp_status` |
+| `enable_ptp_config` | `/<camera_name>/get_ptp_config` |
+| `point_cloud_decimation_filter_factor` | `/<camera_name>/get_point_cloud_decimation` |
 
-Placeholder values such as `-1`, empty strings, `ANY`, `none`, or `null` are
-skipped at service level because the driver may use device defaults or automatic
-selection.
+Placeholder values (`-1`, empty string, `ANY`, `none`, `null`) are skipped at
+service level because the driver uses device defaults for those.
 
-Getter services that are not advertised are reported as `unsupported` and do
-not fail the run.
+Services that are not advertised are reported as `unsupported` and do not fail
+the run.
 
 ## 4. Result Meanings
 
@@ -73,10 +73,10 @@ not fail the run.
 | --- | --- |
 | `passed` | Expected and observed values or behavior match. |
 | `failed` | Parameter value, topic behavior, or advertised service readback does not match. |
-| `skipped` | YAML key is not declared by the resolved launch file, or service value is a placeholder. |
-| `unsupported` | Getter service is not advertised by the current driver/device. |
+| `skipped` | YAML key is not declared by the resolved launch file, or the service value is a placeholder. |
+| `unsupported` | Getter service is not advertised by the current driver or device. |
 
-You can print the same map from the script:
+Print this map directly from the script:
 
 ```bash
 python3 ./launch_param_load_stress.py --show-verification-map
