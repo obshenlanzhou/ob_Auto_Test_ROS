@@ -4,8 +4,8 @@ English: [README.md](README.md)
 
 ## 工具介绍
 
-通过 `config_file_path` 向 Orbbec ROS 相机驱动传入 YAML 配置文件，验证每项设置
-是否生效。支持多次重复压测和多相机场景。
+用于验证每次启动 launch 时，通过 `config_file_path` 传入的 YAML 配置是否生效。
+支持多次重复压测和多相机场景。
 
 每次 launch 周期从三个层面验证：
 
@@ -16,6 +16,10 @@ ROS 参数       — 批量查询并与配置 YAML 对比
 Getter service — 曝光、增益、白平衡、激光、LDP、PTP、点云降采样
                 通过 service 读回设备真实状态验证
 ```
+
+**局限性**：只有部分参数（见 [VERIFICATION.zh-CN.md](VERIFICATION.zh-CN.md)）支持通过
+getter service 读取设备实际状态来判断是否生效。其他参数仅验证 ROS 参数服务器中的值
+是否已更新，且 launch 启动过程无报错，则判定加载成功。
 
 ## 使用方法
 
@@ -29,7 +33,8 @@ python3 ./launch_param_load_stress/launch_param_load_stress.py \
   --ros-setup /opt/ros/humble/setup.bash \
   --driver-setup /path/to/camera_ws/install/setup.bash \
   --launch-file gemini_330_series.launch.py \
-  --config-file-path ./config/sample_config_file_path.yaml
+  --config-file-path ./config/sample_config_file_path.yaml \
+  --repeat 20
 ```
 
 ROS 1：
@@ -40,12 +45,13 @@ python3 ./launch_param_load_stress/launch_param_load_stress.py \
   --ros-setup /opt/ros/noetic/setup.bash \
   --driver-setup /path/to/camera_ws/devel/setup.bash \
   --launch-file gemini_330_series.launch \
-  --config-file-path ./config/sample_config_file_path.yaml
+  --config-file-path ./config/sample_config_file_path.yaml \
+  --repeat 20
 ```
 
-### 多相机与压测
+### 多相机
 
-多次传入 `--camera` 指定每台设备，用 `--repeat N` 连续运行多轮：
+多次传入 `--camera` 指定每台设备：
 
 ```bash
 python3 ./launch_param_load_stress/launch_param_load_stress.py \
@@ -70,7 +76,7 @@ python3 ./launch_param_load_stress/launch_param_load_stress.py \
 | `--startup-timeout SECS` | `30` | 等待设备初始化完成的最大秒数 |
 | `--topic-timeout SECS` | `20` | 等待每个已启用流 topic 的最大秒数 |
 | `--service-timeout SECS` | `15` | 每次参数/service 查询的最大秒数 |
-| `--save-images-count N` | `0` | 每台相机每个已启用流保存的图片数（`0` = 不存图） |
+| `--save-images-count N` | `1` | 每台相机每个已启用流保存的图片数（`0` = 不存图） |
 | `--jpg-quality Q` | `80` | 保存图片的 JPEG 压缩质量（1–100） |
 | `--skip-topic-check` | — | 跳过图像 topic 验证 |
 | `--skip-service-check` | — | 跳过 getter service 验证 |

@@ -1453,7 +1453,7 @@ def parse_args():
     parser.add_argument(
         "--save-images-count",
         type=int,
-        default=0,
+        default=1,
         metavar="N",
         help="Save N images per enabled stream topic per camera (0 = disabled)",
     )

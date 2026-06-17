@@ -4,9 +4,9 @@
 
 ## Introduction
 
-Load a YAML config file into the Orbbec ROS camera driver via `config_file_path`
-and verify that every setting takes effect. Supports repeated cycles for stress
-testing and multi-camera setups.
+Verifies that the YAML config passed via `config_file_path` takes effect on
+every launch start. Supports repeated cycles for stress testing and multi-camera
+setups.
 
 Each launch cycle is verified at three levels:
 
@@ -17,6 +17,11 @@ Image topics    — stream-enable flags (enable_color, enable_depth, …)
 Getter services — exposure, gain, white balance, laser, LDP, PTP, and
                   point cloud decimation read back from the device
 ```
+
+**Limitation**: only a subset of parameters (see [VERIFICATION.md](VERIFICATION.md))
+support getter service read-back that reflects actual device state. All other
+parameters are verified only by checking that the ROS parameter server was
+updated and that the launch produced no errors.
 
 ## Usage
 
@@ -30,7 +35,8 @@ python3 ./launch_param_load_stress/launch_param_load_stress.py \
   --ros-setup /opt/ros/humble/setup.bash \
   --driver-setup /path/to/camera_ws/install/setup.bash \
   --launch-file gemini_330_series.launch.py \
-  --config-file-path ./config/sample_config_file_path.yaml
+  --config-file-path ./config/sample_config_file_path.yaml \
+  --repeat 20
 ```
 
 ROS 1:
@@ -41,12 +47,13 @@ python3 ./launch_param_load_stress/launch_param_load_stress.py \
   --ros-setup /opt/ros/noetic/setup.bash \
   --driver-setup /path/to/camera_ws/devel/setup.bash \
   --launch-file gemini_330_series.launch \
-  --config-file-path ./config/sample_config_file_path.yaml
+  --config-file-path ./config/sample_config_file_path.yaml \
+  --repeat 20
 ```
 
-### Multi-Camera and Stress Test
+### Multi-Camera
 
-Use `--camera` once per device and `--repeat N` to run multiple cycles:
+Use `--camera` once per device:
 
 ```bash
 python3 ./launch_param_load_stress/launch_param_load_stress.py \
@@ -71,7 +78,7 @@ per-camera `config_file_path`.
 | `--startup-timeout SECS` | `30` | Max wait for device initialization |
 | `--topic-timeout SECS` | `20` | Max wait for each enabled stream topic |
 | `--service-timeout SECS` | `15` | Max wait for each param/service query |
-| `--save-images-count N` | `0` | Images saved per enabled topic per camera (`0` = disabled) |
+| `--save-images-count N` | `1` | Images saved per enabled topic per camera (`0` = disabled) |
 | `--jpg-quality Q` | `80` | JPEG quality for saved images (1–100) |
 | `--skip-topic-check` | — | Skip image topic verification |
 | `--skip-service-check` | — | Skip getter service verification |
