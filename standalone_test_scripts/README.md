@@ -30,6 +30,12 @@ standalone_test_scripts/
 │   ├── README.zh-CN.md
 │   ├── launch_restart_stream_check.py
 │   └── results/                  # Generated at runtime
+├── launch_param_load_stress/
+│   ├── README.md
+│   ├── README.zh-CN.md
+│   ├── launch_param_load_stress.py
+│   ├── config/
+│   └── results/                  # Generated at runtime
 ```
 
 Each script directory owns its generated `results/` directory.
@@ -48,6 +54,7 @@ Scripts can source ROS and camera driver environments by command-line options:
 | Script directory | Purpose | Details |
 | --- | --- | --- |
 | [launch_restart_stream_check](launch_restart_stream_check/README.md) | Repeatedly restart a launch file and check image stream recovery | Launch restart stream stability stress test |
+| [launch_param_load_stress](launch_param_load_stress/README.md) | Stress-test launch parameter loading via `config_file_path` | Verifies ROS parameters, image topics, and getter services; supports multi-camera and repeated runs |
 | [export_load_stress_test](export_load_stress_test/README.md) | Alternate JSON import/export and compare parameters | Config JSON import/export consistency stress test |
 | [preset_upgrade_stress_test](preset_upgrade_stress_test/README.md) | Alternately update optional depth presets and verify streams | Optional depth preset upgrade stress test |
 

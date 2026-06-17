@@ -29,6 +29,12 @@ standalone_test_scripts/
 │   ├── README.zh-CN.md
 │   ├── launch_restart_stream_check.py
 │   └── results/                  # 运行时生成
+├── launch_param_load_stress/
+│   ├── README.md
+│   ├── README.zh-CN.md
+│   ├── launch_param_load_stress.py
+│   ├── config/
+│   └── results/                  # 运行时生成
 ```
 
 各脚本目录下的 `results/` 是测试运行时生成的结果目录，用于保存日志和结果文件。
@@ -47,6 +53,7 @@ standalone_test_scripts/
 | 脚本目录 | 用途 | 说明 |
 | --- | --- | --- |
 | [launch_restart_stream_check](launch_restart_stream_check/README.zh-CN.md) | 反复重启 launch 并检查图像流恢复 | 适合重启出流稳定性压测 |
+| [launch_param_load_stress](launch_param_load_stress/README.zh-CN.md) | 通过 `config_file_path` 压测 launch 参数加载 | 验证 ROS 参数、图像 topic 和 getter service，支持多相机和压测重复 |
 | [export_load_stress_test](export_load_stress_test/README.zh-CN.md) | 交替导入/导出 JSON 并比较参数 | 适合参数导入导出一致性压测 |
 | [preset_upgrade_stress_test](preset_upgrade_stress_test/README.zh-CN.md) | 交替升级 preset 并验证出流 | 适合 optional depth preset 升级压测 |
 
