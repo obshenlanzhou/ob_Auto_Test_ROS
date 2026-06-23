@@ -191,7 +191,6 @@ def run_command_to_log(
             assert process.stdout is not None
             for line in process.stdout:
                 output_chunks.append(line)
-                print(line, end="", flush=True)
                 handle.write(line)
                 handle.flush()
             return process.wait(), "".join(output_chunks)
@@ -357,6 +356,7 @@ def run(args) -> int:
             firmware_path = firmwares[test_index % len(firmwares)]
             test_index += 1
             test_name = f"test_{test_index:04d}"
+            progress_label = f"{test_index}/{test_count}" if test_count > 0 else f"{test_index}/duration"
             log_file = results_dir / "logs" / test_name / "update.log"
             command = build_update_command(
                 ros_version=args.ros_version,
@@ -384,7 +384,7 @@ def run(args) -> int:
             }
             result["tests"].append(test_record)
 
-            emit(f"{test_name}: update firmware from {firmware_path}")
+            emit(f"{test_name} ({progress_label}): update firmware from {firmware_path.name}")
             returncode, output = run_command_to_log(command, runtime_env, results_dir, log_file)
             test_record["returncode"] = returncode
             success_log = parse_success_log(output)
@@ -411,7 +411,10 @@ def run(args) -> int:
             )
             test_record["ended_at"] = datetime.now().isoformat(timespec="seconds")
             result["passed_tests"] += 1
-            emit(f"{test_name}: passed, updated {success_log['updated']}/{success_log['total']}")
+            emit(
+                f"{test_name} ({progress_label}): passed, "
+                f"updated {success_log['updated']}/{success_log['total']}"
+            )
 
             if restart_delay > 0 and (test_count == 0 or test_index < test_count):
                 time.sleep(restart_delay)
