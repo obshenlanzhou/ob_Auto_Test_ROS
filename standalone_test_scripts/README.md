@@ -25,6 +25,11 @@ standalone_test_scripts/
 │   ├── preset_upgrade_stress_test.py
 │   ├── config/
 │   └── results/                  # Generated at runtime
+├── firmware_update_stress_test/
+│   ├── README.md
+│   ├── README.zh-CN.md
+│   ├── firmware_update_stress_test.py
+│   └── results/                  # Generated at runtime
 ├── launch_restart_stream_check/
 │   ├── README.md
 │   ├── README.zh-CN.md
@@ -57,6 +62,7 @@ Scripts can source ROS and camera driver environments by command-line options:
 | [launch_param_load_stress](launch_param_load_stress/README.md) | Stress-test launch parameter loading via `config_file_path` | Verifies ROS parameters, image topics, and getter services; supports multi-camera and repeated runs |
 | [export_load_stress_test](export_load_stress_test/README.md) | Alternate JSON import/export and compare parameters | Config JSON import/export consistency stress test |
 | [preset_upgrade_stress_test](preset_upgrade_stress_test/README.md) | Alternately update optional depth presets and verify streams | Optional depth preset upgrade stress test |
+| [firmware_update_stress_test](firmware_update_stress_test/README.md) | Repeatedly call `firmware_update_tool --firmware_path` and check success logs | Firmware update command stress test; supports serial-number batch updates |
 
 ## Adding New Standalone Scripts
 

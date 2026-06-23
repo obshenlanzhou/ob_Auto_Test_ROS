@@ -24,6 +24,11 @@ standalone_test_scripts/
 │   ├── preset_upgrade_stress_test.py
 │   ├── config/
 │   └── results/                  # 运行时生成
+├── firmware_update_stress_test/
+│   ├── README.md
+│   ├── README.zh-CN.md
+│   ├── firmware_update_stress_test.py
+│   └── results/                  # 运行时生成
 ├── launch_restart_stream_check/
 │   ├── README.md
 │   ├── README.zh-CN.md
@@ -56,6 +61,7 @@ standalone_test_scripts/
 | [launch_param_load_stress](launch_param_load_stress/README.zh-CN.md) | 通过 `config_file_path` 压测 launch 参数加载 | 验证 ROS 参数、图像 topic 和 getter service，支持多相机和压测重复 |
 | [export_load_stress_test](export_load_stress_test/README.zh-CN.md) | 交替导入/导出 JSON 并比较参数 | 适合参数导入导出一致性压测 |
 | [preset_upgrade_stress_test](preset_upgrade_stress_test/README.zh-CN.md) | 交替升级 preset 并验证出流 | 适合 optional depth preset 升级压测 |
+| [firmware_update_stress_test](firmware_update_stress_test/README.zh-CN.md) | 反复调用 `firmware_update_tool --firmware_path` 并检查成功日志 | 适合固件升级命令压测，支持按 SN 批量升级 |
 
 ## 新增独立脚本规范
 
