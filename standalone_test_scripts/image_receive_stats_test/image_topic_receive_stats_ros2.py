@@ -41,6 +41,7 @@ DEFAULT_QUEUE_SIZE = 10
 DEFAULT_WARMUP_SEC = 2.0
 DEFAULT_SAVE_CSV = True
 DEFAULT_QOS = "sensor_data"
+TOOL_VERSION = "0.1"
 SUMMARY_UPDATE_INTERVAL_SEC = 10.0
 MIN_WARNING_CHECK_INTERVAL_SEC = 0.05
 MAX_WARNING_CHECK_INTERVAL_SEC = 1.0
@@ -122,6 +123,11 @@ def parse_args():
         default=None,
         choices=["sensor_data", "default", "reliable", "best_effort"],
         help="Subscriber QoS profile.",
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version="%(prog)s {}".format(TOOL_VERSION),
     )
     return parser.parse_args(remove_ros_args()[1:])
 
@@ -650,6 +656,7 @@ class MultiImageReceiveStatsNode(Node):
             self.warning_timer_callback,
         )
         logger = self.get_logger()
+        logger.info("Tool version: {}".format(TOOL_VERSION))
         logger.info("Recording image receive stats to directory: {}".format(self.output_dir))
         logger.info("Recording metadata to: {}".format(self.metadata_file))
         logger.info("Recording warning log to: {}".format(self.warning_log_writer.log_file))
@@ -683,6 +690,7 @@ class MultiImageReceiveStatsNode(Node):
             self.metadata_file,
             {
                 "started_at": datetime.now().isoformat(),
+                "tool_version": TOOL_VERSION,
                 "topics": self.topics,
                 "output_dir": self.output_dir,
                 "warning_interval_sec": self.warning_interval_sec,

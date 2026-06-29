@@ -31,6 +31,7 @@ DEFAULT_QUEUE_SIZE = 10
 DEFAULT_BUFF_SIZE_MB = 16
 DEFAULT_WARMUP_SEC = 2.0
 DEFAULT_SAVE_CSV = True
+TOOL_VERSION = "0.1"
 SUMMARY_UPDATE_INTERVAL_SEC = 10.0
 MIN_WARNING_CHECK_INTERVAL_SEC = 0.05
 MAX_WARNING_CHECK_INTERVAL_SEC = 1.0
@@ -116,6 +117,11 @@ def parse_args():
         type=int,
         default=None,
         help="Subscriber socket buffer size in MB.",
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version="%(prog)s {}".format(TOOL_VERSION),
     )
     return parser.parse_args(rospy.myargv()[1:])
 
@@ -643,6 +649,7 @@ class MultiImageReceiveStatsNode:
             self.warning_timer_callback,
         )
         rospy.on_shutdown(self.close)
+        rospy.loginfo("Tool version: %s", TOOL_VERSION)
         rospy.loginfo("Recording image receive stats to directory: %s", self.output_dir)
         rospy.loginfo("Recording metadata to: %s", self.metadata_file)
         rospy.loginfo("Recording warning log to: %s", self.warning_log_writer.log_file)
@@ -678,6 +685,7 @@ class MultiImageReceiveStatsNode:
             self.metadata_file,
             {
                 "started_at": datetime.now().isoformat(),
+                "tool_version": TOOL_VERSION,
                 "topics": self.topics,
                 "output_dir": self.output_dir,
                 "warning_interval_sec": self.warning_interval_sec,
@@ -793,8 +801,8 @@ class MultiImageReceiveStatsNode:
 
 
 def main():
-    rospy.init_node("image_topic_receive_stats", anonymous=True)
     args = parse_args()
+    rospy.init_node("image_topic_receive_stats", anonymous=True)
 
     topics_param = private_param_or_default("topics", args.topics, "")
     configured_topics = parse_topics(topics_param)
