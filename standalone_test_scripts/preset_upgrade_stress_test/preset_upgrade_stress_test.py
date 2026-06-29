@@ -20,6 +20,7 @@ from typing import Any, Dict, List, Optional
 ENV_READY_VAR = "PRESET_UPGRADE_STRESS_TEST_ENV_READY"
 INTERRUPTED = False
 SCRIPT_DIR = Path(__file__).resolve().parent
+TOOL_VERSION = "0.1"
 DEFAULT_PRESET_A_PATH = SCRIPT_DIR / "config" / "g336x_K_High_Confidence_0.0.2.bin"
 DEFAULT_PRESET_B_PATH = SCRIPT_DIR / "config" / "g336x_K_High_Accuracy_0.0.2.bin"
 DEFAULT_IMAGE_TOPIC_TEMPLATES = [
@@ -677,6 +678,7 @@ def build_summary(result: Dict[str, Any]) -> str:
         "## Result",
         "",
         f"- Status: {result.get('status', '')}",
+        f"- Tool version: {result.get('tool_version', '')}",
         f"- Passed tests: {result.get('passed_tests', 0)}",
         f"- Planned tests: {planned_tests}",
         f"- Completed tests: {len(tests)}",
@@ -869,6 +871,7 @@ def run(args) -> int:
     emit = StatusLogger()
     result: Dict[str, Any] = {
         "status": "passed",
+        "tool_version": TOOL_VERSION,
         "ros_version": args.ros_version,
         "launch_file": launch_file,
         "launch_package": args.launch_package,
@@ -891,6 +894,7 @@ def run(args) -> int:
         "elapsed_seconds": 0.0,
     }
 
+    emit(f"tool version: {TOOL_VERSION}")
     emit(f"results dir: {results_dir}")
     emit(f"test count: {test_count} ({'duration mode' if test_count == 0 else 'round mode'})")
     emit(f"cameras: {', '.join(camera.name for camera in cameras)}")
@@ -1142,6 +1146,11 @@ def parse_args():
     )
     parser.add_argument("--queue-size", type=int, default=10)
     parser.add_argument("--results-dir", default="")
+    parser.add_argument(
+        "--version",
+        action="version",
+        version="%(prog)s {}".format(TOOL_VERSION),
+    )
     return parser.parse_args()
 
 

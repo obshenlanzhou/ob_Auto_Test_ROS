@@ -17,6 +17,7 @@ from typing import Any, Dict, List, Optional
 
 ENV_READY_VAR = "EXPORT_LOAD_STRESS_TEST_ENV_READY"
 INTERRUPTED = False
+TOOL_VERSION = "0.1"
 DEFAULT_CONFIG_JSONS = [
     Path(__file__).resolve().parent / "config" / "Gemini_336L_1.json",
     Path(__file__).resolve().parent / "config" / "Gemini_336L_2.json",
@@ -946,6 +947,7 @@ def build_summary(result: Dict[str, Any]) -> str:
         "## Result",
         "",
         f"- Status: {result.get('status', '')}",
+        f"- Tool version: {result.get('tool_version', '')}",
         f"- Passed tests: {result.get('passed_tests', 0)}",
         f"- Planned tests: {result.get('test_count', 0)}",
         f"- Completed tests: {len(tests)}",
@@ -1107,6 +1109,7 @@ def run(args) -> int:
 
     result: Dict[str, Any] = {
         "status": "passed",
+        "tool_version": TOOL_VERSION,
         "ros_version": args.ros_version,
         "launch_file": args.launch_file,
         "launch_package": args.launch_package,
@@ -1126,6 +1129,7 @@ def run(args) -> int:
         "elapsed_seconds": 0.0,
     }
 
+    emit(f"tool version: {TOOL_VERSION}")
     emit(f"results dir: {results_dir}")
     emit(f"test count: {test_count}")
     emit(f"cameras: {', '.join(camera.name for camera in cameras)}")
@@ -1406,6 +1410,11 @@ def parse_args():
     parser.add_argument("--export-service-type", default="orbbec_camera_msgs/srv/SetString")
     parser.add_argument("--service-timeout", default="30")
     parser.add_argument("--results-dir", default="")
+    parser.add_argument(
+        "--version",
+        action="version",
+        version="%(prog)s {}".format(TOOL_VERSION),
+    )
     return parser.parse_args()
 
 

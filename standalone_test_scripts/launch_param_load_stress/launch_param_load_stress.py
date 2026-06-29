@@ -26,6 +26,7 @@ else:
 
 ENV_READY_VAR = "LAUNCH_PARAM_LOAD_STRESS_ENV_READY"
 INTERRUPTED = False
+TOOL_VERSION = "0.1"
 
 
 @dataclass
@@ -1106,6 +1107,7 @@ def build_summary(result: Dict[str, Any]) -> str:
         "## Result",
         "",
         f"- Status: {result.get('status', '')}",
+        f"- Tool version: {result.get('tool_version', '')}",
         f"- ROS version: {result.get('ros_version', '')}",
         f"- Launch file: {result.get('launch_file', '')}",
         f"- Runs: {repeat_passed}/{repeat_total} passed",
@@ -1276,6 +1278,7 @@ def run(args) -> int:
 
     result: Dict[str, Any] = {
         "status": "failed",
+        "tool_version": TOOL_VERSION,
         "ros_version": args.ros_version,
         "cameras": [asdict(c) for c in cameras],
         "launch_package": args.launch_package,
@@ -1286,6 +1289,7 @@ def run(args) -> int:
         "runs": [],
     }
 
+    emit(f"tool version: {TOOL_VERSION}")
     emit(f"results dir: {results_dir}")
     emit(f"cameras: {', '.join(c.name for c in cameras)}")
     emit(f"repeat: {repeat_total}")
@@ -1463,6 +1467,11 @@ def parse_args():
         default=80,
         metavar="Q",
         help="JPEG compression quality 1-100 for saved images (default: 80)",
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version="%(prog)s {}".format(TOOL_VERSION),
     )
     args = parser.parse_args()
     if not args.show_verification_map:

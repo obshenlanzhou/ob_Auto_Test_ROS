@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Optional
 ENV_READY_VAR = "FIRMWARE_UPDATE_STRESS_TEST_ENV_READY"
 INTERRUPTED = False
 SCRIPT_DIR = Path(__file__).resolve().parent
+TOOL_VERSION = "0.1"
 SUCCESS_RE = re.compile(
     r"Firmware tool completed successfully\. Updated (?P<updated>\d+)/(?P<total>\d+) target device\(s\)\."
 )
@@ -237,6 +238,7 @@ def build_summary(result: Dict[str, Any]) -> str:
         "# Firmware Update Stress Test Summary",
         "",
         f"- Status: `{result.get('status')}`",
+        f"- Tool version: `{result.get('tool_version', '')}`",
         f"- ROS version: `{result.get('ros_version')}`",
         f"- Passed tests: `{result.get('passed_tests', 0)}`",
         f"- Total tests recorded: `{len(tests)}`",
@@ -314,6 +316,7 @@ def run(args) -> int:
     emit = StatusLogger()
     result: Dict[str, Any] = {
         "status": "passed",
+        "tool_version": TOOL_VERSION,
         "ros_version": args.ros_version,
         "firmwares": [str(path) for path in firmwares],
         "serial_numbers": serial_numbers,
@@ -330,6 +333,7 @@ def run(args) -> int:
         "elapsed_seconds": 0.0,
     }
 
+    emit(f"tool version: {TOOL_VERSION}")
     emit(f"results dir: {results_dir}")
     emit(f"firmwares: {', '.join(path.name for path in firmwares)}")
     if serial_numbers:
@@ -497,6 +501,11 @@ def parse_args():
     parser.add_argument("--sdk-log-level", default="off", help="Passed to firmware_update_tool")
     parser.add_argument("--continue-on-error", action="store_true", help="Passed to firmware_update_tool")
     parser.add_argument("--results-dir", default="")
+    parser.add_argument(
+        "--version",
+        action="version",
+        version="%(prog)s {}".format(TOOL_VERSION),
+    )
     return parser.parse_args()
 
 

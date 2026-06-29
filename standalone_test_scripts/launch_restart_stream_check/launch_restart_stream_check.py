@@ -21,6 +21,7 @@ DEFAULT_CAMERA_LAUNCH = {
 }
 ENV_READY_VAR = "LAUNCH_RESTART_STREAM_CHECK_ENV_READY"
 INTERRUPTED = False
+TOOL_VERSION = "0.1"
 
 
 def timestamp() -> str:
@@ -518,6 +519,7 @@ def build_summary(result: Dict[str, Any]) -> str:
         "## Result",
         "",
         f"- Status: {result.get('status', '')}",
+        f"- Tool version: {result.get('tool_version', '')}",
         f"- Successful restarts: {result.get('successful_restarts', 0)}",
         f"- Launch attempts: {result.get('launch_attempts', 0)}",
         f"- Elapsed seconds: {float(result.get('elapsed_seconds', 0.0) or 0.0):.1f}",
@@ -603,6 +605,7 @@ def run(args) -> int:
 
     result: Dict[str, Any] = {
         "status": "passed",
+        "tool_version": TOOL_VERSION,
         "ros_version": args.ros_version,
         "command": command,
         "launch_file": launch_file,
@@ -622,6 +625,7 @@ def run(args) -> int:
         "attempts": [],
     }
 
+    emit(f"tool version: {TOOL_VERSION}")
     emit(f"results dir: {results_dir}")
     emit("launch command: " + " ".join(shlex.quote(item) for item in command))
     emit(f"planned duration: {duration_seconds:.1f}s")
@@ -820,6 +824,11 @@ def parse_args():
     parser.add_argument("--restart-delay", default="2", help="Delay seconds between stop and next start")
     parser.add_argument("--queue-size", type=int, default=10)
     parser.add_argument("--results-dir", default="")
+    parser.add_argument(
+        "--version",
+        action="version",
+        version="%(prog)s {}".format(TOOL_VERSION),
+    )
     return parser.parse_args()
 
 
