@@ -14,6 +14,7 @@ disabled.
 """
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 import csv
 from datetime import datetime
 import json
@@ -596,6 +597,12 @@ class MultiImageReceiveStatsNode(Node):
         self.summary_file = os.path.join(self.output_dir, "summary.csv")
         self.metadata_file = os.path.join(self.output_dir, "metadata.json")
         self.summary_update_lock = threading.Lock()
+        self.summary_future_lock = threading.Lock()
+        self.summary_future = None
+        self.summary_executor = ThreadPoolExecutor(
+            max_workers=1,
+            thread_name_prefix="image_receive_summary",
+        )
         self.callback_condition = threading.Condition()
         self.active_callback_count = 0
         self.close_lock = threading.Lock()
@@ -712,16 +719,29 @@ class MultiImageReceiveStatsNode(Node):
             return rows
 
     def summary_timer_callback(self):
-        with self.summary_update_lock:
+        with self.summary_future_lock:
             if self.closed:
                 return
-            try:
-                rows = self.collect_summary_rows()
-                write_csv_atomic(self.summary_file, SUMMARY_HEADER, rows)
-            except Exception as exc:
-                self.get_logger().error(
-                    "Failed to update summary CSV {}: {}".format(self.summary_file, exc)
-                )
+            if self.summary_future is not None:
+                if not self.summary_future.done():
+                    return
+                try:
+                    self.summary_future.result()
+                except Exception as exc:
+                    self.get_logger().error(
+                        "Failed to update summary CSV {}: {}".format(
+                            self.summary_file,
+                            exc,
+                        )
+                    )
+            self.summary_future = self.summary_executor.submit(self.write_summary)
+
+    def wait_for_pending_summary_update(self):
+        with self.summary_future_lock:
+            summary_future = self.summary_future
+            self.summary_future = None
+        if summary_future is not None:
+            summary_future.result()
 
     def warning_timer_callback(self):
         now_steady_us = steady_time_us()
@@ -773,6 +793,16 @@ class MultiImageReceiveStatsNode(Node):
                 while self.active_callback_count > 0:
                     self.callback_condition.wait()
 
+            try:
+                self.wait_for_pending_summary_update()
+            except Exception as exc:
+                self.get_logger().error(
+                    "Failed to complete pending summary CSV update {}: {}".format(
+                        self.summary_file,
+                        exc,
+                    )
+                )
+
             with self.summary_update_lock:
                 rows = self.collect_summary_rows()
                 try:
@@ -784,12 +814,14 @@ class MultiImageReceiveStatsNode(Node):
                             exc,
                         )
                     )
-                self.log_summary(rows)
+                if rclpy.ok():
+                    self.log_summary(rows)
 
             for logger in self.loggers.values():
                 logger.close()
             if self.warning_log_writer is not None:
                 self.warning_log_writer.close()
+            self.summary_executor.shutdown(wait=True)
 
 
 def declare_parameters(node):
@@ -870,11 +902,15 @@ def main():
         parameter_node.destroy_node()
 
     try:
-        rclpy.spin(node)
+        try:
+            rclpy.spin(node)
+        except KeyboardInterrupt:
+            pass
     finally:
         node.close()
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == "__main__":
