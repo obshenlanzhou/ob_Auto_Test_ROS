@@ -27,9 +27,14 @@ ob_Auto_Test_ROS/
     ├── README.zh-CN.md
     ├── export_load_stress_test/
     │   └── results/              # 运行时生成
-    ├── preset_upgrade_stress_test/
+    ├── firmware_update_stress_test/
     │   └── results/              # 运行时生成
-    └── launch_restart_stream_check/
+    ├── image_receive_stats_test/
+    ├── launch_param_load_stress/
+    │   └── results/              # 运行时生成
+    ├── launch_restart_stream_check/
+    │   └── results/              # 运行时生成
+    └── preset_upgrade_stress_test/
         └── results/              # 运行时生成
 ```
 
@@ -65,6 +70,8 @@ http://127.0.0.1:8000
 cd /home/slz/ORBBEC/ob_Auto_Test_ROS/standalone_test_scripts
 python3 ./launch_restart_stream_check/launch_restart_stream_check.py --help
 ```
+
+更多独立脚本入口见 [standalone_test_scripts/README.zh-CN.md](standalone_test_scripts/README.zh-CN.md)。
 
 ## 适用场景
 

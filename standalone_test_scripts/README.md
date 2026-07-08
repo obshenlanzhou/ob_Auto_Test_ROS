@@ -41,18 +41,27 @@ standalone_test_scripts/
 │   ├── launch_param_load_stress.py
 │   ├── config/
 │   └── results/                  # Generated at runtime
+├── image_receive_stats_test/
+│   ├── README.md
+│   ├── README.zh-CN.md
+│   └── image_topic_receive_stats.py
 ```
 
-Each script directory owns its generated `results/` directory.
+Most stress-test script directories own their generated `results/` directory.
+`image_receive_stats_test` writes to the configured output directory instead.
 
 ## Environment
 
-Scripts can source ROS and camera driver environments by command-line options:
+Most scripts that launch the camera driver can source ROS and camera driver
+environments by command-line options:
 
 ```bash
 --ros-setup /opt/ros/humble/setup.bash
 --driver-setup /path/to/orbbec_camera_ws/install/setup.bash
 ```
+
+`image_receive_stats_test` is a subscriber-only tool. Source the ROS
+environment before running it.
 
 ## Script Index
 
@@ -63,6 +72,7 @@ Scripts can source ROS and camera driver environments by command-line options:
 | [export_load_stress_test](export_load_stress_test/README.md) | Alternate JSON import/export and compare parameters | Config JSON import/export consistency stress test |
 | [preset_upgrade_stress_test](preset_upgrade_stress_test/README.md) | Alternately update optional depth presets and verify streams | Optional depth preset upgrade stress test |
 | [firmware_update_stress_test](firmware_update_stress_test/README.md) | Repeatedly call `firmware_update_tool --firmware_path` and check success logs | Firmware update command stress test; supports serial-number batch updates |
+| [image_receive_stats_test](image_receive_stats_test/README.md) | Subscribe image topics and record receive-gap statistics | ROS1/ROS2 subscriber-side stream stall and timestamp monitor |
 
 ## Adding New Standalone Scripts
 
@@ -74,6 +84,6 @@ Include README.md and README.zh-CN.md in the script directory
 Use a clear name that describes the test scenario
 Keep it independent from orbbec_camera_auto_test framework modules
 Support --ros-version, --ros-setup, --driver-setup when ROS is needed
-Write the final result into a script-specific summary.md
+Write final results into script-specific files such as summary.md, summary.csv, or result.json
 Return 0 for pass and non-zero for failure
 ```

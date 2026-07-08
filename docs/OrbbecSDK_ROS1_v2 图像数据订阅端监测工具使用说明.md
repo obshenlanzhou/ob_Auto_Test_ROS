@@ -18,7 +18,7 @@
 当前项目中的脚本路径：
 
 ```text
-/home/yalian/work/camera/ob_Auto_Test_ROS/auto_test_ws/src/orbbec_camera_auto_test/scripts/image_topic_receive_stats.py
+standalone_test_scripts/image_receive_stats_test/image_topic_receive_stats.py
 ```
 
 ### 2.1 脚本用途
@@ -113,7 +113,7 @@ python3 "/path/to/image_topic_receive_stats.py" \
 当前项目路径示例：
 
 ```bash
-python3 "/home/yalian/work/camera/ob_Auto_Test_ROS/auto_test_ws/src/orbbec_camera_auto_test/scripts/image_topic_receive_stats.py" \
+python3 "/path/to/ob_Auto_Test_ROS/standalone_test_scripts/image_receive_stats_test/image_topic_receive_stats.py" \
   --topics "/camera_01/color/image_raw,/camera_01/depth/image_raw" \
   --output_dir "./image_receive_stats_test" \
   --warning_interval_sec 1.0 \
@@ -151,13 +151,14 @@ python3 "/path/to/image_topic_receive_stats.py" \
 ```text
 warnings.log
 summary.csv
+metadata.json
 camera_01_color_image_raw.csv
 camera_01_depth_image_raw.csv
 ```
 
 启用逐帧 CSV 时，每个话题对应一个逐帧 CSV 文件，方便单独分析某一路图像是否异常。文件名根据解析后的完整话题名称生成。使用 `--disable_csv` 时不会生成各话题的逐帧 CSV 文件，长时间运行可选择关闭逐帧 CSV，只看 `summary.csv` 和 `warnings.log`。
 
-`warnings.log` 和 `summary.csv` 始终生成。`summary.csv` 每 10 秒原子覆盖更新一次，并在节点正常退出时最终刷新；文件始终保持每个话题一行，不保存历史快照。
+`warnings.log`、`summary.csv` 和 `metadata.json` 始终生成。`summary.csv` 每 10 秒原子覆盖更新一次，并在节点正常退出时最终刷新；文件始终保持每个话题一行，不保存历史快照。`metadata.json` 保存启动时间、工具版本、话题列表、输出目录、warning 阈值、队列大小、预热时间和 ROS 发行版等运行元数据。
 
 ### 4.2 逐帧 CSV 字段说明
 

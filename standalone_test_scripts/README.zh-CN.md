@@ -40,18 +40,24 @@ standalone_test_scripts/
 │   ├── launch_param_load_stress.py
 │   ├── config/
 │   └── results/                  # 运行时生成
+├── image_receive_stats_test/
+│   ├── README.md
+│   ├── README.zh-CN.md
+│   └── image_topic_receive_stats.py
 ```
 
-各脚本目录下的 `results/` 是测试运行时生成的结果目录，用于保存日志和结果文件。
+多数压测脚本目录下的 `results/` 是测试运行时生成的结果目录，用于保存日志和结果文件。`image_receive_stats_test` 按启动参数写入指定输出目录。
 
 ## 环境
 
-脚本支持通过命令行参数加载 ROS 和相机驱动环境：
+多数会启动相机驱动的脚本支持通过命令行参数加载 ROS 和相机驱动环境：
 
 ```bash
 --ros-setup /opt/ros/humble/setup.bash
 --driver-setup /path/to/orbbec_camera_ws/install/setup.bash
 ```
+
+`image_receive_stats_test` 是订阅端监测工具，运行前需要先手动 source ROS 环境。
 
 ## 脚本索引
 
@@ -62,6 +68,7 @@ standalone_test_scripts/
 | [export_load_stress_test](export_load_stress_test/README.zh-CN.md) | 交替导入/导出 JSON 并比较参数 | 适合参数导入导出一致性压测 |
 | [preset_upgrade_stress_test](preset_upgrade_stress_test/README.zh-CN.md) | 交替升级 preset 并验证出流 | 适合 optional depth preset 升级压测 |
 | [firmware_update_stress_test](firmware_update_stress_test/README.zh-CN.md) | 反复调用 `firmware_update_tool --firmware_path` 并检查成功日志 | 适合固件升级命令压测，支持按 SN 批量升级 |
+| [image_receive_stats_test](image_receive_stats_test/README.zh-CN.md) | 订阅图像话题并统计接收间隔 | 适合 ROS1/ROS2 订阅端停流、卡顿和时间戳监测 |
 
 ## 新增独立脚本规范
 
@@ -73,6 +80,6 @@ standalone_test_scripts/
 脚本名清晰表达测试场景
 不要依赖 orbbec_camera_auto_test 框架模块
 需要 ROS 时支持 --ros-version、--ros-setup、--driver-setup
-最终结果写入该脚本专属 summary.md
+最终结果写入该脚本专属文件，例如 summary.md、summary.csv 或 result.json
 测试通过返回 0，失败返回非 0
 ```
