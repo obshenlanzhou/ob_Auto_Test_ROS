@@ -72,6 +72,7 @@ python3 ./launch_param_load_stress/launch_param_load_stress.py \
 
 | 参数 | 默认值 | 说明 |
 | --- | --- | --- |
+| `--launch-arg` | — | 额外的 launch 参数（如 `enable_depth=true`），可重复传入，格式 `KEY=VALUE` 或 `KEY:=VALUE` |
 | `--repeat N` | `1` | 完整启动→检查→停止的循环次数 |
 | `--startup-timeout SECS` | `30` | 等待设备初始化完成的最大秒数 |
 | `--topic-timeout SECS` | `20` | 等待每个已启用流 topic 的最大秒数 |

@@ -52,6 +52,7 @@ python3 ./export_load_stress_test/export_load_stress_test.py \
 
 | Option | Default | Description |
 | --- | --- | --- |
+| `--launch-arg` | — | Extra launch argument (e.g. `enable_ir=true`); repeatable, format `KEY=VALUE` or `KEY:=VALUE` |
 | `--test-count` | `10` | Number of import/export cycles |
 | `--save-image-count` | `1` | Images saved per topic per test (`0` = disabled) |
 | `--image-topic` | color + depth | Topics to monitor and save; repeatable |

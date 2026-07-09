@@ -74,6 +74,7 @@ per-camera `config_file_path`.
 
 | Option | Default | Description |
 | --- | --- | --- |
+| `--launch-arg` | — | Extra launch argument (e.g. `enable_depth=true`); repeatable, format `KEY=VALUE` or `KEY:=VALUE` |
 | `--repeat N` | `1` | Number of full launch–check–stop cycles |
 | `--startup-timeout SECS` | `30` | Max wait for device initialization |
 | `--topic-timeout SECS` | `20` | Max wait for each enabled stream topic |

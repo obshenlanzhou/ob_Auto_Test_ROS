@@ -51,6 +51,7 @@ python3 ./export_load_stress_test/export_load_stress_test.py \
 
 | 参数 | 默认值 | 说明 |
 | --- | --- | --- |
+| `--launch-arg` | — | 额外的 launch 参数（如 `enable_ir=true`），可重复传入，格式 `KEY=VALUE` 或 `KEY:=VALUE` |
 | `--test-count` | `10` | 导入导出轮次数 |
 | `--save-image-count` | `1` | 每轮每个 topic 保存的图片数（`0` = 不存图） |
 | `--image-topic` | color + depth | 监控和存图的 topic，可重复传入 |

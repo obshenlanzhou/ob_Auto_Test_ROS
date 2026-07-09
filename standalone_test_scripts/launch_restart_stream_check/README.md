@@ -67,6 +67,7 @@ python3 ./launch_restart_stream_check/launch_restart_stream_check.py \
 
 | Option | Default | Description |
 | --- | --- | --- |
+| `--launch-arg` | — | Extra launch argument (e.g. `enable_ir=true`); repeatable, format `KEY=VALUE` or `KEY:=VALUE` |
 | `--duration` | `1h` | Total run time (e.g. `30m`, `2h`) |
 | `--stable-seconds` | `5` | Continuous receive time required for a stream to be considered stable |
 | `--stream-timeout` | `20` | Seconds to wait for a stream to become stable per restart |
