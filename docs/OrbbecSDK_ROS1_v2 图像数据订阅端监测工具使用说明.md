@@ -113,7 +113,7 @@ python3 "/path/to/image_topic_receive_stats.py" \
 当前项目路径示例：
 
 ```bash
-python3 "/path/to/ob_Auto_Test_ROS/standalone_test_scripts/image_receive_stats_test/image_topic_receive_stats.py" \
+python3 "standalone_test_scripts/image_receive_stats_test/image_topic_receive_stats.py" \
   --topics "/camera_01/color/image_raw,/camera_01/depth/image_raw" \
   --output_dir "./image_receive_stats_test" \
   --warning_interval_sec 1.0 \

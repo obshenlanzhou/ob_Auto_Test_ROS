@@ -43,7 +43,7 @@ ob_Auto_Test_ROS/
 进入完整自动化测试工作区：
 
 ```bash
-cd /home/slz/ORBBEC/ob_Auto_Test_ROS/auto_test_ws
+cd "$HOME/ORBBEC/ob_Auto_Test_ROS/auto_test_ws"
 ```
 
 运行命令行测试：
@@ -67,7 +67,7 @@ http://127.0.0.1:8000
 运行独立测试脚本：
 
 ```bash
-cd /home/slz/ORBBEC/ob_Auto_Test_ROS/standalone_test_scripts
+cd "$HOME/ORBBEC/ob_Auto_Test_ROS/standalone_test_scripts"
 python3 ./launch_restart_stream_check/launch_restart_stream_check.py --help
 ```
 

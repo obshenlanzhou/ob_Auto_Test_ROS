@@ -17,8 +17,6 @@ from typing import Any, Dict, List, Optional
 
 DEFAULT_ROS_SETUP = "/opt/ros/humble/setup.bash"
 DEFAULT_ROS1_SETUP = "/opt/ros/one/setup.bash"
-DEFAULT_CAMERA_SETUP_DIR = Path("/home/slz/ORBBEC/orbbecsdk_ros2_v2-main/install")
-DEFAULT_ROS1_CAMERA_SETUP_DIR = Path("/home/slz/ORBBEC/orbbecsdk_ros1_v2-main/devel")
 
 
 def _first_existing_setup(base_dir: Path) -> str:
@@ -29,8 +27,20 @@ def _first_existing_setup(base_dir: Path) -> str:
     return str(base_dir / "setup.bash")
 
 
-DEFAULT_CAMERA_SETUP = _first_existing_setup(DEFAULT_CAMERA_SETUP_DIR)
-DEFAULT_ROS1_CAMERA_SETUP = _first_existing_setup(DEFAULT_ROS1_CAMERA_SETUP_DIR)
+def _setup_from_env(*names: str) -> str:
+    for name in names:
+        value = os.environ.get(name, "").strip()
+        if not value:
+            continue
+        path = Path(value).expanduser()
+        if path.is_dir():
+            return _first_existing_setup(path)
+        return str(path)
+    return ""
+
+
+DEFAULT_CAMERA_SETUP = _setup_from_env("ORBBEC_ROS2_CAMERA_SETUP", "ORBBEC_DRIVER_SETUP")
+DEFAULT_ROS1_CAMERA_SETUP = _setup_from_env("ORBBEC_ROS1_CAMERA_SETUP")
 DEFAULT_LAUNCH_FILES = {
     "2": {
         "gemini_305": "gemini305.launch.py",

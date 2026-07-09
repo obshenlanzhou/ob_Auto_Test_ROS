@@ -64,7 +64,7 @@
 如果 Orbbec 驱动已经编译并安装到某个工作区，先确认对应 `setup.bash` 路径，例如：
 
 ```bash
-/home/slz/ORBBEC/orbbecsdk_ros2_v2-main/install/setup.bash
+$HOME/ORBBEC/orbbecsdk_ros2_v2-main/install/setup.bash
 ```
 
 运行测试时可以通过以下两种方式提供：
@@ -82,7 +82,7 @@ ROS1 示例：
   --mode functional \
   --ros-version 1 \
   --ros-setup /opt/ros/one/setup.bash \
-  --driver-setup /home/slz/ORBBEC/orbbecsdk_ros1_v2-main/devel/setup.bash
+  --driver-setup "$HOME/ORBBEC/orbbecsdk_ros1_v2-main/devel/setup.bash"
 ```
 
 2. 通过环境变量提供：
@@ -98,7 +98,7 @@ export ORBBEC_DRIVER_SETUP=/path/to/install/setup.bash
 进入工作区目录：
 
 ```bash
-cd /home/slz/ORBBEC/ob_Auto_Test_ROS/auto_test_ws
+cd "$HOME/ORBBEC/ob_Auto_Test_ROS/auto_test_ws"
 ```
 
 ### 5.1 只跑功能测试
@@ -200,7 +200,7 @@ Web UI 中选择 `restart` 后，在底部 `Launch` 区域填写 `Launch file` �
 启动方式：
 
 ```bash
-cd /home/slz/ORBBEC/ob_Auto_Test_ROS/auto_test_ws
+cd "$HOME/ORBBEC/ob_Auto_Test_ROS/auto_test_ws"
 ./run_camera_auto_test_ui.sh
 ```
 
@@ -229,10 +229,11 @@ source <页面中填写的 Camera ROS setup.bash 或 setup.zsh>
 /opt/ros/one/setup.bash
 ```
 
-`Camera ROS setup.bash` 默认会自动填入：
+`Camera ROS setup.bash` 不写死个人路径。可以在页面中填写，也可以在启动 UI 前通过环境变量预置：
 
-```text
-/home/slz/ORBBEC/orbbecsdk_ros2_v2-main/install/setup.bash
+```bash
+export ORBBEC_ROS2_CAMERA_SETUP="$HOME/ORBBEC/orbbecsdk_ros2_v2-main/install/setup.bash"
+export ORBBEC_ROS1_CAMERA_SETUP="$HOME/ORBBEC/orbbecsdk_ros1_v2-main/devel/setup.bash"
 ```
 
 如果使用 `setup.zsh`，UI 后端会切换到 zsh 执行测试命令，并优先 source 对应的 `setup.zsh`。UI 会把测试记录写入：
@@ -504,7 +505,7 @@ results/<run_id>/performance/
 如果希望按 ROS2 包方式安装，也可以在 `auto_test_ws` 下执行：
 
 ```bash
-cd /home/slz/ORBBEC/ob_Auto_Test_ROS/auto_test_ws
+cd "$HOME/ORBBEC/ob_Auto_Test_ROS/auto_test_ws"
 colcon build --packages-select orbbec_camera_auto_test
 source install/setup.bash
 ```

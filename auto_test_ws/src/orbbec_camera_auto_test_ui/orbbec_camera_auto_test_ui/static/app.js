@@ -16,12 +16,14 @@ const MAX_VISIBLE_LOG_LINES = 500;
 const DEFAULT_SETUPS = {
   "2": {
     ros: "/opt/ros/humble/setup.bash",
-    camera: "/home/slz/ORBBEC/orbbecsdk_ros2_v2-main/install/setup.bash",
+    camera: "",
+    cameraPlaceholder: "/path/to/orbbecsdk_ros2/install/setup.bash",
     launch: "gemini_330_series.launch.py",
   },
   "1": {
     ros: "/opt/ros/one/setup.bash",
-    camera: "/home/slz/ORBBEC/orbbecsdk_ros1_v2-main/devel/setup.bash",
+    camera: "",
+    cameraPlaceholder: "/path/to/orbbecsdk_ros1/devel/setup.bash",
     launch: "gemini_330_series.launch",
   },
 };
@@ -323,7 +325,7 @@ function updateScenarioOptions() {
 function updateRosVersionControls({ fillBlank = false } = {}) {
   const defaults = DEFAULT_SETUPS[$("rosVersion").value] || DEFAULT_SETUPS["2"];
   $("rosSetup").placeholder = defaults.ros;
-  $("cameraSetup").placeholder = defaults.camera;
+  $("cameraSetup").placeholder = defaults.cameraPlaceholder || defaults.camera;
   if (fillBlank) {
     if (!$("rosSetup").value.trim()) {
       $("rosSetup").value = defaults.ros;
