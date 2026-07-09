@@ -173,6 +173,7 @@ def _device_count_from_discovery_output(output: str) -> int:
     patterns = (
         r"^\s*-\s*Name\s*:",
         r"\]\s*\[list_device_node\]:\s*name\s*:",
+        r"\]\s*:\s*name\s*:",
         r"^\s*name\s*:",
     )
     return sum(
