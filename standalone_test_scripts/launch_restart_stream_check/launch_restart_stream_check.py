@@ -183,24 +183,31 @@ class LaunchSession:
         command: List[str],
         work_dir: Path,
         env: Dict[str, str],
+        log_path: Path,
         emit: StatusLogger,
     ) -> None:
         self.command = command
         self.work_dir = work_dir
         self.env = env
+        self.log_path = log_path
         self.emit = emit
         self.process: Optional[subprocess.Popen[str]] = None
+        self._log_handle = None
 
     def start(self) -> None:
         if self.process is not None:
             raise RuntimeError("launch is already running")
+        self._log_handle = self.log_path.open("w", encoding="utf-8")
+        self._log_handle.write("$ " + " ".join(shlex.quote(item) for item in self.command) + "\n\n")
+        self._log_handle.flush()
         self.process = subprocess.Popen(
             self.command,
             cwd=self.work_dir,
             env=self.env,
-            stdout=subprocess.DEVNULL,
+            stdout=self._log_handle,
             stderr=subprocess.STDOUT,
             start_new_session=True,
+            text=True,
         )
 
     def poll(self) -> Optional[int]:
@@ -215,8 +222,10 @@ class LaunchSession:
 
     def stop(self, timeout: float = 10.0) -> None:
         if self.process is None:
+            self._close_log()
             return
         if self.process.poll() is not None:
+            self._close_log()
             return
         try:
             os.killpg(os.getpgid(self.process.pid), signal.SIGINT)
@@ -239,6 +248,12 @@ class LaunchSession:
                 except ProcessLookupError:
                     pass
                 self.process.wait(timeout=5.0)
+        self._close_log()
+
+    def _close_log(self) -> None:
+        if self._log_handle is not None:
+            self._log_handle.close()
+            self._log_handle = None
 
 
 class RosImageHarness:
@@ -587,6 +602,8 @@ def run(args) -> int:
     for raw_arg in args.launch_arg:
         key, value = parse_launch_arg(raw_arg)
         launch_args[key] = value
+    launch_args["log_level"] = args.sdk_log_level
+    launch_args["log_file_name"] = f"{template_camera_name}.log"
 
     duration_seconds = parse_duration(args.duration, 300.0)
     stable_seconds = parse_duration(args.stable_seconds, 5.0)
@@ -647,10 +664,16 @@ def run(args) -> int:
         with RosImageHarness(args.ros_version, "launch_restart_stream_check", args.queue_size) as harness:
             while time.monotonic() < deadline:
                 attempt_index += 1
+                attempt_dir = ensure_dir(results_dir / "logs" / f"test_{attempt_index:04d}")
+                attempt_env = dict(runtime_env)
+                attempt_env["ORBBEC_LOG_DIR"] = str(
+                    ensure_dir(attempt_dir / "sdk")
+                )
                 session = LaunchSession(
                     command=command,
                     work_dir=results_dir,
-                    env=runtime_env,
+                    env=attempt_env,
+                    log_path=attempt_dir / f"{template_camera_name}.launch.log",
                     emit=emit,
                 )
                 active_session = session
@@ -662,6 +685,7 @@ def run(args) -> int:
                     "started_at": datetime.now().isoformat(timespec="seconds"),
                     "ended_at": "",
                     "stable_seconds": 0.0,
+                    "launch_log": str(attempt_dir / f"{template_camera_name}.launch.log"),
                 }
                 current_attempt = attempt
                 result["attempts"].append(attempt)
@@ -799,6 +823,7 @@ def parse_args():
     parser.add_argument("--launch-package", default="orbbec_camera")
     parser.add_argument("--launch-file", default="", help="Launch filename or absolute/relative launch path")
     parser.add_argument("--launch-arg", action="append", default=[], help="Extra launch arg, KEY=VALUE or KEY:=VALUE")
+    parser.add_argument("--sdk-log-level", default="debug", help="Orbbec SDK log level (default: debug)")
     parser.add_argument("--camera-name", default="", help="Optional camera_name launch arg")
     parser.add_argument("--serial-number", default="")
     parser.add_argument("--usb-port", default="")

@@ -1110,6 +1110,7 @@ def build_summary(result: Dict[str, Any]) -> str:
         f"- Tool version: {result.get('tool_version', '')}",
         f"- ROS version: {result.get('ros_version', '')}",
         f"- Launch file: {result.get('launch_file', '')}",
+        f"- SDK log level: {result.get('sdk_log_level', '')}",
         f"- Runs: {repeat_passed}/{repeat_total} passed",
         "",
     ]
@@ -1283,6 +1284,7 @@ def run(args) -> int:
         "cameras": [asdict(c) for c in cameras],
         "launch_package": args.launch_package,
         "launch_file": args.launch_file,
+        "sdk_log_level": args.sdk_log_level,
         "notes": [declaration_note],
         "repeat_total": repeat_total,
         "repeat_passed": 0,
@@ -1293,30 +1295,38 @@ def run(args) -> int:
     emit(f"results dir: {results_dir}")
     emit(f"cameras: {', '.join(c.name for c in cameras)}")
     emit(f"repeat: {repeat_total}")
+    emit(f"SDK log level: {args.sdk_log_level}")
 
     try:
         for repeat_idx in range(repeat_total):
             if INTERRUPTED:
                 break
             emit(f"--- run {repeat_idx + 1}/{repeat_total} ---")
-            run_dir = ensure_dir(results_dir / f"run{repeat_idx + 1:03d}")
+            test_name = f"test_{repeat_idx + 1:04d}"
+            run_dir = ensure_dir(results_dir / test_name)
             run_result: Dict[str, Any] = {"run": repeat_idx + 1, "status": "failed", "cameras": []}
             sessions: List[LaunchSession] = []
             try:
                 # Start all camera launches
                 for camera in cameras:
+                    sdk_log_file_name = f"{camera.name}.log"
                     launch_args = _build_camera_launch_args(common_launch_args, camera, shared_config_path)
+                    launch_args["log_level"] = args.sdk_log_level
+                    launch_args["log_file_name"] = sdk_log_file_name
                     command = build_launch_command(
                         ros_version=args.ros_version,
                         launch_package=args.launch_package,
                         launch_file=args.launch_file,
                         launch_args=launch_args,
                     )
-                    log_path = run_dir / f"{camera.name}.log"
+                    log_path = run_dir / f"{camera.name}.launch.log"
+                    sdk_log_root = ensure_dir(run_dir / "sdk")
+                    session_env = dict(runtime_env)
+                    session_env["ORBBEC_LOG_DIR"] = str(sdk_log_root)
                     session = LaunchSession(
                         command=command,
                         work_dir=run_dir,
-                        env=runtime_env,
+                        env=session_env,
                         log_path=log_path,
                         emit=emit,
                     )
@@ -1330,8 +1340,7 @@ def run(args) -> int:
                     wait_for_launch_start(session, startup_timeout, emit=emit)
 
                 # Check each camera
-                run_label = f"run{repeat_idx + 1:03d}"
-                images_dir = results_dir / "images" / run_label if save_images_count > 0 else None
+                images_dir = results_dir / "images" / test_name if save_images_count > 0 else None
                 for camera, session, yaml_params in zip(cameras, sessions, yaml_params_list):
                     emit(f"checking camera: {camera.name}")
                     cam = _check_one_camera(
@@ -1446,6 +1455,12 @@ def parse_args():
     parser.add_argument("--config-file-path", default="",
                         help="Shared config YAML (or per-camera via --camera config_file_path=)")
     parser.add_argument("--launch-arg", action="append", default=[], help="Extra launch arg, KEY=VALUE or KEY:=VALUE")
+    parser.add_argument(
+        "--sdk-log-level",
+        choices=("debug", "info", "warn", "error", "fatal", "none"),
+        default="debug",
+        help="Orbbec SDK file log level (default: debug)",
+    )
     parser.add_argument("--startup-timeout", default="30", help="Wait time before checks, supports seconds, 1m")
     parser.add_argument("--topic-timeout", default="20", help="Max wait time for each enabled stream topic")
     parser.add_argument("--service-timeout", default="15", help="Max wait time for each param/service command")

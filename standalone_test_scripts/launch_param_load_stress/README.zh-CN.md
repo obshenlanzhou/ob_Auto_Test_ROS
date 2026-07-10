@@ -73,6 +73,7 @@ python3 ./launch_param_load_stress/launch_param_load_stress.py \
 | 参数 | 默认值 | 说明 |
 | --- | --- | --- |
 | `--launch-arg` | — | 额外的 launch 参数（如 `enable_depth=true`），可重复传入，格式 `KEY=VALUE` 或 `KEY:=VALUE` |
+| `--sdk-log-level` | `debug` | SDK 文件日志级别，可选 `debug/info/warn/error/fatal/none` |
 | `--repeat N` | `1` | 完整启动→检查→停止的循环次数 |
 | `--startup-timeout SECS` | `30` | 等待设备初始化完成的最大秒数 |
 | `--topic-timeout SECS` | `20` | 等待每个已启用流 topic 的最大秒数 |
@@ -106,15 +107,17 @@ cp ./config/sample_config_file_path.yaml /tmp/my_config.yaml
 
 ```text
 launch_param_load_stress/results/YYYYMMDD_HHMMSS_launch_param_load_stress/
-├── run001/
-│   ├── camera1.log        # camera1 的 launch 日志
-│   └── camera2.log        # camera2 的 launch 日志（多相机时）
-├── run002/
+├── test_0001/
+│   ├── camera1.launch.log      # camera1 的 ROS launch 日志
+│   ├── camera2.launch.log      # camera2 的 ROS launch 日志（多相机时）
+│   └── sdk/Log/camera1/
+│       └── camera1.log         # 本轮 camera1 的 Orbbec SDK 日志
+├── test_0002/
 │   └── ...
 ├── images/                # 仅在 --save-images-count > 0 时生成
-│   ├── run001/
+│   ├── test_0001/
 │   │   └── camera1/<topic>/image_0001.jpg
-│   └── run002/
+│   └── test_0002/
 │       └── ...
 ├── summary.md             # 每轮通过/失败汇总
 └── result.json            # 所有轮次的机器可读结果

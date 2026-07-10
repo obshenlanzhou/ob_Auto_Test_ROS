@@ -53,6 +53,7 @@ python3 ./export_load_stress_test/export_load_stress_test.py \
 | --- | --- | --- |
 | `--launch-arg` | — | 额外的 launch 参数（如 `enable_ir=true`），可重复传入，格式 `KEY=VALUE` 或 `KEY:=VALUE` |
 | `--test-count` | `10` | 导入导出轮次数 |
+| `--sdk-log-level` | `debug` | Orbbec SDK 日志级别 |
 | `--save-image-count` | `1` | 每轮每个 topic 保存的图片数（`0` = 不存图） |
 | `--image-topic` | color + depth | 监控和存图的 topic，可重复传入 |
 | `--config-json` | 见配置文件 | 交替使用的 JSON 文件，可重复传入 |
@@ -97,5 +98,7 @@ export_load_stress_test/results/YYYYMMDD_HHMMSS_export_load/
 ├── summary.md       # 最终结果和每次压测通过/失败状态
 ├── result.json      # 完整机器可读结果
 ├── images/          # 每次压测/每台相机/每个 topic 的 JPG 图像
-└── exports/         # 每次压测/每台相机的导出 JSON 和失败 diff
+├── exports/         # 每次压测/每台相机的导出 JSON 和失败 diff
+├── logs/test_XXXX/<camera>/<camera>.launch.log  # 每轮 ROS launch 日志
+└── logs/test_XXXX/<camera>/sdk/Log/<camera>/  # 每轮相机 SDK debug 日志
 ```

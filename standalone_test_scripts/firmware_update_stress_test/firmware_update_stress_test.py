@@ -389,7 +389,9 @@ def run(args) -> int:
             result["tests"].append(test_record)
 
             emit(f"{test_name} ({progress_label}): update firmware from {firmware_path.name}")
-            returncode, output = run_command_to_log(command, runtime_env, results_dir, log_file)
+            test_env = dict(runtime_env)
+            test_env["ORBBEC_LOG_DIR"] = str(ensure_dir(log_file.parent / "sdk"))
+            returncode, output = run_command_to_log(command, test_env, results_dir, log_file)
             test_record["returncode"] = returncode
             success_log = parse_success_log(output)
             test_record["success_log"] = success_log
@@ -498,7 +500,7 @@ def parse_args():
     parser.add_argument("--restart-delay", default="2", help="Delay seconds between update commands")
     parser.add_argument("--reconnect-timeout-sec", default="120", help="Passed to firmware_update_tool")
     parser.add_argument("--reconnect-poll-ms", default="1000", help="Passed to firmware_update_tool")
-    parser.add_argument("--sdk-log-level", default="off", help="Passed to firmware_update_tool")
+    parser.add_argument("--sdk-log-level", default="debug", help="Passed to firmware_update_tool")
     parser.add_argument("--continue-on-error", action="store_true", help="Passed to firmware_update_tool")
     parser.add_argument("--results-dir", default="")
     parser.add_argument(

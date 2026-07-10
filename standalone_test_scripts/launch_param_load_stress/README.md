@@ -103,21 +103,26 @@ cp ./config/sample_config_file_path.yaml /tmp/my_config.yaml
 Placeholder values (`-1`, empty string, `ANY`, `none`, `null`) are skipped at
 service level — the driver uses device defaults for those.
 
+`--sdk-log-level` controls Orbbec SDK file logging and defaults to `debug`. Supported
+values are `debug`, `info`, `warn`, `error`, `fatal`, and `none`.
+
 ## Result Files
 
 Each run creates:
 
 ```text
 launch_param_load_stress/results/YYYYMMDD_HHMMSS_launch_param_load_stress/
-├── run001/
-│   ├── camera1.log        # Launch log for camera1
-│   └── camera2.log        # Launch log for camera2 (multi-camera only)
-├── run002/
+├── test_0001/
+│   ├── camera1.launch.log      # ROS launch log for camera1
+│   ├── camera2.launch.log      # ROS launch log for camera2 (multi-camera only)
+│   └── sdk/Log/camera1/
+│       └── camera1.log         # Orbbec SDK log for this run
+├── test_0002/
 │   └── ...
 ├── images/                # Present only when --save-images-count > 0
-│   ├── run001/
+│   ├── test_0001/
 │   │   └── camera1/<topic>/image_0001.jpg
-│   └── run002/
+│   └── test_0002/
 │       └── ...
 ├── summary.md             # Per-run pass/fail summary
 └── result.json            # Machine-readable result for all runs

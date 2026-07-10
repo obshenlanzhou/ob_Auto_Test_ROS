@@ -68,6 +68,7 @@ python3 ./preset_upgrade_stress_test/preset_upgrade_stress_test.py \
 | `--jpg-quality` | `95` | 保存图片的 JPEG 压缩质量（1–100） |
 | `--image-topic` | color + depth | 监控的 topic，可重复传入；`{camera}` 自动展开为各相机名 |
 | `--launch-arg` | — | 额外 launch 参数（如 `enable_left_ir=true`），可重复传入 |
+| `--sdk-log-level` | `debug` | preset 升级工具和相机 launch 的 SDK 日志级别 |
 
 默认监控 topic：
 
@@ -111,5 +112,6 @@ preset_upgrade_stress_test/results/YYYYMMDD_HHMMSS_preset_upgrade/
 ├── result.json                             # 完整机器可读结果
 ├── logs/test_XXXX/<camera>/upgrade.log     # firmware_update_tool 输出
 ├── logs/test_XXXX/<camera>/launch.log      # launch 输出
+├── logs/test_XXXX/<camera>/sdk/Log/         # 升级工具及相机 SDK debug 日志
 └── images/test_XXXX/<camera>/             # 保存的 JPG 图像（启用存图时）
 ```

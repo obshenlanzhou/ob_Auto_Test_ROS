@@ -271,25 +271,32 @@ class LaunchSession:
         command: List[str],
         work_dir: Path,
         env: Dict[str, str],
+        log_path: Path,
         emit: StatusLogger,
     ) -> None:
         self.camera_name = camera_name
         self.command = command
         self.work_dir = work_dir
         self.env = env
+        self.log_path = log_path
         self.emit = emit
         self.process: Optional[subprocess.Popen[str]] = None
+        self._log_handle = None
 
     def start(self) -> None:
         if self.process is not None:
             raise RuntimeError(f"launch for {self.camera_name} is already running")
+        self._log_handle = self.log_path.open("w", encoding="utf-8")
+        self._log_handle.write("$ " + " ".join(shlex.quote(item) for item in self.command) + "\n\n")
+        self._log_handle.flush()
         self.process = subprocess.Popen(
             self.command,
             cwd=self.work_dir,
             env=self.env,
-            stdout=subprocess.DEVNULL,
+            stdout=self._log_handle,
             stderr=subprocess.STDOUT,
             start_new_session=True,
+            text=True,
         )
 
     def poll(self) -> Optional[int]:
@@ -306,6 +313,7 @@ class LaunchSession:
 
     def stop(self, timeout: float = 10.0) -> None:
         if self.process is None or self.process.poll() is not None:
+            self._close_log()
             return
         try:
             os.killpg(os.getpgid(self.process.pid), signal.SIGINT)
@@ -330,6 +338,12 @@ class LaunchSession:
                 except ProcessLookupError:
                     pass
                 self.process.wait(timeout=5.0)
+        self._close_log()
+
+    def _close_log(self) -> None:
+        if self._log_handle is not None:
+            self._log_handle.close()
+            self._log_handle = None
 
 
 class RosHarness:
@@ -1174,17 +1188,26 @@ def run(args) -> int:
                         camera=camera,
                         config_json=config_json,
                     )
+                    launch_args["log_level"] = args.sdk_log_level
+                    launch_args["log_file_name"] = f"{camera.name}.log"
                     command = build_launch_command(
                         ros_version=args.ros_version,
                         launch_package=args.launch_package,
                         launch_file=args.launch_file,
                         launch_args=launch_args,
                     )
+                    camera_log_dir = ensure_dir(results_dir / "logs" / test_name / camera.name)
+                    launch_log_path = camera_log_dir / f"{camera.name}.launch.log"
+                    session_env = dict(runtime_env)
+                    session_env["ORBBEC_LOG_DIR"] = str(
+                        ensure_dir(camera_log_dir / "sdk")
+                    )
                     session = LaunchSession(
                         camera_name=camera.name,
                         command=command,
                         work_dir=results_dir,
-                        env=runtime_env,
+                        env=session_env,
+                        log_path=launch_log_path,
                         emit=emit,
                     )
                     sessions.append(session)
@@ -1193,6 +1216,7 @@ def run(args) -> int:
                             "camera": camera.name,
                             "command": command,
                             "launch_args": launch_args,
+                            "launch_log": str(launch_log_path),
                         }
                     )
                 active_sessions = sessions
@@ -1373,6 +1397,7 @@ def parse_args():
     parser.add_argument("--launch-package", default="orbbec_camera")
     parser.add_argument("--launch-file", default="gemini_330_series_sdk_json.launch.py")
     parser.add_argument("--launch-arg", action="append", default=[], help="Extra launch arg, KEY=VALUE or KEY:=VALUE")
+    parser.add_argument("--sdk-log-level", default="debug", help="Orbbec SDK log level (default: debug)")
     parser.add_argument("--config-json", action="append", default=[], help="Config JSON file, repeat at least twice")
     parser.add_argument(
         "--camera",

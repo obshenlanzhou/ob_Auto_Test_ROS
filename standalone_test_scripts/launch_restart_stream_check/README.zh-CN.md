@@ -66,6 +66,7 @@ python3 ./launch_restart_stream_check/launch_restart_stream_check.py \
 | 参数 | 默认值 | 说明 |
 | --- | --- | --- |
 | `--launch-arg` | — | 额外的 launch 参数（如 `enable_ir=true`），可重复传入，格式 `KEY=VALUE` 或 `KEY:=VALUE` |
+| `--sdk-log-level` | `debug` | Orbbec SDK 日志级别 |
 | `--duration` | `1h` | 总运行时长（如 `30m`、`2h`） |
 | `--stable-seconds` | `5` | 判定流稳定所需的持续接收时间（秒） |
 | `--stream-timeout` | `20` | 每次重启后等待流稳定的最大秒数 |
@@ -78,5 +79,7 @@ python3 ./launch_restart_stream_check/launch_restart_stream_check.py \
 
 ```text
 launch_restart_stream_check/results/YYYYMMDD_HHMMSS_restart_stream/
-└── summary.md     # 运行命令、最终结果、运行时长、监控流列表
+├── logs/test_XXXX/<camera>.launch.log      # 每次重启的 ROS launch 日志
+├── logs/test_XXXX/sdk/Log/<camera>/        # 每次重启的 SDK debug 日志
+└── summary.md                              # 运行命令、最终结果、运行时长、监控流列表
 ```

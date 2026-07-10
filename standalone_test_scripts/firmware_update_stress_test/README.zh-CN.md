@@ -83,7 +83,7 @@ python3 ./firmware_update_stress_test/firmware_update_stress_test.py \
 | `--device-port` | `8090` | 传给 firmware tool 的网络设备端口 |
 | `--reconnect-timeout-sec` | `120` | 传给 `firmware_update_tool` |
 | `--reconnect-poll-ms` | `1000` | 传给 `firmware_update_tool` |
-| `--sdk-log-level` | `off` | 传给 `firmware_update_tool` |
+| `--sdk-log-level` | `debug` | 传给 `firmware_update_tool` |
 | `--continue-on-error` | 关闭 | 传给 `firmware_update_tool` |
 
 同一轮只能使用一种设备选择方式：SN、USB port 或 device IP。多相机场景使用 SN 批量模式。
@@ -96,5 +96,6 @@ python3 ./firmware_update_stress_test/firmware_update_stress_test.py \
 firmware_update_stress_test/results/YYYYMMDD_HHMMSS_firmware_update/
 ├── summary.md                  # 最终结果和每次压测通过/失败状态
 ├── result.json                 # 完整机器可读结果
-└── logs/test_XXXX/update.log   # firmware_update_tool 终端输出
+├── logs/test_XXXX/update.log   # firmware_update_tool 终端输出
+└── logs/test_XXXX/sdk/Log/     # 每轮 firmware_update_tool SDK debug 日志
 ```

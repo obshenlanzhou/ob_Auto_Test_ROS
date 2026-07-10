@@ -955,9 +955,11 @@ def run(args) -> int:
                             "returncode": None,
                         }
                         test_record["upgrades"].append(upgrade_result)
+                        upgrade_env = dict(runtime_env)
+                        upgrade_env["ORBBEC_LOG_DIR"] = str(ensure_dir(camera_log_dir / "sdk"))
                         upgrade_code = run_command_to_log(
                             upgrade_command,
-                            runtime_env,
+                            upgrade_env,
                             results_dir,
                             camera_log_dir / "upgrade.log",
                         )
@@ -976,17 +978,21 @@ def run(args) -> int:
                             camera=camera,
                             preset_name=preset.name,
                         )
+                        launch_args["log_level"] = args.sdk_log_level
+                        launch_args["log_file_name"] = f"{camera.name}.log"
                         launch_command = build_launch_command(
                             ros_version=args.ros_version,
                             launch_package=args.launch_package,
                             launch_file=launch_file,
                             launch_args=launch_args,
                         )
+                        launch_env = dict(runtime_env)
+                        launch_env["ORBBEC_LOG_DIR"] = str(ensure_dir(camera_log_dir / "sdk"))
                         session = LaunchSession(
                             camera_name=camera.name,
                             command=launch_command,
                             work_dir=results_dir,
-                            env=runtime_env,
+                            env=launch_env,
                             log_file=camera_log_dir / "launch.log",
                             emit=emit,
                         )
@@ -1137,7 +1143,7 @@ def parse_args():
     parser.add_argument("--save-images-count", type=int, default=1, help="Images to save per topic; 0 disables saving")
     parser.add_argument("--jpg-quality", type=int, default=95, help="JPG quality, 1-100")
     parser.add_argument("--restart-delay", default="2", help="Delay seconds after stopping launch")
-    parser.add_argument("--sdk-log-level", default="off")
+    parser.add_argument("--sdk-log-level", default="debug")
     parser.add_argument(
         "--image-topic",
         action="append",

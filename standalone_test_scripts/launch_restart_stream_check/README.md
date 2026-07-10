@@ -68,6 +68,7 @@ python3 ./launch_restart_stream_check/launch_restart_stream_check.py \
 | Option | Default | Description |
 | --- | --- | --- |
 | `--launch-arg` | — | Extra launch argument (e.g. `enable_ir=true`); repeatable, format `KEY=VALUE` or `KEY:=VALUE` |
+| `--sdk-log-level` | `debug` | Orbbec SDK log level |
 | `--duration` | `1h` | Total run time (e.g. `30m`, `2h`) |
 | `--stable-seconds` | `5` | Continuous receive time required for a stream to be considered stable |
 | `--stream-timeout` | `20` | Seconds to wait for a stream to become stable per restart |
@@ -80,5 +81,7 @@ Each run creates:
 
 ```text
 launch_restart_stream_check/results/YYYYMMDD_HHMMSS_restart_stream/
-└── summary.md     # Run command, final result, elapsed time, monitored streams
+├── logs/test_XXXX/<camera>.launch.log      # ROS launch log for each restart
+├── logs/test_XXXX/sdk/Log/<camera>/        # SDK debug log for each restart
+└── summary.md                              # Run command, final result, elapsed time, monitored streams
 ```

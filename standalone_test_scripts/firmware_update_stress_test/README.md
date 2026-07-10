@@ -86,7 +86,7 @@ python3 ./firmware_update_stress_test/firmware_update_stress_test.py \
 | `--device-port` | `8090` | Network device port passed to the firmware tool |
 | `--reconnect-timeout-sec` | `120` | Passed to `firmware_update_tool` |
 | `--reconnect-poll-ms` | `1000` | Passed to `firmware_update_tool` |
-| `--sdk-log-level` | `off` | Passed to `firmware_update_tool` |
+| `--sdk-log-level` | `debug` | Passed to `firmware_update_tool` |
 | `--continue-on-error` | disabled | Passed to `firmware_update_tool` |
 
 Only one selector type can be used at a time: serial number, USB port, or device
@@ -100,5 +100,6 @@ Each run creates:
 firmware_update_stress_test/results/YYYYMMDD_HHMMSS_firmware_update/
 ├── summary.md                  # Final result and per-test pass/fail status
 ├── result.json                 # Full machine-readable result
-└── logs/test_XXXX/update.log   # firmware_update_tool terminal output
+├── logs/test_XXXX/update.log   # firmware_update_tool terminal output
+└── logs/test_XXXX/sdk/Log/     # Per-test firmware_update_tool SDK debug logs
 ```

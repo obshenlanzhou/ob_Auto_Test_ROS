@@ -54,6 +54,7 @@ python3 ./export_load_stress_test/export_load_stress_test.py \
 | --- | --- | --- |
 | `--launch-arg` | — | Extra launch argument (e.g. `enable_ir=true`); repeatable, format `KEY=VALUE` or `KEY:=VALUE` |
 | `--test-count` | `10` | Number of import/export cycles |
+| `--sdk-log-level` | `debug` | Orbbec SDK log level |
 | `--save-image-count` | `1` | Images saved per topic per test (`0` = disabled) |
 | `--image-topic` | color + depth | Topics to monitor and save; repeatable |
 | `--config-json` | see Config File | JSON files to alternate; repeatable |
@@ -98,5 +99,7 @@ export_load_stress_test/results/YYYYMMDD_HHMMSS_export_load/
 ├── summary.md       # Final result and per-test pass/fail status
 ├── result.json      # Full machine-readable result
 ├── images/          # Saved JPG images per test/camera/topic
-└── exports/         # Exported JSON and failure diffs per test/camera
+├── exports/         # Exported JSON and failure diffs per test/camera
+├── logs/test_XXXX/<camera>/<camera>.launch.log  # Per-test ROS launch log
+└── logs/test_XXXX/<camera>/sdk/Log/<camera>/  # Per-test camera SDK debug logs
 ```

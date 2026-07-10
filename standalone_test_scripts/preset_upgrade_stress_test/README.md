@@ -70,6 +70,7 @@ python3 ./preset_upgrade_stress_test/preset_upgrade_stress_test.py \
 | `--jpg-quality` | `95` | JPEG quality for saved images (1–100) |
 | `--image-topic` | color + depth | Topics to monitor; repeatable, `{camera}` expands to each camera name |
 | `--launch-arg` | — | Extra launch argument (e.g. `enable_left_ir=true`); repeatable |
+| `--sdk-log-level` | `debug` | SDK log level for the preset upgrade tool and camera launch |
 
 Default monitored topics:
 
@@ -114,5 +115,6 @@ preset_upgrade_stress_test/results/YYYYMMDD_HHMMSS_preset_upgrade/
 ├── result.json                             # Machine-readable result
 ├── logs/test_XXXX/<camera>/upgrade.log     # firmware_update_tool output
 ├── logs/test_XXXX/<camera>/launch.log      # launch output
+├── logs/test_XXXX/<camera>/sdk/Log/         # Upgrade-tool and camera SDK debug logs
 └── images/test_XXXX/<camera>/             # Saved JPG images (when enabled)
 ```
