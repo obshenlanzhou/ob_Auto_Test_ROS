@@ -993,7 +993,7 @@ def run(args) -> int:
                             command=launch_command,
                             work_dir=results_dir,
                             env=launch_env,
-                            log_file=camera_log_dir / "launch.log",
+                            log_file=camera_log_dir / f"{sanitize_path_part(camera.name)}.launch.log",
                             emit=emit,
                         )
                         sessions.append(session)
@@ -1002,7 +1002,9 @@ def run(args) -> int:
                                 "camera": camera.name,
                                 "command": launch_command,
                                 "launch_args": launch_args,
-                                "log": str(camera_log_dir / "launch.log"),
+                                "log": str(
+                                    camera_log_dir / f"{sanitize_path_part(camera.name)}.launch.log"
+                                ),
                                 "preset_log_message": "",
                             }
                         )
@@ -1048,13 +1050,13 @@ def run(args) -> int:
                     if not ok:
                         raise RuntimeError(image_message)
 
+                    for session in reversed(sessions):
+                        session.stop()
+                    active_sessions = []
                     test_record["status"] = "passed"
                     test_record["ended_at"] = datetime.now().isoformat(timespec="seconds")
                     result["passed_tests"] += 1
                     emit(f"{test_name}: passed, preset={preset.name}")
-                    for session in reversed(sessions):
-                        session.stop()
-                    active_sessions = []
                     if restart_delay > 0:
                         time.sleep(restart_delay)
     except KeyboardInterrupt:
@@ -1143,7 +1145,11 @@ def parse_args():
     parser.add_argument("--save-images-count", type=int, default=1, help="Images to save per topic; 0 disables saving")
     parser.add_argument("--jpg-quality", type=int, default=95, help="JPG quality, 1-100")
     parser.add_argument("--restart-delay", default="2", help="Delay seconds after stopping launch")
-    parser.add_argument("--sdk-log-level", default="debug")
+    parser.add_argument(
+        "--sdk-log-level",
+        choices=("debug", "info", "warn", "error", "fatal", "off", "none"),
+        default="debug",
+    )
     parser.add_argument(
         "--image-topic",
         action="append",

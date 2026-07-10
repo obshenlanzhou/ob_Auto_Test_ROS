@@ -500,7 +500,12 @@ def parse_args():
     parser.add_argument("--restart-delay", default="2", help="Delay seconds between update commands")
     parser.add_argument("--reconnect-timeout-sec", default="120", help="Passed to firmware_update_tool")
     parser.add_argument("--reconnect-poll-ms", default="1000", help="Passed to firmware_update_tool")
-    parser.add_argument("--sdk-log-level", default="debug", help="Passed to firmware_update_tool")
+    parser.add_argument(
+        "--sdk-log-level",
+        choices=("debug", "info", "warn", "error", "fatal", "off", "none"),
+        default="debug",
+        help="Passed to firmware_update_tool",
+    )
     parser.add_argument("--continue-on-error", action="store_true", help="Passed to firmware_update_tool")
     parser.add_argument("--results-dir", default="")
     parser.add_argument(

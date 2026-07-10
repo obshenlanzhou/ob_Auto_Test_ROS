@@ -114,7 +114,7 @@ preset_upgrade_stress_test/results/YYYYMMDD_HHMMSS_preset_upgrade/
 ├── summary.md                              # Final summary
 ├── result.json                             # Machine-readable result
 ├── logs/test_XXXX/<camera>/upgrade.log     # firmware_update_tool output
-├── logs/test_XXXX/<camera>/launch.log      # launch output
+├── logs/test_XXXX/<camera>/<camera>.launch.log  # launch output
 ├── logs/test_XXXX/<camera>/sdk/Log/         # Upgrade-tool and camera SDK debug logs
 └── images/test_XXXX/<camera>/             # Saved JPG images (when enabled)
 ```

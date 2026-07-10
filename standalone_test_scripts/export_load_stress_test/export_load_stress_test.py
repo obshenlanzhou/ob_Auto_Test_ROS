@@ -289,15 +289,19 @@ class LaunchSession:
         self._log_handle = self.log_path.open("w", encoding="utf-8")
         self._log_handle.write("$ " + " ".join(shlex.quote(item) for item in self.command) + "\n\n")
         self._log_handle.flush()
-        self.process = subprocess.Popen(
-            self.command,
-            cwd=self.work_dir,
-            env=self.env,
-            stdout=self._log_handle,
-            stderr=subprocess.STDOUT,
-            start_new_session=True,
-            text=True,
-        )
+        try:
+            self.process = subprocess.Popen(
+                self.command,
+                cwd=self.work_dir,
+                env=self.env,
+                stdout=self._log_handle,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+                text=True,
+            )
+        except Exception:
+            self._close_log()
+            raise
 
     def poll(self) -> Optional[int]:
         if self.process is None:
@@ -1196,8 +1200,9 @@ def run(args) -> int:
                         launch_file=args.launch_file,
                         launch_args=launch_args,
                     )
-                    camera_log_dir = ensure_dir(results_dir / "logs" / test_name / camera.name)
-                    launch_log_path = camera_log_dir / f"{camera.name}.launch.log"
+                    safe_camera_name = sanitize_path_part(camera.name)
+                    camera_log_dir = ensure_dir(results_dir / "logs" / test_name / safe_camera_name)
+                    launch_log_path = camera_log_dir / f"{safe_camera_name}.launch.log"
                     session_env = dict(runtime_env)
                     session_env["ORBBEC_LOG_DIR"] = str(
                         ensure_dir(camera_log_dir / "sdk")
@@ -1320,14 +1325,14 @@ def run(args) -> int:
                         time.sleep(1.0)
                     break
 
-                test_payload["status"] = "passed"
-                test_payload["message"] = "all cameras exported matching parameters"
-                test_payload["ended_at"] = datetime.now().isoformat(timespec="seconds")
-                result["passed_tests"] += 1
                 emit(f"{test_name}: passed, stop launches")
                 for session in reversed(sessions):
                     session.stop()
                 active_sessions = []
+                test_payload["status"] = "passed"
+                test_payload["message"] = "all cameras exported matching parameters"
+                test_payload["ended_at"] = datetime.now().isoformat(timespec="seconds")
+                result["passed_tests"] += 1
                 current_test = None
                 if test_index < test_count:
                     time.sleep(restart_delay)
@@ -1397,7 +1402,12 @@ def parse_args():
     parser.add_argument("--launch-package", default="orbbec_camera")
     parser.add_argument("--launch-file", default="gemini_330_series_sdk_json.launch.py")
     parser.add_argument("--launch-arg", action="append", default=[], help="Extra launch arg, KEY=VALUE or KEY:=VALUE")
-    parser.add_argument("--sdk-log-level", default="debug", help="Orbbec SDK log level (default: debug)")
+    parser.add_argument(
+        "--sdk-log-level",
+        choices=("debug", "info", "warn", "error", "fatal", "none"),
+        default="debug",
+        help="Orbbec SDK log level (default: debug)",
+    )
     parser.add_argument("--config-json", action="append", default=[], help="Config JSON file, repeat at least twice")
     parser.add_argument(
         "--camera",

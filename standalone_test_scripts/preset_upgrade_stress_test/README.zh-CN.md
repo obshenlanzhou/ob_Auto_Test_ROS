@@ -111,7 +111,7 @@ preset_upgrade_stress_test/results/YYYYMMDD_HHMMSS_preset_upgrade/
 ├── summary.md                              # 最终摘要
 ├── result.json                             # 完整机器可读结果
 ├── logs/test_XXXX/<camera>/upgrade.log     # firmware_update_tool 输出
-├── logs/test_XXXX/<camera>/launch.log      # launch 输出
+├── logs/test_XXXX/<camera>/<camera>.launch.log  # launch 输出
 ├── logs/test_XXXX/<camera>/sdk/Log/         # 升级工具及相机 SDK debug 日志
 └── images/test_XXXX/<camera>/             # 保存的 JPG 图像（启用存图时）
 ```

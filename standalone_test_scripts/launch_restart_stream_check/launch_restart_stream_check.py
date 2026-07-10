@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shlex
 import signal
@@ -200,15 +201,19 @@ class LaunchSession:
         self._log_handle = self.log_path.open("w", encoding="utf-8")
         self._log_handle.write("$ " + " ".join(shlex.quote(item) for item in self.command) + "\n\n")
         self._log_handle.flush()
-        self.process = subprocess.Popen(
-            self.command,
-            cwd=self.work_dir,
-            env=self.env,
-            stdout=self._log_handle,
-            stderr=subprocess.STDOUT,
-            start_new_session=True,
-            text=True,
-        )
+        try:
+            self.process = subprocess.Popen(
+                self.command,
+                cwd=self.work_dir,
+                env=self.env,
+                stdout=self._log_handle,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+                text=True,
+            )
+        except Exception:
+            self._close_log()
+            raise
 
     def poll(self) -> Optional[int]:
         if self.process is None:
@@ -790,6 +795,9 @@ def run(args) -> int:
             if not attempt.get("ended_at"):
                 attempt["ended_at"] = datetime.now().isoformat(timespec="seconds")
         (results_dir / "summary.md").write_text(build_summary(result), encoding="utf-8")
+        (results_dir / "result.json").write_text(
+            json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
         signal.signal(signal.SIGINT, previous_sigint_handler)
 
     if result["status"] == "passed":
@@ -823,7 +831,12 @@ def parse_args():
     parser.add_argument("--launch-package", default="orbbec_camera")
     parser.add_argument("--launch-file", default="", help="Launch filename or absolute/relative launch path")
     parser.add_argument("--launch-arg", action="append", default=[], help="Extra launch arg, KEY=VALUE or KEY:=VALUE")
-    parser.add_argument("--sdk-log-level", default="debug", help="Orbbec SDK log level (default: debug)")
+    parser.add_argument(
+        "--sdk-log-level",
+        choices=("debug", "info", "warn", "error", "fatal", "none"),
+        default="debug",
+        help="Orbbec SDK log level (default: debug)",
+    )
     parser.add_argument("--camera-name", default="", help="Optional camera_name launch arg")
     parser.add_argument("--serial-number", default="")
     parser.add_argument("--usb-port", default="")

@@ -50,6 +50,9 @@ in later restarts.
 Pass `--image-topic` once per topic to monitor, or omit it to auto-discover all
 streams from a multi-camera launch file:
 
+> **Note:** The tool cannot configure the current multi-camera launch. Before running, edit each
+> camera's name, serial number/USB port, `log_level`, and `log_file_name` in the launch file.
+
 ```bash
 python3 ./launch_restart_stream_check/launch_restart_stream_check.py \
   --ros-version 2 \
@@ -83,5 +86,6 @@ Each run creates:
 launch_restart_stream_check/results/YYYYMMDD_HHMMSS_restart_stream/
 ├── logs/test_XXXX/<camera>.launch.log      # ROS launch log for each restart
 ├── logs/test_XXXX/sdk/Log/<camera>/        # SDK debug log for each restart
-└── summary.md                              # Run command, final result, elapsed time, monitored streams
+├── summary.md                              # Run command, final result, elapsed time, monitored streams
+└── result.json                             # Structured per-restart results and log paths
 ```

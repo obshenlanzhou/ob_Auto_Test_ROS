@@ -48,6 +48,9 @@ python3 ./launch_restart_stream_check/launch_restart_stream_check.py \
 多次传入 `--image-topic` 指定需要监控的 topic，或者不传让脚本自动发现多相机
 launch 文件中的所有流：
 
+> **注意：** 当前多相机 launch 不支持由工具配置。运行前请自行修改其中每台相机的
+> name、SN/USB port、`log_level` 和 `log_file_name`。
+
 ```bash
 python3 ./launch_restart_stream_check/launch_restart_stream_check.py \
   --ros-version 2 \
@@ -81,5 +84,6 @@ python3 ./launch_restart_stream_check/launch_restart_stream_check.py \
 launch_restart_stream_check/results/YYYYMMDD_HHMMSS_restart_stream/
 ├── logs/test_XXXX/<camera>.launch.log      # 每次重启的 ROS launch 日志
 ├── logs/test_XXXX/sdk/Log/<camera>/        # 每次重启的 SDK debug 日志
-└── summary.md                              # 运行命令、最终结果、运行时长、监控流列表
+├── summary.md                              # 运行命令、最终结果、运行时长、监控流列表
+└── result.json                             # 每次重启的结构化结果和日志路径
 ```
