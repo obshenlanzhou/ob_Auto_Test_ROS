@@ -109,27 +109,35 @@ def list_profiles() -> Dict[str, Any]:
 
 def _find_result_json(run_dir: Path) -> Dict[str, Any]:
     result: Dict[str, Any] = {}
-    for candidate in [
-        run_dir / "result.json",
-        run_dir / "functional" / "result.json",
-        run_dir / "performance" / "result.json",
-    ]:
-        if candidate.is_file():
-            result[candidate.parent.name if candidate.parent != run_dir else "result"] = read_json(
-                candidate, {}
-            )
+    for candidate in sorted(run_dir.rglob("result.json")):
+        if not candidate.is_file() or _is_nested_result(run_dir, candidate):
+            continue
+        key = _report_key(run_dir, candidate, "result")
+        result[key] = read_json(candidate, {})
     return result
+
+
+def _is_nested_result(run_dir: Path, candidate: Path) -> bool:
+    try:
+        return "scenarios" in candidate.parent.relative_to(run_dir).parts
+    except ValueError:
+        return False
+
+
+def _report_key(run_dir: Path, candidate: Path, root_name: str) -> str:
+    if candidate.parent == run_dir:
+        return root_name
+    try:
+        return "/".join(candidate.parent.relative_to(run_dir).parts)
+    except ValueError:
+        return candidate.parent.name
 
 
 def _read_summary_files(run_dir: Path) -> Dict[str, str]:
     summaries: Dict[str, str] = {}
-    for candidate in [
-        run_dir / "summary.md",
-        run_dir / "functional" / "summary.md",
-        run_dir / "performance" / "summary.md",
-    ]:
+    for candidate in sorted(run_dir.rglob("summary.md")):
         if candidate.is_file():
-            key = candidate.parent.name if candidate.parent != run_dir else "summary"
+            key = _report_key(run_dir, candidate, "summary")
             summaries[key] = candidate.read_text(encoding="utf-8")
     return summaries
 
