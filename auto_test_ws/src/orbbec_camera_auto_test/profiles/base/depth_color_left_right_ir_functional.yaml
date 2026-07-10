@@ -115,6 +115,11 @@ launch_scenarios:
           - success_true
           - field_non_empty:info.name
           - field_non_empty:info.serial_number
+      - name: /{camera}/get_device_config
+        type: orbbec_camera_msgs/srv/GetDeviceConfig
+        mode: read
+        response_checks:
+          - success_true
       - name: /{camera}/get_laser_status
         type: orbbec_camera_msgs/srv/GetBool
         mode: read
@@ -188,7 +193,7 @@ launch_scenarios:
         wait_after_call: 2.0
       - name: /{camera}/set_white_balance
         type: orbbec_camera_msgs/srv/SetInt32
-        mode: roundtrip_int
+        mode: roundtrip_int_auto_white_balance_off
         getter_name: /{camera}/get_white_balance
         getter_type: orbbec_camera_msgs/srv/GetInt32
         getter_field: data
@@ -220,9 +225,9 @@ launch_scenarios:
         getter_field: data
         request_field: data
         request:
-          data: 2000
+          data: 16
         alternate_request:
-          data: 3000
+          data: 32
         wait_after_call: 2.0
 
       # Device / status / system
@@ -277,6 +282,12 @@ launch_scenarios:
         type: std_srvs/srv/SetBool
         mode: advertised
       - name: /{camera}/set_ae_mode
+        type: orbbec_camera_msgs/srv/SetString
+        mode: advertised
+      - name: /{camera}/set_ae_reference_stream
+        type: orbbec_camera_msgs/srv/SetString
+        mode: advertised
+      - name: /{camera}/set_ae_strategy
         type: orbbec_camera_msgs/srv/SetString
         mode: advertised
       - name: /{camera}/set_color_ae_roi
@@ -341,6 +352,21 @@ launch_scenarios:
         type: std_srvs/srv/SetBool
         mode: advertised
       - name: /{camera}/set_sync_interleaverlaser
+        type: orbbec_camera_msgs/srv/SetInt32
+        mode: advertised
+      - name: /{camera}/export_config_json
+        type: orbbec_camera_msgs/srv/SetString
+        mode: advertised
+      - name: /{camera}/set_bag_recording
+        type: orbbec_camera_msgs/srv/SetBagRecording
+        mode: advertised
+      - name: /{camera}/set_image_registration_mode
+        type: orbbec_camera_msgs/srv/SetString
+        mode: advertised
+      - name: /{camera}/set_stream_profile
+        type: orbbec_camera_msgs/srv/SetStreamProfile
+        mode: advertised
+      - name: /{camera}/set_sync_io_voltage_level
         type: orbbec_camera_msgs/srv/SetInt32
         mode: advertised
       - name: /{camera}/switch_ir

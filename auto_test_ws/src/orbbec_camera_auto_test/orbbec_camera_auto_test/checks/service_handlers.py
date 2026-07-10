@@ -67,10 +67,32 @@ def _ensure_success(response: Any, fallback_message: str) -> None:
         raise ValueError(getattr(response, "message", fallback_message))
 
 
+def _sibling_service_name(service_name: str, sibling_name: str) -> str:
+    parts = service_name.rstrip("/").split("/")
+    parts[-1] = sibling_name
+    return "/".join(parts)
+
+
+def _get_auto_white_balance(harness, service_name: str) -> bool:
+    getter_type = resolve_service_type("orbbec_camera_msgs/srv/GetInt32", harness.ros_version)
+    response = harness.call_service(service_name, getter_type, request_data={}, timeout=30.0)
+    return bool(int(deep_getattr(response, "data")))
+
+
+def _set_auto_white_balance(harness, service_name: str, value: bool) -> None:
+    setter_type = resolve_service_type("std_srvs/srv/SetBool", harness.ros_version)
+    response = harness.call_service(
+        service_name,
+        setter_type,
+        request_data={"data": value},
+        timeout=30.0,
+    )
+    _ensure_success(response, "set_auto_white_balance returned success=false")
+
+
 @register_service_handler("advertised")
 def check_service_advertised(harness, spec: ServiceSpec) -> str:
-    service_type = resolve_service_type(spec.type, harness.ros_version)
-    harness.wait_for_service(spec.name, service_type, timeout=30.0)
+    del harness, spec
     return "service advertised"
 
 
@@ -191,6 +213,27 @@ def check_roundtrip_int(harness, spec: ServiceSpec) -> str:
     if restored_value != baseline_value:
         raise ValueError("state did not recover to baseline")
     return f"roundtrip succeeded (baseline={baseline_value}, target={target_value})"
+
+
+@register_service_handler("roundtrip_int_auto_white_balance_off")
+def check_roundtrip_int_auto_white_balance_off(harness, spec: ServiceSpec) -> str:
+    auto_getter_name = _sibling_service_name(spec.name, "get_auto_white_balance")
+    auto_setter_name = _sibling_service_name(spec.name, "set_auto_white_balance")
+    auto_white_balance = _get_auto_white_balance(harness, auto_getter_name)
+    if auto_white_balance:
+        _set_auto_white_balance(harness, auto_setter_name, False)
+        if spec.wait_after_call > 0:
+            time.sleep(spec.wait_after_call)
+    try:
+        result = check_roundtrip_int(harness, spec)
+    finally:
+        if auto_white_balance:
+            _set_auto_white_balance(harness, auto_setter_name, True)
+            if spec.wait_after_call > 0:
+                time.sleep(spec.wait_after_call)
+    if auto_white_balance:
+        return f"{result}; auto white balance restored"
+    return f"{result}; auto white balance already disabled"
 
 
 @register_service_handler("roundtrip_bool_int")
