@@ -336,6 +336,12 @@ label {
   font-weight: 800;
 }
 
+.checkbox-field {
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  min-height: 38px;
+}
+
 input,
 select,
 textarea {
@@ -351,6 +357,13 @@ textarea {
     border-color 150ms ease,
     box-shadow 150ms ease,
     background 150ms ease;
+}
+
+.checkbox-field input {
+  width: 18px;
+  min-height: 18px;
+  padding: 0;
+  accent-color: var(--accent);
 }
 
 input::placeholder,

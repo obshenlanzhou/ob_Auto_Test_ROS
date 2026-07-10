@@ -465,6 +465,7 @@ def load_config() -> Dict[str, Any]:
         "performance_profile": config.get("performance_profile") or "gemini_330_series",
         "performance_scenario": config.get("performance_scenario") or "",
         "run_count": config.get("run_count") or "1",
+        "continue_on_error": config.get("continue_on_error", False),
         "duration": config.get("duration") or "",
         "stable_seconds": config.get("stable_seconds") or "10",
         "stream_timeout": config.get("stream_timeout") or "60",
@@ -492,6 +493,7 @@ def save_config(payload: Dict[str, Any]) -> Dict[str, Any]:
         "performance_profile",
         "performance_scenario",
         "run_count",
+        "continue_on_error",
         "duration",
         "stable_seconds",
         "stream_timeout",
@@ -534,6 +536,12 @@ def _parse_multiline_values(raw: Any) -> List[str]:
 def _parse_run_count(raw: Any) -> int:
     text = _safe_text(raw) or "1"
     return int(text)
+
+
+def _bool_value(raw: Any) -> bool:
+    if isinstance(raw, bool):
+        return raw
+    return _safe_text(raw).lower() in {"1", "true", "yes", "on"}
 
 
 def _build_runner_args(payload: Dict[str, Any], mode: str, results_dir: Path) -> List[str]:
@@ -595,12 +603,33 @@ def _quote_command(args: List[str]) -> str:
     return " ".join(shlex.quote(item) for item in args)
 
 
-def _append_runner_command(commands: List[str], displayed: List[str], args: List[str]) -> None:
+def _append_runner_command(
+    commands: List[str],
+    displayed: List[str],
+    args: List[str],
+    *,
+    continue_on_error: bool,
+) -> None:
     command_line = _quote_command(args)
     displayed.append(command_line)
     commands.append(f"echo {shlex.quote(f'[UI] command: {command_line}')}")
-    commands.append(command_line)
-    commands.append("echo '[UI] command done'")
+    if not continue_on_error:
+        commands.append(command_line)
+        commands.append("echo '[UI] command done'")
+        return
+    commands.extend(
+        [
+            f"if {command_line}; then",
+            "  echo '[UI] command done'",
+            "else",
+            "  UI_COMMAND_STATUS=$?",
+            "  echo \"[UI] command failed with exit code ${UI_COMMAND_STATUS}; continuing\"",
+            "  echo '[UI] command done'",
+            "  if [ \"${UI_COMMAND_STATUS}\" -ge 128 ]; then exit \"${UI_COMMAND_STATUS}\"; fi",
+            "  if [ \"${UI_EXIT_CODE}\" -eq 0 ]; then UI_EXIT_CODE=\"${UI_COMMAND_STATUS}\"; fi",
+            "fi",
+        ]
+    )
 
 
 def _matching_setup_variant(path: str, suffix: str) -> str:
@@ -647,6 +676,9 @@ def _build_shell_script(payload: Dict[str, Any], run_root: Path) -> tuple[str, L
 
     displayed: List[str] = []
     run_count = _parse_run_count(payload.get("run_count"))
+    continue_on_error = _bool_value(payload.get("continue_on_error"))
+    if continue_on_error:
+        commands.append("UI_EXIT_CODE=0")
     for iteration in range(1, run_count + 1):
         iteration_root = run_root / f"iteration_{iteration:02d}" if run_count > 1 else run_root
         if run_count > 1:
@@ -655,17 +687,19 @@ def _build_shell_script(payload: Dict[str, Any], run_root: Path) -> tuple[str, L
         if mode in ("functional", "all"):
             functional_dir = iteration_root / "functional" if mode == "all" else iteration_root
             args = _build_runner_args(payload, "functional", functional_dir)
-            _append_runner_command(commands, displayed, args)
+            _append_runner_command(commands, displayed, args, continue_on_error=continue_on_error)
         if mode in ("performance", "all"):
             performance_dir = iteration_root / "performance" if mode == "all" else iteration_root
             args = _build_runner_args(payload, "performance", performance_dir)
-            _append_runner_command(commands, displayed, args)
+            _append_runner_command(commands, displayed, args, continue_on_error=continue_on_error)
         if mode == "restart":
             args = _build_runner_args(payload, "restart", iteration_root)
-            _append_runner_command(commands, displayed, args)
+            _append_runner_command(commands, displayed, args, continue_on_error=continue_on_error)
         if mode == "stream_stall":
             args = _build_runner_args(payload, "stream_stall", iteration_root)
-            _append_runner_command(commands, displayed, args)
+            _append_runner_command(commands, displayed, args, continue_on_error=continue_on_error)
+    if continue_on_error:
+        commands.append("exit \"${UI_EXIT_CODE}\"")
 
     return "\n".join(commands), displayed, shell
 
@@ -847,6 +881,7 @@ class RunManager:
                 or "gemini_330_series",
                 "performance_scenario": payload.get("performance_scenario") or "",
                 "run_count": payload.get("run_count") or "1",
+                "continue_on_error": _bool_value(payload.get("continue_on_error")),
                 "duration": payload.get("duration") or "",
                 "stable_seconds": payload.get("stable_seconds") or "10",
                 "stream_timeout": payload.get("stream_timeout") or "60",

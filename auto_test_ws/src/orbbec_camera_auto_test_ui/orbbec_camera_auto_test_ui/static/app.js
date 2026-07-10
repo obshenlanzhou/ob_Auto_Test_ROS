@@ -62,6 +62,7 @@ function formPayload() {
     performance_profile: $("performanceProfile").value,
     performance_scenario: $("performanceScenario").value,
     run_count: $("runCount").value.trim(),
+    continue_on_error: $("continueOnError").checked,
     duration: $("duration").value.trim(),
     stable_seconds: $("stableSeconds").value.trim(),
     stream_timeout: $("streamTimeout").value.trim(),
@@ -79,6 +80,11 @@ function formPayload() {
     launch_file: $("launchFile").value.trim(),
     launch_args: $("launchArgs").value,
   };
+}
+
+function truthy(value) {
+  if (value === true) return true;
+  return ["1", "true", "yes", "on"].includes(String(value || "").toLowerCase());
 }
 
 function setStatus(status) {
@@ -409,6 +415,7 @@ async function loadConfig() {
   $("cameraSetup").value = config.camera_setup || "";
   $("mode").value = config.mode || "functional";
   $("runCount").value = config.run_count || "1";
+  $("continueOnError").checked = truthy(config.continue_on_error);
   $("duration").value = config.duration || "";
   $("stableSeconds").value = config.stable_seconds || "10";
   $("streamTimeout").value = config.stream_timeout || "60";
