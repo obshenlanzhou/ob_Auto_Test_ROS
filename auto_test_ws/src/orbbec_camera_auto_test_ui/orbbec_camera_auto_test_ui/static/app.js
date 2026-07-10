@@ -29,11 +29,11 @@ const DEFAULT_SETUPS = {
 };
 const DEFAULT_LAUNCH_FILES = {
   "2": {
-    gemini_305: "gemini305.launch.py",
+    gemini_301: "gemini_301_series.launch.py",
     gemini_330: "gemini_330_series.launch.py",
   },
   "1": {
-    gemini_305: "gemini305.launch",
+    gemini_301: "gemini_301_series.launch",
     gemini_330: "gemini_330_series.launch",
   },
 };

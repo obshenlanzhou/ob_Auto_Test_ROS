@@ -43,11 +43,11 @@ DEFAULT_CAMERA_SETUP = _setup_from_env("ORBBEC_ROS2_CAMERA_SETUP", "ORBBEC_DRIVE
 DEFAULT_ROS1_CAMERA_SETUP = _setup_from_env("ORBBEC_ROS1_CAMERA_SETUP")
 DEFAULT_LAUNCH_FILES = {
     "2": {
-        "gemini_305": "gemini305.launch.py",
+        "gemini_301": "gemini_301_series.launch.py",
         "gemini_330": "gemini_330_series.launch.py",
     },
     "1": {
-        "gemini_305": "gemini305.launch",
+        "gemini_301": "gemini_301_series.launch",
         "gemini_330": "gemini_330_series.launch",
     },
 }

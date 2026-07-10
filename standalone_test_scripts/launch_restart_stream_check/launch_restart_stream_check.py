@@ -15,9 +15,9 @@ from typing import Any, Dict, List, Optional
 
 
 DEFAULT_CAMERA_LAUNCH = {
-    ("2", "gemini_305"): "gemini305.launch.py",
+    ("2", "gemini_301"): "gemini_301_series.launch.py",
     ("2", "gemini_330"): "gemini_330_series.launch.py",
-    ("1", "gemini_305"): "gemini305.launch",
+    ("1", "gemini_301"): "gemini_301_series.launch",
     ("1", "gemini_330"): "gemini_330_series.launch",
 }
 ENV_READY_VAR = "LAUNCH_RESTART_STREAM_CHECK_ENV_READY"
@@ -817,7 +817,7 @@ def parse_args():
             "  python3 ./launch_restart_stream_check/launch_restart_stream_check.py --ros-version 2 "
             "--ros-setup /opt/ros/humble/setup.bash "
             "--driver-setup /path/to/camera_ws/install/setup.bash "
-            "--camera-model gemini_305 --duration 1h\n\n"
+            "--camera-model gemini_301 --duration 1h\n\n"
             "  python3 ./launch_restart_stream_check/launch_restart_stream_check.py --launch-file /path/to/multi_camera.launch.py "
             "--duration 1h\n\n"
             "  python3 ./launch_restart_stream_check/launch_restart_stream_check.py --launch-file /path/to/test.launch.py "
@@ -827,7 +827,7 @@ def parse_args():
     parser.add_argument("--ros-version", choices=("1", "2"), default=os.environ.get("ROS_VERSION", "2"))
     parser.add_argument("--ros-setup", default=os.environ.get("ORBBEC_ROS_SETUP", ""))
     parser.add_argument("--driver-setup", default=os.environ.get("ORBBEC_CAMERA_SETUP", ""))
-    parser.add_argument("--camera-model", default="", help="Optional built-in default launch selector, e.g. gemini_305")
+    parser.add_argument("--camera-model", default="", help="Optional built-in default launch selector, e.g. gemini_301")
     parser.add_argument("--launch-package", default="orbbec_camera")
     parser.add_argument("--launch-file", default="", help="Launch filename or absolute/relative launch path")
     parser.add_argument("--launch-arg", action="append", default=[], help="Extra launch arg, KEY=VALUE or KEY:=VALUE")
