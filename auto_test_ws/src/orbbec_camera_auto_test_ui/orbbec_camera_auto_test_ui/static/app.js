@@ -61,6 +61,7 @@ function formPayload() {
     functional_profile: $("functionalProfile").value,
     performance_profile: $("performanceProfile").value,
     performance_scenario: $("performanceScenario").value,
+    run_count: $("runCount").value.trim(),
     duration: $("duration").value.trim(),
     stable_seconds: $("stableSeconds").value.trim(),
     stream_timeout: $("streamTimeout").value.trim(),
@@ -407,6 +408,7 @@ async function loadConfig() {
   $("rosSetup").value = config.ros_setup || "";
   $("cameraSetup").value = config.camera_setup || "";
   $("mode").value = config.mode || "functional";
+  $("runCount").value = config.run_count || "1";
   $("duration").value = config.duration || "";
   $("stableSeconds").value = config.stable_seconds || "10";
   $("streamTimeout").value = config.stream_timeout || "60";

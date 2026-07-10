@@ -197,6 +197,23 @@ def _float_value(payload: Dict[str, str], key: str, default: float = 0.0) -> flo
         return default
 
 
+def _parse_datetime(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def _wall_elapsed_seconds(started_at: str | None, ended_at: str | None) -> float:
+    start = _parse_datetime(started_at)
+    if start is None:
+        return 0.0
+    end = _parse_datetime(ended_at) or datetime.now()
+    return max(0.0, (end - start).total_seconds())
+
+
 def _duration_like_value(value: str) -> float:
     raw = str(value).strip().lower()
     multiplier = 1.0
@@ -298,7 +315,12 @@ def _camera_name_from_topic(topic_name: str) -> str:
     return ""
 
 
-def build_performance_metrics(run_root: Path) -> Dict[str, Any]:
+def build_performance_metrics(
+    run_root: Path,
+    *,
+    started_at: str | None = None,
+    ended_at: str | None = None,
+) -> Dict[str, Any]:
     system_path = _latest_file(run_root, "system_usage.csv")
     fps_path = _latest_file(run_root, "fps.csv")
     system_rows = _read_latest_csv_rows(system_path) if system_path else []
@@ -320,10 +342,11 @@ def build_performance_metrics(run_root: Path) -> Dict[str, Any]:
     if preferred_system_row is None:
         preferred_system_row = system_row
 
-    elapsed_seconds = max(
+    sampled_elapsed_seconds = max(
         _float_value(system_row, "elapsed_seconds"),
         _float_value(fps_row, "elapsed_seconds"),
     )
+    elapsed_seconds = sampled_elapsed_seconds or _wall_elapsed_seconds(started_at, ended_at)
     stream_configs = _read_stream_config_from_launch_log(run_root)
     topics: List[Dict[str, Any]] = []
     suffixes = (
@@ -392,6 +415,7 @@ def build_performance_metrics(run_root: Path) -> Dict[str, Any]:
     return {
         "available": bool(system_row or fps_row),
         "elapsed_seconds": elapsed_seconds,
+        "sampled_elapsed_seconds": sampled_elapsed_seconds,
         "pid_count": _int_value(preferred_system_row, "pid_count"),
         "cpu_percent": _float_value(preferred_system_row, "cpu_percent"),
         "memory_rss_mb": _float_value(preferred_system_row, "memory_rss_mb"),
@@ -440,6 +464,7 @@ def load_config() -> Dict[str, Any]:
         "functional_profile": config.get("functional_profile") or "gemini_330_series",
         "performance_profile": config.get("performance_profile") or "gemini_330_series",
         "performance_scenario": config.get("performance_scenario") or "",
+        "run_count": config.get("run_count") or "1",
         "duration": config.get("duration") or "",
         "stable_seconds": config.get("stable_seconds") or "10",
         "stream_timeout": config.get("stream_timeout") or "60",
@@ -466,6 +491,7 @@ def save_config(payload: Dict[str, Any]) -> Dict[str, Any]:
         "functional_profile",
         "performance_profile",
         "performance_scenario",
+        "run_count",
         "duration",
         "stable_seconds",
         "stream_timeout",
@@ -503,6 +529,11 @@ def _parse_multiline_values(raw: Any) -> List[str]:
     if isinstance(raw, list):
         return [str(item).strip() for item in raw if str(item).strip()]
     return [line.strip() for line in str(raw or "").splitlines() if line.strip()]
+
+
+def _parse_run_count(raw: Any) -> int:
+    text = _safe_text(raw) or "1"
+    return int(text)
 
 
 def _build_runner_args(payload: Dict[str, Any], mode: str, results_dir: Path) -> List[str]:
@@ -564,6 +595,14 @@ def _quote_command(args: List[str]) -> str:
     return " ".join(shlex.quote(item) for item in args)
 
 
+def _append_runner_command(commands: List[str], displayed: List[str], args: List[str]) -> None:
+    command_line = _quote_command(args)
+    displayed.append(command_line)
+    commands.append(f"echo {shlex.quote(f'[UI] command: {command_line}')}")
+    commands.append(command_line)
+    commands.append("echo '[UI] command done'")
+
+
 def _matching_setup_variant(path: str, suffix: str) -> str:
     setup_path = Path(path)
     if setup_path.name not in {"setup.bash", "setup.zsh"}:
@@ -607,26 +646,26 @@ def _build_shell_script(payload: Dict[str, Any], run_root: Path) -> tuple[str, L
     commands.append(f"cd {shlex.quote(str(AUTO_TEST_WS))}")
 
     displayed: List[str] = []
-    if mode in ("functional", "all"):
-        functional_dir = run_root / "functional" if mode == "all" else run_root
-        args = _build_runner_args(payload, "functional", functional_dir)
-        displayed.append(_quote_command(args))
-        commands.append(_quote_command(args))
-    if mode in ("performance", "all"):
-        performance_dir = run_root / "performance" if mode == "all" else run_root
-        args = _build_runner_args(payload, "performance", performance_dir)
-        displayed.append(_quote_command(args))
-        commands.append(_quote_command(args))
-    if mode == "restart":
-        restart_dir = run_root
-        args = _build_runner_args(payload, "restart", restart_dir)
-        displayed.append(_quote_command(args))
-        commands.append(_quote_command(args))
-    if mode == "stream_stall":
-        stream_stall_dir = run_root
-        args = _build_runner_args(payload, "stream_stall", stream_stall_dir)
-        displayed.append(_quote_command(args))
-        commands.append(_quote_command(args))
+    run_count = _parse_run_count(payload.get("run_count"))
+    for iteration in range(1, run_count + 1):
+        iteration_root = run_root / f"iteration_{iteration:02d}" if run_count > 1 else run_root
+        if run_count > 1:
+            commands.append(f"echo {shlex.quote(f'[UI] starting iteration {iteration}/{run_count}')}")
+
+        if mode in ("functional", "all"):
+            functional_dir = iteration_root / "functional" if mode == "all" else iteration_root
+            args = _build_runner_args(payload, "functional", functional_dir)
+            _append_runner_command(commands, displayed, args)
+        if mode in ("performance", "all"):
+            performance_dir = iteration_root / "performance" if mode == "all" else iteration_root
+            args = _build_runner_args(payload, "performance", performance_dir)
+            _append_runner_command(commands, displayed, args)
+        if mode == "restart":
+            args = _build_runner_args(payload, "restart", iteration_root)
+            _append_runner_command(commands, displayed, args)
+        if mode == "stream_stall":
+            args = _build_runner_args(payload, "stream_stall", iteration_root)
+            _append_runner_command(commands, displayed, args)
 
     return "\n".join(commands), displayed, shell
 
@@ -663,6 +702,13 @@ def validate_run_payload(payload: Dict[str, Any]) -> List[str]:
             errors.append(f"launch arg must be KEY=VALUE: {launch_arg}")
     if mode in {"restart", "stream_stall"} and not _safe_text(payload.get("duration")):
         errors.append("duration is required for this mode")
+
+    run_count = _safe_text(payload.get("run_count")) or "1"
+    try:
+        if int(run_count) <= 0:
+            errors.append("run_count must be > 0")
+    except ValueError:
+        errors.append(f"run_count must be an integer: {run_count}")
 
     for key in ("duration", "stable_seconds", "stream_timeout", "max_gap_seconds", "warmup_sec"):
         value = _safe_text(payload.get(key))
@@ -710,6 +756,14 @@ class TestJob:
     logs: List[str] = field(default_factory=list)
     lock: threading.Lock = field(default_factory=threading.Lock)
 
+    def add_command_line(self, command_line: str) -> None:
+        with self.lock:
+            self.command_lines = [command_line]
+
+    def clear_command_line(self) -> None:
+        with self.lock:
+            self.command_lines = []
+
     def add_log(self, line: str) -> None:
         text = line.rstrip("\n")
         with self.lock:
@@ -724,6 +778,7 @@ class TestJob:
     def snapshot(self, log_offset: int = 0) -> Dict[str, Any]:
         with self.lock:
             logs = list(self.logs)
+            command_lines = list(self.command_lines)
         return {
             "run_id": self.run_id,
             "mode": self.mode,
@@ -732,9 +787,13 @@ class TestJob:
             "started_at": self.started_at,
             "ended_at": self.ended_at,
             "results_dir": str(self.run_root),
-            "command_lines": self.command_lines,
+            "command_lines": command_lines,
             "shell": self.shell,
-            "performance": build_performance_metrics(self.run_root),
+            "performance": build_performance_metrics(
+                self.run_root,
+                started_at=self.started_at,
+                ended_at=self.ended_at,
+            ),
             "restart": build_restart_metrics(self.run_root),
             "log_offset": len(logs),
             "logs": logs[log_offset:],
@@ -787,6 +846,7 @@ class RunManager:
                 or payload.get("profile")
                 or "gemini_330_series",
                 "performance_scenario": payload.get("performance_scenario") or "",
+                "run_count": payload.get("run_count") or "1",
                 "duration": payload.get("duration") or "",
                 "stable_seconds": payload.get("stable_seconds") or "10",
                 "stream_timeout": payload.get("stream_timeout") or "60",
@@ -819,7 +879,7 @@ class RunManager:
             run_id=run_id,
             mode=mode,
             run_root=run_root,
-            command_lines=command_lines,
+            command_lines=[],
             shell=shell,
         )
         with self._lock:
@@ -848,8 +908,6 @@ class RunManager:
         job.add_log(f"[UI] run id: {job.run_id}")
         job.add_log(f"[UI] results dir: {job.run_root}")
         job.add_log(f"[UI] shell: {job.shell}")
-        for line in job.command_lines:
-            job.add_log(f"[UI] command: {line}")
 
         try:
             job.process = subprocess.Popen(
@@ -862,6 +920,11 @@ class RunManager:
             )
             assert job.process.stdout is not None
             for line in job.process.stdout:
+                text = line.rstrip("\n")
+                if text.startswith("[UI] command: "):
+                    job.add_command_line(text.removeprefix("[UI] command: ").strip())
+                elif text == "[UI] command done":
+                    job.clear_command_line()
                 job.add_log(line)
             job.exit_code = job.process.wait()
             if job.status == "stopping" or job.exit_code == 130:

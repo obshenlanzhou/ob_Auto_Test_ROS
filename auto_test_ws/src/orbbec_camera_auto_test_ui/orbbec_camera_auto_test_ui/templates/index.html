@@ -90,6 +90,11 @@
                 <select id="cameraModel" name="camera_model"></select>
               </label>
 
+              <label>
+                运行次数
+                <input id="runCount" name="run_count" type="number" min="1" step="1" placeholder="1" />
+              </label>
+
               <label id="functionalProfileField">
                 功能 Profile
                 <select id="functionalProfile" name="functional_profile"></select>
@@ -226,7 +231,7 @@
           <section class="performance-panel">
             <div class="perf-metrics">
               <div class="perf-metric">
-                <span>压测时间</span>
+                <span>运行时间</span>
                 <strong id="perfElapsed">--:--:--</strong>
               </div>
               <div class="perf-metric">
