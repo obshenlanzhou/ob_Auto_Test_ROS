@@ -37,12 +37,26 @@ def resolve_message_type(type_name: str, ros_version: str = "2"):
     return getattr(module, message_name)
 
 
+def ros_message_type_name(type_name: str, ros_version: str = "2") -> str:
+    package_name, message_name = _split_ros_type(type_name)
+    if str(ros_version) == "1":
+        return f"{_ros1_package_name(package_name)}/{message_name}"
+    return f"{package_name}/msg/{message_name}"
+
+
 def resolve_service_type(type_name: str, ros_version: str = "2"):
     package_name, service_name = _split_ros_type(type_name)
     if str(ros_version) == "1":
         package_name = _ros1_package_name(package_name)
     module = importlib.import_module(f"{package_name}.srv")
     return getattr(module, service_name)
+
+
+def ros_service_type_name(type_name: str, ros_version: str = "2") -> str:
+    package_name, service_name = _split_ros_type(type_name)
+    if str(ros_version) == "1":
+        return f"{_ros1_package_name(package_name)}/{service_name}"
+    return f"{package_name}/srv/{service_name}"
 
 
 def make_qos_profile(name: str, ros_version: str = "2"):
@@ -207,6 +221,85 @@ class RosHarness:
             )
         finally:
             self.node.destroy_client(client)
+
+    def topic_is_supported(
+        self, topic_name: str, type_name: Optional[str] = None
+    ) -> tuple[bool, str]:
+        topic_name = resolve_topic_name(topic_name, self.ros_version)
+        expected_type = ros_message_type_name(type_name, self.ros_version) if type_name else ""
+
+        if self.ros_version == "1":
+            try:
+                published_topics = self._rospy.get_published_topics()
+            except Exception as exc:  # noqa: BLE001
+                return False, f"unable to list ROS1 topics: {exc}"
+            for current_name, current_type in published_topics:
+                if current_name != topic_name:
+                    continue
+                if not expected_type or current_type == expected_type:
+                    return True, "topic advertised"
+                return (
+                    False,
+                    (
+                        f"topic type mismatch for {topic_name}: "
+                        f"expected {expected_type}, got {current_type}"
+                    ),
+                )
+            return False, f"topic not advertised: {topic_name}"
+
+        for current_name, current_types in self.node.get_topic_names_and_types():
+            if current_name != topic_name:
+                continue
+            if not expected_type or expected_type in current_types:
+                return True, "topic advertised"
+            actual_types = ", ".join(current_types) or "<unknown>"
+            return (
+                False,
+                (
+                    f"topic type mismatch for {topic_name}: "
+                    f"expected {expected_type}, got {actual_types}"
+                ),
+            )
+        return False, f"topic not advertised: {topic_name}"
+
+    def service_is_supported(
+        self, service_name: str, type_name: Optional[str] = None
+    ) -> tuple[bool, str]:
+        if self.ros_version == "1":
+            import rosservice
+
+            try:
+                service_names = rosservice.get_service_list()
+            except Exception as exc:  # noqa: BLE001
+                return False, f"unable to list ROS1 services: {exc}"
+            if service_name not in service_names:
+                return False, f"service not advertised: {service_name}"
+            if not type_name:
+                return True, "service advertised"
+            try:
+                actual_type = rosservice.get_service_type(service_name)
+            except Exception as exc:  # noqa: BLE001
+                return False, f"unable to query service type for {service_name}: {exc}"
+            expected_type = ros_service_type_name(type_name, self.ros_version)
+            if actual_type and actual_type != expected_type:
+                return (
+                    False,
+                    f"service type mismatch for {service_name}: expected {expected_type}, got {actual_type}",
+                )
+            return True, "service advertised"
+
+        expected_type = ros_service_type_name(type_name, self.ros_version) if type_name else ""
+        for current_name, current_types in self.node.get_service_names_and_types():
+            if current_name != service_name:
+                continue
+            if not expected_type or expected_type in current_types:
+                return True, "service advertised"
+            actual_types = ", ".join(current_types) or "<unknown>"
+            return (
+                False,
+                f"service type mismatch for {service_name}: expected {expected_type}, got {actual_types}",
+            )
+        return False, f"service not advertised: {service_name}"
 
     def wait_for_publishers(self, topic_name: str, timeout: float = 30.0) -> None:
         topic_name = resolve_topic_name(topic_name, self.ros_version)

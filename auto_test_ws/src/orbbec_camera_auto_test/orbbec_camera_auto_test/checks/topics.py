@@ -13,6 +13,24 @@ def _emit_status(emit_status, message: str) -> None:
         emit_status(message)
 
 
+def _topic_support_reason(harness, spec: TopicSpec) -> str:
+    checks = [(spec.name, spec.type)]
+    if spec.paired_topic:
+        checks.append((spec.paired_topic, ""))
+
+    for topic_name, type_name in checks:
+        supported, reason = harness.topic_is_supported(topic_name, type_name)
+        if not supported:
+            return reason
+    return ""
+
+
+def _mark_topic_skipped(result: Dict[str, Any], reason: str) -> Dict[str, Any]:
+    result["status"] = "skipped"
+    result["message"] = reason
+    return result
+
+
 def run_topic_checks(harness, topic_specs: List[TopicSpec], log_path, emit_status=None) -> List[Dict[str, Any]]:
     results: List[Dict[str, Any]] = []
     cached_messages: Dict[str, Any] = {}
@@ -40,9 +58,15 @@ def run_topic_checks(harness, topic_specs: List[TopicSpec], log_path, emit_statu
             append_log(log_path, f"[TOPIC] PASS {spec.name}")
             _emit_status(emit_status, f"[TOPIC][PASS] {spec.name}")
         except Exception as exc:  # noqa: BLE001
-            result["status"] = "failed"
-            result["message"] = str(exc)
-            append_log(log_path, f"[TOPIC] FAIL {spec.name}: {exc}")
-            _emit_status(emit_status, f"[TOPIC][FAIL] {spec.name}: {exc}")
+            unsupported_reason = _topic_support_reason(harness, spec)
+            if unsupported_reason:
+                _mark_topic_skipped(result, unsupported_reason)
+                append_log(log_path, f"[TOPIC] SKIP {spec.name}: {unsupported_reason}")
+                _emit_status(emit_status, f"[TOPIC][SKIP] {spec.name}: {unsupported_reason}")
+            else:
+                result["status"] = "failed"
+                result["message"] = str(exc)
+                append_log(log_path, f"[TOPIC] FAIL {spec.name}: {exc}")
+                _emit_status(emit_status, f"[TOPIC][FAIL] {spec.name}: {exc}")
         results.append(result)
     return results

@@ -67,12 +67,37 @@ def _destroy_keepalive_subscriptions(harness, subscriptions) -> None:
         harness.node.destroy_subscription(subscription)
 
 
+def _service_support_reason(harness, spec: ServiceSpec) -> str:
+    checks = [(spec.name, spec.type)]
+    if spec.getter_name:
+        checks.append((spec.getter_name, spec.getter_type or ""))
+
+    for service_name, type_name in checks:
+        supported, reason = harness.service_is_supported(service_name, type_name)
+        if not supported:
+            return reason
+    return ""
+
+
+def _mark_service_skipped(result: Dict[str, Any], reason: str) -> Dict[str, Any]:
+    result["status"] = "skipped"
+    result["message"] = reason
+    return result
+
+
 def run_service_checks(harness, service_specs: List[ServiceSpec], log_path, emit_status=None) -> List[Dict[str, Any]]:
     results: List[Dict[str, Any]] = []
     for spec in service_specs:
         result = {"name": spec.name, "type": spec.type, "mode": spec.mode, "status": "passed"}
         append_log(log_path, f"[SERVICE] Checking {spec.name} ({spec.mode})")
         _emit_status(emit_status, f"[SERVICE] checking {spec.name} ({spec.mode})")
+        unsupported_reason = _service_support_reason(harness, spec)
+        if unsupported_reason:
+            _mark_service_skipped(result, unsupported_reason)
+            append_log(log_path, f"[SERVICE] SKIP {spec.name}: {unsupported_reason}")
+            _emit_status(emit_status, f"[SERVICE][SKIP] {spec.name}: {unsupported_reason}")
+            results.append(result)
+            continue
         try:
             result["message"] = get_service_handler(spec.mode)(harness, spec)
             append_log(log_path, f"[SERVICE] PASS {spec.name}")
@@ -99,6 +124,13 @@ def run_artifact_service_checks(
         result = {"name": spec.name, "type": spec.type, "mode": spec.mode, "status": "passed"}
         append_log(log_path, f"[ARTIFACT] Checking {spec.name} -> {target_dir}")
         _emit_status(emit_status, f"[ARTIFACT] checking {spec.name}")
+        unsupported_reason = _service_support_reason(harness, spec)
+        if unsupported_reason:
+            _mark_service_skipped(result, unsupported_reason)
+            append_log(log_path, f"[ARTIFACT] SKIP {spec.name}: {unsupported_reason}")
+            _emit_status(emit_status, f"[ARTIFACT][SKIP] {spec.name}: {unsupported_reason}")
+            results.append(result)
+            continue
         subscriptions = []
         received_counts: Dict[str, int] = {}
         try:
@@ -156,6 +188,12 @@ def run_reboot_check(
     append_log(log_path, f"[REBOOT] Checking {reboot_spec.name}")
     _emit_status(emit_status, f"[REBOOT] checking {reboot_spec.name}")
     result = {"name": reboot_spec.name, "type": reboot_spec.type, "status": "passed", "message": ""}
+    unsupported_reason = _service_support_reason(harness, reboot_spec)
+    if unsupported_reason:
+        _mark_service_skipped(result, unsupported_reason)
+        append_log(log_path, f"[REBOOT] SKIP {reboot_spec.name}: {unsupported_reason}")
+        _emit_status(emit_status, f"[REBOOT][SKIP] {reboot_spec.name}: {unsupported_reason}")
+        return result
     try:
         reboot_type = resolve_service_type(reboot_spec.type, harness.ros_version)
         harness.call_service(reboot_spec.name, reboot_type, request_data={}, timeout=30.0)
