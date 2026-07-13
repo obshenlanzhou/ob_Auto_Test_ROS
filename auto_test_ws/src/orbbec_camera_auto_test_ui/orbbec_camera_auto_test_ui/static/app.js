@@ -9,6 +9,7 @@ const state = {
   cameras: [],
   logOffset: 0,
   polling: null,
+  selectedRunId: null,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -89,8 +90,13 @@ function truthy(value) {
 
 function setStatus(status) {
   const node = $("runStatus");
-  node.textContent = status || "idle";
-  node.className = `status-pill ${status || "idle"}`;
+  const value = status || "idle";
+  const dot = document.createElement("i");
+  dot.setAttribute("aria-hidden", "true");
+  const label = document.createElement("span");
+  label.textContent = value;
+  node.replaceChildren(dot, label);
+  node.className = `status-pill ${value}`;
   const running = ["starting", "running", "stopping"].includes(status);
   $("startButton").disabled = running;
   $("stopButton").disabled = !running;
@@ -115,9 +121,37 @@ function appendLogs(lines = []) {
   if (visibleLines.length > MAX_VISIBLE_LOG_LINES + 1) {
     log.textContent = `${visibleLines.slice(-(MAX_VISIBLE_LOG_LINES + 1)).join("\n")}`;
   }
-  if (atBottom) {
+  const shouldFollow = $("followLogs")?.checked ?? true;
+  if (shouldFollow && atBottom) {
     log.scrollTop = log.scrollHeight;
   }
+}
+
+async function copyLogs() {
+  const button = $("copyLogs");
+  const logs = $("logOutput").textContent;
+  if (!logs) return;
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(logs);
+    } else {
+      const fallback = document.createElement("textarea");
+      fallback.value = logs;
+      fallback.style.position = "fixed";
+      fallback.style.opacity = "0";
+      document.body.appendChild(fallback);
+      fallback.select();
+      document.execCommand("copy");
+      fallback.remove();
+    }
+    button.textContent = "已复制";
+  } catch (error) {
+    appendLogs([`[UI] copy failed: ${error.message}`]);
+    button.textContent = "复制失败";
+  }
+  window.setTimeout(() => {
+    button.textContent = "复制";
+  }, 1400);
 }
 
 function formatDuration(seconds) {
@@ -437,7 +471,7 @@ async function loadProfiles() {
     performance: payload.profiles_by_type?.performance || [],
   };
   state.cameras = [...new Set(allProfiles().map((profile) => profile.camera).filter(Boolean))].sort();
-  $("profileCount").textContent = `${state.profiles.functional.length}/${state.profiles.performance.length}`;
+  $("profileCount").textContent = `${state.profiles.functional.length} 功能 · ${state.profiles.performance.length} 性能`;
   fillCameraSelect(inferCameraFromConfig());
   refreshProfileSelects();
 }
@@ -452,8 +486,8 @@ async function pollStatus() {
       $("currentMode").textContent = payload.mode || "-";
     } else {
       $("runMeta").textContent = "";
-      $("currentRunId").textContent = "-";
-      $("currentMode").textContent = "-";
+      $("currentRunId").textContent = "未运行";
+      $("currentMode").textContent = "—";
     }
     if (payload.command_lines) {
       renderCommands(payload.command_lines);
@@ -508,6 +542,7 @@ async function deleteRun(runId) {
   try {
     await api(`/api/runs/${encodeURIComponent(runId)}`, { method: "DELETE" });
     if ($("reportTitle").textContent === runId) {
+      state.selectedRunId = null;
       $("reportTitle").textContent = "";
       $("reportView").textContent = "选择一条历史记录查看结果。";
     }
@@ -519,7 +554,8 @@ async function deleteRun(runId) {
 
 function runItem(run) {
   const item = document.createElement("div");
-  item.className = "run-item";
+  item.className = `run-item${run.run_id === state.selectedRunId ? " selected" : ""}`;
+  item.dataset.runId = run.run_id;
 
   const title = document.createElement("div");
   title.className = "run-title";
@@ -585,6 +621,10 @@ function renderJsonSummary(results = {}) {
 
 async function loadRunDetail(runId) {
   const payload = await api(`/api/runs/${encodeURIComponent(runId)}`);
+  state.selectedRunId = runId;
+  for (const item of document.querySelectorAll(".run-item")) {
+    item.classList.toggle("selected", item.dataset.runId === runId);
+  }
   $("reportTitle").textContent = runId;
   const view = $("reportView");
   view.innerHTML = "";
@@ -618,6 +658,15 @@ async function init() {
   $("stopButton").addEventListener("click", stopRun);
   $("refreshProfiles").addEventListener("click", loadProfiles);
   $("refreshRuns").addEventListener("click", loadRuns);
+  $("copyLogs").addEventListener("click", copyLogs);
+  $("clearLogs").addEventListener("click", () => {
+    $("logOutput").textContent = "";
+  });
+  $("followLogs").addEventListener("change", () => {
+    if ($("followLogs").checked) {
+      $("logOutput").scrollTop = $("logOutput").scrollHeight;
+    }
+  });
   $("rosVersion").addEventListener("change", () => {
     const defaults = DEFAULT_SETUPS[$("rosVersion").value] || DEFAULT_SETUPS["2"];
     $("rosSetup").value = defaults.ros;

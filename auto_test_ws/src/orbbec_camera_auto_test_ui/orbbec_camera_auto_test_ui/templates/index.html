@@ -3,342 +3,255 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Orbbec Camera Auto Test</title>
+    <meta name="theme-color" content="#08111f" />
+    <title>Orbbec Test Console</title>
     <link rel="stylesheet" href="/static/style.css" />
   </head>
   <body>
+    <div class="ambient ambient-one" aria-hidden="true"></div>
+    <div class="ambient ambient-two" aria-hidden="true"></div>
+
     <main class="shell">
       <header class="topbar">
         <div class="brand">
-          <img class="brand-mark" src="/static/assets/console-avatar.png" alt="" aria-hidden="true" />
-          <div>
-            <p class="eyebrow">测试控制台</p>
-            <h1>Orbbec Camera Auto Test</h1>
-            <p id="workspacePath">加载工作区...</p>
+          <div class="brand-mark">
+            <img src="/static/assets/orbbec-github-avatar.png" alt="Orbbec" />
+          </div>
+          <div class="brand-copy">
+            <div class="brand-line">
+              <p class="eyebrow">ORBBEC · TEST LAB</p>
+              <span class="version-tag">ROS 1 / 2</span>
+            </div>
+            <h1>Camera Test Console</h1>
+            <p id="workspacePath">正在连接测试工作区...</p>
           </div>
         </div>
         <div class="status-stack">
-          <span>当前状态</span>
-          <div class="status-pill" id="runStatus">idle</div>
+          <span class="status-label">SYSTEM STATUS</span>
+          <div class="status-pill idle" id="runStatus" role="status" aria-live="polite">
+            <i aria-hidden="true"></i><span>idle</span>
+          </div>
         </div>
       </header>
 
       <section class="summary-strip" aria-label="运行概览">
-        <div class="metric">
-          <span>Run ID</span>
-          <strong id="currentRunId">-</strong>
+        <div class="metric metric-run">
+          <span class="metric-icon" aria-hidden="true">01</span>
+          <div><small>当前任务</small><strong id="currentRunId">未运行</strong></div>
         </div>
         <div class="metric">
-          <span>Mode</span>
-          <strong id="currentMode">-</strong>
+          <span class="metric-icon" aria-hidden="true">02</span>
+          <div><small>测试模式</small><strong id="currentMode">—</strong></div>
         </div>
         <div class="metric">
-          <span>Profiles</span>
-          <strong id="profileCount">-</strong>
+          <span class="metric-icon" aria-hidden="true">03</span>
+          <div><small>Profiles</small><strong id="profileCount">—</strong></div>
         </div>
       </section>
 
       <section class="layout">
         <form id="runForm" class="panel controls">
-          <div class="panel-header">
+          <div class="panel-header controls-header">
             <div>
+              <span class="panel-kicker">CONTROL DECK</span>
               <h2>测试配置</h2>
-              <p>环境、模式和 launch 参数</p>
+              <p>设定环境、测试策略与相机参数</p>
             </div>
-            <button type="button" class="ghost" id="refreshProfiles">刷新 Profile</button>
+            <button type="button" class="icon-button" id="refreshProfiles" title="刷新 Profile" aria-label="刷新 Profile">
+              <span aria-hidden="true">↻</span>
+            </button>
           </div>
 
-          <div class="form-section">
-            <div class="section-title">环境</div>
+          <section class="form-section">
+            <div class="section-title"><span>01</span><div>运行环境<small>Runtime environment</small></div></div>
             <div class="grid two">
               <label>
-                ROS version
+                <span>ROS 版本</span>
                 <select id="rosVersion" name="ros_version">
-                  <option value="2">ROS2</option>
-                  <option value="1">ROS1</option>
+                  <option value="2">ROS 2</option>
+                  <option value="1">ROS 1</option>
                 </select>
               </label>
-
               <label>
-                ROS setup
+                <span>ROS Setup</span>
                 <input id="rosSetup" name="ros_setup" autocomplete="off" />
               </label>
             </div>
-
             <label>
-              Camera ROS setup
+              <span>Camera ROS Setup</span>
               <input id="cameraSetup" name="camera_setup" autocomplete="off" placeholder="/path/to/orbbecsdk_ros2/install/setup.bash" />
             </label>
-          </div>
+          </section>
 
-          <div class="form-section">
-            <div class="section-title">测试</div>
+          <section class="form-section">
+            <div class="section-title"><span>02</span><div>测试策略<small>Test strategy</small></div></div>
             <div class="grid two test-grid">
               <label>
-                测试模式
+                <span>测试模式</span>
                 <select id="mode" name="mode">
-	                  <option value="functional">functional</option>
-	                  <option value="performance">performance</option>
-	                  <option value="restart">restart</option>
-	                  <option value="stream_stall">stream_stall</option>
-	                  <option value="all">all</option>
+                  <option value="functional">Functional · 功能</option>
+                  <option value="performance">Performance · 性能</option>
+                  <option value="restart">Restart · 重启</option>
+                  <option value="stream_stall">Stream stall · 卡流</option>
+                  <option value="all">All · 全部</option>
                 </select>
               </label>
-
               <label>
-                相机型号
+                <span>相机型号</span>
                 <select id="cameraModel" name="camera_model"></select>
               </label>
-
               <label>
-                运行次数
+                <span>运行次数</span>
                 <input id="runCount" name="run_count" type="number" min="1" step="1" placeholder="1" />
               </label>
-
               <label class="checkbox-field">
-                遇错继续
+                <span>遇错继续</span>
                 <input id="continueOnError" name="continue_on_error" type="checkbox" />
               </label>
-
               <label id="functionalProfileField">
-                功能 Profile
+                <span>功能 Profile</span>
                 <select id="functionalProfile" name="functional_profile"></select>
               </label>
-
               <label id="performanceProfileField">
-                性能 Profile
+                <span>性能 Profile</span>
                 <select id="performanceProfile" name="performance_profile"></select>
               </label>
-
               <label>
-                Performance scenario
+                <span>Performance Scenario</span>
                 <select id="performanceScenario" name="performance_scenario"></select>
               </label>
-
               <label>
-                Duration
+                <span>运行时长</span>
                 <input id="duration" name="duration" placeholder="300 / 15m / 2h" />
               </label>
             </div>
 
             <div id="restartFields" class="grid two restart-grid">
-              <label>
-                Stable seconds
-                <input id="stableSeconds" name="stable_seconds" placeholder="10" />
-              </label>
-
-              <label>
-                Stream timeout
-                <input id="streamTimeout" name="stream_timeout" placeholder="60" />
-              </label>
-
-              <label>
-                Max gap seconds
-                <input id="maxGapSeconds" name="max_gap_seconds" placeholder="1.5" />
-              </label>
-
-              <label>
-                Restart delay
-                <input id="restartDelay" name="restart_delay" placeholder="2" />
-              </label>
-
+              <label><span>Stable Seconds</span><input id="stableSeconds" name="stable_seconds" placeholder="10" /></label>
+              <label><span>Stream Timeout</span><input id="streamTimeout" name="stream_timeout" placeholder="60" /></label>
+              <label><span>Max Gap Seconds</span><input id="maxGapSeconds" name="max_gap_seconds" placeholder="1.5" /></label>
+              <label><span>Restart Delay</span><input id="restartDelay" name="restart_delay" placeholder="2" /></label>
             </div>
 
             <div id="streamStallFields" class="grid two">
+              <label><span>Warning Interval</span><input id="warningIntervalSec" name="warning_interval_sec" placeholder="1.0" /></label>
+              <label><span>Warmup Seconds</span><input id="warmupSec" name="warmup_sec" placeholder="2.0" /></label>
               <label>
-                Warning interval
-                <input id="warningIntervalSec" name="warning_interval_sec" placeholder="1.0" />
+                <span>保存 CSV</span>
+                <select id="saveCsv" name="save_csv"><option value="true">是</option><option value="false">否</option></select>
               </label>
-
-              <label>
-                Warmup seconds
-                <input id="warmupSec" name="warmup_sec" placeholder="2.0" />
-              </label>
-
-              <label>
-                Save CSV
-                <select id="saveCsv" name="save_csv">
-                  <option value="true">true</option>
-                  <option value="false">false</option>
-                </select>
-              </label>
-
-              <label>
-                Queue size
-                <input id="queueSize" name="queue_size" placeholder="10" />
-              </label>
+              <label><span>Queue Size</span><input id="queueSize" name="queue_size" placeholder="10" /></label>
             </div>
 
             <div id="streamTopicFields">
-              <label>
-                Image topics
-                <textarea id="imageTopics" name="image_topics" rows="3" placeholder="/{camera}/color/image_raw"></textarea>
-              </label>
+              <label><span>Image Topics</span><textarea id="imageTopics" name="image_topics" rows="3" placeholder="/{camera}/color/image_raw"></textarea></label>
             </div>
+          </section>
 
-          </div>
-
-          <div class="form-section">
-            <div class="section-title">相机</div>
-            <div class="grid two">
-              <label>
-                Camera name
-                <input id="cameraName" name="camera_name" placeholder="camera" />
-              </label>
-
-              <label>
-                Serial number
-                <input id="serialNumber" name="serial_number" />
-              </label>
+          <details class="form-section compact-section">
+            <summary class="section-title"><span>03</span><div>相机参数<small>Camera identity</small></div><i aria-hidden="true">⌄</i></summary>
+            <div class="section-content">
+              <div class="grid two">
+                <label><span>Camera Name</span><input id="cameraName" name="camera_name" placeholder="camera" /></label>
+                <label><span>Serial Number</span><input id="serialNumber" name="serial_number" /></label>
+                <label><span>USB Port</span><input id="usbPort" name="usb_port" /></label>
+                <label><span>Config File Path</span><input id="configFilePath" name="config_file_path" /></label>
+              </div>
             </div>
+          </details>
 
-            <div class="grid two">
-              <label>
-                USB port
-                <input id="usbPort" name="usb_port" />
-              </label>
-
-              <label>
-                Config file path
-                <input id="configFilePath" name="config_file_path" />
-              </label>
+          <details class="form-section compact-section">
+            <summary class="section-title"><span>04</span><div>Launch 参数<small>Advanced launch options</small></div><i aria-hidden="true">⌄</i></summary>
+            <div class="section-content">
+              <label><span>Launch File</span><input id="launchFile" name="launch_file" /></label>
+              <label><span>Extra Launch Args</span><textarea id="launchArgs" name="launch_args" rows="4" placeholder="enable_point_cloud=true"></textarea></label>
             </div>
-          </div>
-
-          <div class="form-section">
-            <div class="section-title">Launch</div>
-            <label>
-              Launch file
-              <input id="launchFile" name="launch_file" />
-            </label>
-
-            <label>
-              Extra launch args
-              <textarea id="launchArgs" name="launch_args" rows="4" placeholder="enable_point_cloud=true"></textarea>
-            </label>
-          </div>
+          </details>
 
           <div class="actions">
-            <button type="submit" class="primary" id="startButton">开始测试</button>
-            <button type="button" class="danger" id="stopButton">停止测试</button>
+            <button type="submit" class="primary" id="startButton"><span class="button-icon" aria-hidden="true">▶</span>开始测试</button>
+            <button type="button" class="danger" id="stopButton"><span class="button-icon" aria-hidden="true">■</span>停止</button>
           </div>
         </form>
 
         <section class="panel monitor">
-          <div class="panel-header">
+          <div class="panel-header monitor-header">
             <div>
-              <h2>运行状态</h2>
-              <p>命令、日志和实时输出</p>
+              <span class="panel-kicker">LIVE TELEMETRY</span>
+              <h2>运行监控</h2>
+              <p>进程资源、数据流与实时日志</p>
             </div>
-            <span id="runMeta"></span>
+            <span id="runMeta" class="run-meta"></span>
           </div>
+
           <div class="command-box" id="commandBox"></div>
+
           <section class="performance-panel">
             <div class="perf-metrics">
-              <div class="perf-metric">
-                <span>运行时间</span>
-                <strong id="perfElapsed">--:--:--</strong>
-              </div>
-              <div class="perf-metric">
-                <span>CPU</span>
-                <strong id="perfCpu">--</strong>
-              </div>
-              <div class="perf-metric">
-                <span>RAM</span>
-                <strong id="perfRam">--</strong>
-              </div>
-              <div class="perf-metric">
-                <span>进程数</span>
-                <strong id="perfPidCount">--</strong>
-              </div>
+              <div class="perf-metric accent"><span>运行时间</span><strong id="perfElapsed">00:00:00</strong><small>ELAPSED</small></div>
+              <div class="perf-metric"><span>CPU 负载</span><strong id="perfCpu">—</strong><small>PROCESS</small></div>
+              <div class="perf-metric"><span>内存占用</span><strong id="perfRam">—</strong><small>RSS</small></div>
+              <div class="perf-metric"><span>进程数</span><strong id="perfPidCount">—</strong><small>ACTIVE</small></div>
             </div>
 
             <div class="perf-metrics restart-metrics is-hidden" id="restartMetrics">
-              <div class="perf-metric">
-                <span>已成功重启</span>
-                <strong id="restartSuccessCount">--</strong>
-              </div>
-              <div class="perf-metric">
-                <span>启动轮次</span>
-                <strong id="restartAttemptCount">--</strong>
-              </div>
-              <div class="perf-metric">
-                <span>当前轮状态</span>
-                <strong id="restartAttemptStatus">--</strong>
-              </div>
-              <div class="perf-metric">
-                <span>Restart 状态</span>
-                <strong id="restartOverallStatus">--</strong>
-              </div>
+              <div class="perf-metric"><span>成功重启</span><strong id="restartSuccessCount">—</strong></div>
+              <div class="perf-metric"><span>启动轮次</span><strong id="restartAttemptCount">—</strong></div>
+              <div class="perf-metric"><span>当前轮状态</span><strong id="restartAttemptStatus">—</strong></div>
+              <div class="perf-metric"><span>Restart 状态</span><strong id="restartOverallStatus">—</strong></div>
             </div>
             <div class="restart-message is-hidden" id="restartMessage"></div>
 
-            <div class="system-table-wrap">
-              <table class="system-table">
-                <thead>
-                  <tr>
-                    <th>资源范围</th>
-                    <th>CPU</th>
-                    <th>RAM</th>
-                    <th>进程数</th>
-                  </tr>
-                </thead>
-                <tbody id="systemTableBody">
-                  <tr>
-                    <td colspan="4">等待资源采样。</td>
-                  </tr>
-                </tbody>
-              </table>
+            <div class="data-section">
+              <div class="data-title"><span>系统资源</span><small>SYSTEM RESOURCES</small></div>
+              <div class="system-table-wrap">
+                <table class="system-table">
+                  <thead><tr><th>资源范围</th><th>CPU</th><th>RAM</th><th>进程数</th></tr></thead>
+                  <tbody id="systemTableBody"><tr><td colspan="4">等待资源采样…</td></tr></tbody>
+                </table>
+              </div>
             </div>
 
-            <div class="fps-table-wrap">
-              <table class="fps-table">
-                <thead>
-                  <tr>
-                    <th>Topic</th>
-                    <th>分辨率</th>
-                    <th>格式</th>
-                    <th>当前 FPS</th>
-                    <th>平均 FPS</th>
-                    <th>目标 FPS</th>
-                    <th>丢帧</th>
-                    <th>丢帧率</th>
-                  </tr>
-                </thead>
-                <tbody id="fpsTableBody">
-                  <tr>
-                    <td colspan="8">等待性能压测数据。</td>
-                  </tr>
-                </tbody>
-              </table>
+            <div class="data-section">
+              <div class="data-title"><span>数据流性能</span><small>STREAM PERFORMANCE</small></div>
+              <div class="fps-table-wrap">
+                <table class="fps-table">
+                  <thead><tr><th>Topic</th><th>分辨率</th><th>格式</th><th>当前 FPS</th><th>平均 FPS</th><th>目标 FPS</th><th>丢帧</th><th>丢帧率</th></tr></thead>
+                  <tbody id="fpsTableBody"><tr><td colspan="8">等待性能压测数据…</td></tr></tbody>
+                </table>
+              </div>
             </div>
           </section>
-          <pre id="logOutput" class="log"></pre>
+
+          <section class="log-panel">
+            <div class="log-toolbar">
+              <div class="data-title"><span>实时日志</span><small>LIVE OUTPUT</small></div>
+              <div class="toolbar-actions">
+                <label class="follow-toggle"><input id="followLogs" type="checkbox" checked /><span>自动跟随</span></label>
+                <button type="button" class="text-button" id="copyLogs">复制</button>
+                <button type="button" class="text-button" id="clearLogs">清空</button>
+              </div>
+            </div>
+            <pre id="logOutput" class="log" aria-live="polite"></pre>
+          </section>
         </section>
       </section>
 
-      <section class="layout bottom">
-        <section class="panel">
-          <div class="panel-header">
-            <div>
-              <h2>历史记录</h2>
-              <p>最近的 UI 测试任务</p>
-            </div>
-            <button type="button" class="ghost" id="refreshRuns">刷新</button>
-          </div>
-          <div id="runsList" class="runs-list"></div>
-        </section>
-
-        <section class="panel">
-          <div class="panel-header">
-            <div>
-              <h2>报告预览</h2>
-              <p>result.json 和 summary.md</p>
-            </div>
-            <span id="reportTitle"></span>
-          </div>
-          <div id="reportView" class="report-view">选择一条历史记录查看结果。</div>
-        </section>
+      <section class="history-section">
+        <div class="section-heading">
+          <div><span class="panel-kicker">TEST ARCHIVE</span><h2>运行档案</h2><p>回看历史任务与测试报告</p></div>
+          <button type="button" class="ghost" id="refreshRuns"><span aria-hidden="true">↻</span> 刷新记录</button>
+        </div>
+        <div class="layout bottom">
+          <section class="panel history-panel">
+            <div class="sub-panel-header"><h3>最近任务</h3><span>RECENT RUNS</span></div>
+            <div id="runsList" class="runs-list"></div>
+          </section>
+          <section class="panel report-panel">
+            <div class="sub-panel-header"><h3>报告预览</h3><span id="reportTitle">RESULT / SUMMARY</span></div>
+            <div id="reportView" class="report-view"><div class="empty-state"><span>◎</span><strong>尚未选择报告</strong><p>从左侧历史任务中选择一条记录</p></div></div>
+          </section>
+        </div>
       </section>
     </main>
 
