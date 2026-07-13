@@ -68,9 +68,15 @@ python3 ./launch_restart_stream_check/launch_restart_stream_check.py \
 
 | 参数 | 默认值 | 说明 |
 | --- | --- | --- |
+| `--ros-version` | `$ROS_VERSION` 或 `2` | ROS 版本，可选 `1` 或 `2` |
+| `--ros-setup` | `$ORBBEC_ROS_SETUP` 或空 | ROS 环境 setup 脚本路径 |
+| `--driver-setup` | `$ORBBEC_CAMERA_SETUP` 或空 | Orbbec 驱动环境 setup 脚本路径 |
+| `--camera-model` | 空 | 使用内置默认 launch 的相机型号，例如 `gemini_301` |
+| `--launch-file` | 空 | launch 文件名或路径；未使用内置 `--camera-model` 时必填 |
+| `--image-topic` | 自动发现 | 监控的图像 topic，可重复传入 |
 | `--launch-arg` | — | 额外的 launch 参数（如 `enable_ir=true`），可重复传入，格式 `KEY=VALUE` 或 `KEY:=VALUE` |
 | `--sdk-log-level` | `debug` | Orbbec SDK 日志级别 |
-| `--duration` | `1h` | 总运行时长（如 `30m`、`2h`） |
+| `--duration` | `300` | 总运行时长，支持秒数、`30m`、`2h` 等格式 |
 | `--stable-seconds` | `5` | 判定流稳定所需的持续接收时间（秒） |
 | `--stream-timeout` | `20` | 每次重启后等待流稳定的最大秒数 |
 | `--max-gap-seconds` | `1.5` | 相邻两帧接收间隔的最大容许值（秒） |

@@ -74,6 +74,12 @@ per-camera `config_file_path`.
 
 | Option | Default | Description |
 | --- | --- | --- |
+| `--ros-version` | `$ROS_VERSION` or `2` | ROS version, either `1` or `2` |
+| `--ros-setup` | `$ORBBEC_ROS_SETUP` or empty | Path to the ROS environment setup script |
+| `--driver-setup` | `$ORBBEC_DRIVER_SETUP`, `$ORBBEC_CAMERA_SETUP`, or empty | Path to the Orbbec driver environment setup script |
+| `--launch-file` | required | Launch filename or path |
+| `--config-file-path` | required in single-camera mode | Parameter configuration file used in single-camera mode |
+| `--camera` | empty | Multi-camera specification; repeatable, using the format shown above |
 | `--launch-arg` | — | Extra launch argument (e.g. `enable_depth=true`); repeatable, format `KEY=VALUE` or `KEY:=VALUE` |
 | `--repeat N` | `1` | Number of full launch–check–stop cycles |
 | `--startup-timeout SECS` | `30` | Max wait for device initialization |

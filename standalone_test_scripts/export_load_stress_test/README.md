@@ -52,6 +52,11 @@ python3 ./export_load_stress_test/export_load_stress_test.py \
 
 | Option | Default | Description |
 | --- | --- | --- |
+| `--ros-version` | `$ROS_VERSION` or `2` | ROS version, either `1` or `2` |
+| `--ros-setup` | `$ORBBEC_ROS_SETUP` or empty | Path to the ROS environment setup script |
+| `--driver-setup` | `$ORBBEC_CAMERA_SETUP` or empty | Path to the Orbbec driver environment setup script |
+| `--launch-file` | `gemini_330_series_sdk_json.launch.py` | Launch filename or path |
+| `--camera` | empty | Camera specification; repeatable, using the format shown above |
 | `--launch-arg` | — | Extra launch argument (e.g. `enable_ir=true`); repeatable, format `KEY=VALUE` or `KEY:=VALUE` |
 | `--test-count` | `10` | Number of import/export cycles |
 | `--sdk-log-level` | `debug` | Orbbec SDK log level |

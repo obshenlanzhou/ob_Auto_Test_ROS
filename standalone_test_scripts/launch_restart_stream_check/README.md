@@ -70,9 +70,15 @@ python3 ./launch_restart_stream_check/launch_restart_stream_check.py \
 
 | Option | Default | Description |
 | --- | --- | --- |
+| `--ros-version` | `$ROS_VERSION` or `2` | ROS version, either `1` or `2` |
+| `--ros-setup` | `$ORBBEC_ROS_SETUP` or empty | Path to the ROS environment setup script |
+| `--driver-setup` | `$ORBBEC_CAMERA_SETUP` or empty | Path to the Orbbec driver environment setup script |
+| `--camera-model` | empty | Camera model with a built-in default launch, such as `gemini_301` |
+| `--launch-file` | empty | Launch filename or path; required unless a built-in `--camera-model` is used |
+| `--image-topic` | auto-discovered | Image topic to monitor; repeatable |
 | `--launch-arg` | — | Extra launch argument (e.g. `enable_ir=true`); repeatable, format `KEY=VALUE` or `KEY:=VALUE` |
 | `--sdk-log-level` | `debug` | Orbbec SDK log level |
-| `--duration` | `1h` | Total run time (e.g. `30m`, `2h`) |
+| `--duration` | `300` | Total run time; supports seconds, `30m`, `2h`, and similar formats |
 | `--stable-seconds` | `5` | Continuous receive time required for a stream to be considered stable |
 | `--stream-timeout` | `20` | Seconds to wait for a stream to become stable per restart |
 | `--max-gap-seconds` | `1.5` | Maximum allowed gap between consecutive frames |

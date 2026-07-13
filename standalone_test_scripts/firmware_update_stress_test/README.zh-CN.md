@@ -73,6 +73,9 @@ python3 ./firmware_update_stress_test/firmware_update_stress_test.py \
 
 | 参数 | 默认值 | 说明 |
 | --- | --- | --- |
+| `--ros-version` | `$ROS_VERSION` 或 `2` | ROS 版本，可选 `1` 或 `2` |
+| `--ros-setup` | `$ORBBEC_ROS_SETUP` 或空 | ROS 环境 setup 脚本路径 |
+| `--driver-setup` | `$ORBBEC_CAMERA_SETUP` 或空 | Orbbec 驱动环境 setup 脚本路径 |
 | `--firmware` | 必填 | 固件文件路径，可重复传入并按顺序循环 |
 | `--test-count` | `10` | 升级命令调用次数；`0` = 持续运行到 `--duration` |
 | `--duration` | `300` | `--test-count 0` 时使用，支持 `300`、`15m`、`2h` |

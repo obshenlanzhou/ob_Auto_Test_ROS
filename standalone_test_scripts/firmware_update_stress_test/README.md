@@ -76,6 +76,9 @@ python3 ./firmware_update_stress_test/firmware_update_stress_test.py \
 
 | Option | Default | Description |
 | --- | --- | --- |
+| `--ros-version` | `$ROS_VERSION` or `2` | ROS version, either `1` or `2` |
+| `--ros-setup` | `$ORBBEC_ROS_SETUP` or empty | Path to the ROS environment setup script |
+| `--driver-setup` | `$ORBBEC_CAMERA_SETUP` or empty | Path to the Orbbec driver environment setup script |
 | `--firmware` | required | Firmware image path; repeat to cycle files in order |
 | `--test-count` | `10` | Number of update command invocations; `0` = run until `--duration` |
 | `--duration` | `300` | Duration for `--test-count 0`; supports `300`, `15m`, `2h` |

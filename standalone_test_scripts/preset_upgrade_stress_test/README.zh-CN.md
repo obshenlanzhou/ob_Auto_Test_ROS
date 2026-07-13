@@ -13,7 +13,7 @@ English: [README.md](README.md)
 升级 preset bin → 启动 launch 并传入对应 device_preset
 等待日志出现 "Loaded device preset:"
 订阅图像 topic → 验证流稳定 → 保存图像
-关闭 launch → 切换到下一份 preset → 重复
+关闭 launch → 等待 `--restart-delay`（默认 2 秒）→ 切换到下一份 preset → 重复
 ```
 
 ## 使用方法
@@ -62,12 +62,20 @@ python3 ./preset_upgrade_stress_test/preset_upgrade_stress_test.py \
 
 | 参数 | 默认值 | 说明 |
 | --- | --- | --- |
-| `--test-count` | — | 升级轮次数；`0` = 持续运行到 `--duration` 或 Ctrl-C |
-| `--duration` | — | 时间限制（如 `1h`），配合 `--test-count 0` 使用 |
-| `--save-images-count` | `0` | 每轮每个 topic 保存的图片数（`0` = 不存图） |
+| `--ros-version` | `$ROS_VERSION` 或 `2` | ROS 版本，可选 `1` 或 `2` |
+| `--ros-setup` | `$ORBBEC_ROS_SETUP` 或空 | ROS 环境 setup 脚本路径 |
+| `--driver-setup` | `$ORBBEC_CAMERA_SETUP` 或空 | Orbbec 驱动环境 setup 脚本路径 |
+| `--camera` | 空 | 相机配置，可重复传入；格式见上文 |
+| `--preset-a-path` / `--preset-b-path` | 内置 bin 文件 | 交替升级的 preset 文件路径 |
+| `--preset-a-name` | `K High Confidence` | preset A 对应的 `device_preset` 名称 |
+| `--preset-b-name` | `K High Accuracy` | preset B 对应的 `device_preset` 名称 |
+| `--test-count` | `0` | 升级轮次数；`0` = 持续运行到 `--duration` 或 Ctrl-C |
+| `--duration` | `300` | 时间限制，配合 `--test-count 0` 使用；支持 `300`、`15m`、`2h` |
+| `--save-images-count` | `1` | 每轮每个 topic 保存的图片数（`0` = 不存图） |
 | `--jpg-quality` | `95` | 保存图片的 JPEG 压缩质量（1–100） |
 | `--image-topic` | color + depth | 监控的 topic，可重复传入；`{camera}` 自动展开为各相机名 |
 | `--launch-arg` | — | 额外 launch 参数（如 `enable_left_ir=true`），可重复传入 |
+| `--restart-delay` | `2` | launch 关闭后、切换到下一份 preset 前的等待秒数（`0` = 不额外等待） |
 | `--sdk-log-level` | `debug` | preset 升级工具和相机 launch 的 SDK 日志级别 |
 
 默认监控 topic：

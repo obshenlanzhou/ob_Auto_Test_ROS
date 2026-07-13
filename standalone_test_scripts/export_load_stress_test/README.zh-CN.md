@@ -51,6 +51,11 @@ python3 ./export_load_stress_test/export_load_stress_test.py \
 
 | 参数 | 默认值 | 说明 |
 | --- | --- | --- |
+| `--ros-version` | `$ROS_VERSION` 或 `2` | ROS 版本，可选 `1` 或 `2` |
+| `--ros-setup` | `$ORBBEC_ROS_SETUP` 或空 | ROS 环境 setup 脚本路径 |
+| `--driver-setup` | `$ORBBEC_CAMERA_SETUP` 或空 | Orbbec 驱动环境 setup 脚本路径 |
+| `--launch-file` | `gemini_330_series_sdk_json.launch.py` | launch 文件名或路径 |
+| `--camera` | 空 | 相机配置，可重复传入；格式见上文 |
 | `--launch-arg` | — | 额外的 launch 参数（如 `enable_ir=true`），可重复传入，格式 `KEY=VALUE` 或 `KEY:=VALUE` |
 | `--test-count` | `10` | 导入导出轮次数 |
 | `--sdk-log-level` | `debug` | Orbbec SDK 日志级别 |

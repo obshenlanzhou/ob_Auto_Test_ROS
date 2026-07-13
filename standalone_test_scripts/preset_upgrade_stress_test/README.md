@@ -14,7 +14,7 @@ Typical flow per test:
 Upgrade preset bin → start launch with matching device_preset
 Wait for "Loaded device preset:" in log
 Subscribe to image topics → verify streams are stable → save images
-Stop launch → switch to next preset → repeat
+Stop launch → wait for `--restart-delay` (2 seconds by default) → switch to next preset → repeat
 ```
 
 ## Usage
@@ -64,12 +64,20 @@ python3 ./preset_upgrade_stress_test/preset_upgrade_stress_test.py \
 
 | Option | Default | Description |
 | --- | --- | --- |
-| `--test-count` | — | Number of upgrade cycles; `0` = run until `--duration` or Ctrl-C |
-| `--duration` | — | Time limit (e.g. `1h`), used when `--test-count 0` |
-| `--save-images-count` | `0` | Images saved per topic per test (`0` = disabled) |
+| `--ros-version` | `$ROS_VERSION` or `2` | ROS version, either `1` or `2` |
+| `--ros-setup` | `$ORBBEC_ROS_SETUP` or empty | Path to the ROS environment setup script |
+| `--driver-setup` | `$ORBBEC_CAMERA_SETUP` or empty | Path to the Orbbec driver environment setup script |
+| `--camera` | empty | Camera specification; repeatable, using the format shown above |
+| `--preset-a-path` / `--preset-b-path` | bundled bin files | Preset files to upgrade alternately |
+| `--preset-a-name` | `K High Confidence` | `device_preset` name corresponding to preset A |
+| `--preset-b-name` | `K High Accuracy` | `device_preset` name corresponding to preset B |
+| `--test-count` | `0` | Number of upgrade cycles; `0` = run until `--duration` or Ctrl-C |
+| `--duration` | `300` | Time limit used with `--test-count 0`; supports `300`, `15m`, and `2h` |
+| `--save-images-count` | `1` | Images saved per topic per test (`0` = disabled) |
 | `--jpg-quality` | `95` | JPEG quality for saved images (1–100) |
 | `--image-topic` | color + depth | Topics to monitor; repeatable, `{camera}` expands to each camera name |
 | `--launch-arg` | — | Extra launch argument (e.g. `enable_left_ir=true`); repeatable |
+| `--restart-delay` | `2` | Delay in seconds after launch stops and before switching presets (`0` disables the extra delay) |
 | `--sdk-log-level` | `debug` | SDK log level for the preset upgrade tool and camera launch |
 
 Default monitored topics:
