@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Tuple
 from ..core.reporter import append_log
 from ..core.ros_utils import make_qos_profile, resolve_message_type, resolve_service_type
 from ..profile.loader import ServiceSpec, TopicSpec
-from .service_handlers import get_service_handler
+from .service_handlers import get_service_handler, service_type_for_spec
 
 
 def _emit_status(emit_status, message: str) -> None:
@@ -68,7 +68,7 @@ def _destroy_keepalive_subscriptions(harness, subscriptions) -> None:
 
 
 def _service_support_reason(harness, spec: ServiceSpec) -> str:
-    checks = [(spec.name, spec.type)]
+    checks = [(spec.name, service_type_for_spec(spec, harness.ros_version))]
     if spec.getter_name:
         checks.append((spec.getter_name, spec.getter_type or ""))
 
@@ -141,6 +141,12 @@ def run_artifact_service_checks(
                 keepalive_names = ", ".join(topic.name for topic in spec.keepalive_topics)
                 append_log(log_path, f"[ARTIFACT] keepalive subscriptions active: {keepalive_names}")
                 _emit_status(emit_status, f"[ARTIFACT] keepalive subscriptions active: {keepalive_names}")
+                keepalive_timeout = max(topic.timeout or 10.0 for topic in spec.keepalive_topics)
+                harness.spin_until(
+                    lambda: all(count > 0 for count in received_counts.values()),
+                    keepalive_timeout,
+                    f"messages on artifact keepalive topics: {keepalive_names}",
+                )
 
             before = _snapshot_files(target_dir)
             service_type = resolve_service_type(spec.type, harness.ros_version)

@@ -309,6 +309,8 @@ class TestSession:
             ros_version=self.ros_version,
             ros_setup=self.ros_setup,
         )
+        if self.ros_version == "1":
+            runtime_env["ROS_HOME"] = str(self.work_dir)
         command = self.command()
         self._emit_status(f"starting launch: {' '.join(command)}")
         ensure_dir(self.log_path.parent)

@@ -73,6 +73,12 @@ def _sibling_service_name(service_name: str, sibling_name: str) -> str:
     return "/".join(parts)
 
 
+def service_type_for_spec(spec: ServiceSpec, ros_version: str) -> str:
+    if str(ros_version) == "1" and spec.mode == "roundtrip_bool_int":
+        return "orbbec_camera_msgs/srv/SetInt32"
+    return spec.type
+
+
 def _get_auto_white_balance(harness, service_name: str) -> bool:
     getter_type = resolve_service_type("orbbec_camera_msgs/srv/GetInt32", harness.ros_version)
     response = harness.call_service(service_name, getter_type, request_data={}, timeout=30.0)
@@ -80,11 +86,15 @@ def _get_auto_white_balance(harness, service_name: str) -> bool:
 
 
 def _set_auto_white_balance(harness, service_name: str, value: bool) -> None:
-    setter_type = resolve_service_type("std_srvs/srv/SetBool", harness.ros_version)
+    ros1 = str(harness.ros_version) == "1"
+    setter_type_name = (
+        "orbbec_camera_msgs/srv/SetInt32" if ros1 else "std_srvs/srv/SetBool"
+    )
+    setter_type = resolve_service_type(setter_type_name, harness.ros_version)
     response = harness.call_service(
         service_name,
         setter_type,
-        request_data={"data": value},
+        request_data={"data": int(value) if ros1 else value},
         timeout=30.0,
     )
     _ensure_success(response, "set_auto_white_balance returned success=false")
@@ -247,11 +257,14 @@ def check_roundtrip_bool_int(harness, spec: ServiceSpec) -> str:
     )
     baseline_value = bool(int(deep_getattr(getter_response, spec.getter_field)))
     target_value = not baseline_value
-    setter_type = resolve_service_type(spec.type, harness.ros_version)
+    ros1 = str(harness.ros_version) == "1"
+    setter_type = resolve_service_type(
+        service_type_for_spec(spec, harness.ros_version), harness.ros_version
+    )
     set_response = harness.call_service(
         spec.name,
         setter_type,
-        request_data={spec.request_field: target_value},
+        request_data={spec.request_field: int(target_value) if ros1 else target_value},
         timeout=30.0,
     )
     _ensure_success(set_response, "setter returned success=false")
@@ -270,7 +283,7 @@ def check_roundtrip_bool_int(harness, spec: ServiceSpec) -> str:
     restore_response = harness.call_service(
         spec.name,
         setter_type,
-        request_data={spec.request_field: baseline_value},
+        request_data={spec.request_field: int(baseline_value) if ros1 else baseline_value},
         timeout=30.0,
     )
     _ensure_success(restore_response, "restore returned success=false")

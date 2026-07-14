@@ -23,6 +23,7 @@ launch_scenarios:
         type: orbbec_camera_msgs/msg/Metadata
         mode: message
         validator: metadata
+        paired_topic: /{camera}/color/image_raw
 
       - name: /{camera}/depth/camera_info
         type: sensor_msgs/msg/CameraInfo
@@ -40,6 +41,7 @@ launch_scenarios:
         type: orbbec_camera_msgs/msg/Metadata
         mode: message
         validator: metadata
+        paired_topic: /{camera}/depth/image_raw
       - name: /{camera}/depth_filter_status
         type: std_msgs/msg/String
         mode: message
