@@ -318,6 +318,15 @@ def _camera_name_from_topic(topic_name: str) -> str:
     return ""
 
 
+def _point_cloud_format(topic_name: str) -> str:
+    normalized = topic_name.rstrip("/")
+    if normalized.endswith("/depth_registered/points"):
+        return "XYZRGB"
+    if normalized.endswith("/points"):
+        return "XYZ"
+    return ""
+
+
 def build_performance_metrics(
     run_root: Path,
     *,
@@ -369,6 +378,8 @@ def build_performance_metrics(
     )
     for label in labels:
         topic_name = _format_topic_label(label)
+        point_cloud_format = _point_cloud_format(topic_name)
+        is_point_cloud = bool(point_cloud_format)
         stream_key = _stream_key_from_topic(topic_name)
         camera_name = _camera_name_from_topic(topic_name)
         stream_config = (
@@ -382,10 +393,14 @@ def build_performance_metrics(
                 "topic": topic_name,
                 "resolution": (
                     f"{stream_config.get('width')} x {stream_config.get('height')}"
-                    if stream_config.get("width") and stream_config.get("height")
+                    if not is_point_cloud
+                    and stream_config.get("width")
+                    and stream_config.get("height")
                     else ""
                 ),
-                "stream_format": stream_config.get("format", ""),
+                "stream_format": (
+                    point_cloud_format if is_point_cloud else stream_config.get("format", "")
+                ),
                 "ideal_fps": _float_value(
                     {"value": stream_config.get("fps")},
                     "value",
