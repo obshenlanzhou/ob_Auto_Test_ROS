@@ -14,7 +14,7 @@ from .functional import _build_launch_args, _require_detected_camera, _select_la
 from .performance_fps import TopicFpsCollector
 from .performance_load import ExternalLoadController
 from .performance_system import MultiCameraSystemSampler, ProcessTreeSampler
-from ..checks.topics import run_topic_checks
+from ..checks.topics import run_topic_checks, select_discovered_topic_specs
 from ..core.environment_info import collect_camera_environment, collect_host_environment
 from ..core.reporter import append_log, build_performance_summary, ensure_dir, write_json, write_markdown
 from ..core.ros_utils import RosHarness, resolve_service_type
@@ -587,6 +587,20 @@ def _run_performance_scenario(
                 result["environment"]["camera"] = collect_camera_environment(
                     harness, camera_name, launch_file, launch_args
                 )
+            graph_snapshot = harness.graph_snapshot()
+            discovered_topic_names = {
+                item.get("name") for item in graph_snapshot.get("topics", [])
+            }
+            configured_topic_count = len(performance_topics)
+            performance_topics = select_discovered_topic_specs(
+                performance_topics, discovered_topic_names
+            )
+            emit_status(
+                f"performance topic discovery selected "
+                f"{len(performance_topics)}/{configured_topic_count} interfaces"
+            )
+            if not performance_topics:
+                raise RuntimeError("no configured performance topics were discovered")
             emit_status(f"warming up performance topics for scenario '{scenario.name}'")
             warmup_results = run_topic_checks(
                 harness, performance_topics, performance_log_path, emit_status=emit_status
@@ -594,7 +608,12 @@ def _run_performance_scenario(
             if any(item["status"] == "failed" for item in warmup_results):
                 failed_topics = [item["name"] for item in warmup_results if item["status"] == "failed"]
                 raise RuntimeError(f"Performance warmup failed for topics: {failed_topics}")
-
+            discovered_topic_names = {
+                item["name"] for item in warmup_results if item["status"] == "passed"
+            }
+            performance_topics = [
+                topic for topic in performance_topics if topic.name in discovered_topic_names
+            ]
             runtime_stream_config = _stream_config_from_launch_log(launch_log_path)
             if runtime_stream_config:
                 result["stream_config"] = runtime_stream_config

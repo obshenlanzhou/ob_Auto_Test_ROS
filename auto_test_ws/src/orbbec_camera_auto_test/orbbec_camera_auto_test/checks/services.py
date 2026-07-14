@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, Iterable, List, Tuple
 
 from ..core.reporter import append_log
 from ..core.ros_utils import make_qos_profile, resolve_message_type, resolve_service_type
@@ -29,6 +29,17 @@ def partition_service_specs(
         else:
             regular_services.append(spec)
     return regular_services, artifact_services, reboot_service
+
+
+def select_discovered_service_specs(
+    service_specs: List[ServiceSpec], discovered_names: Iterable[str]
+) -> List[ServiceSpec]:
+    names = set(discovered_names)
+    return [
+        spec
+        for spec in service_specs
+        if spec.name in names and (not spec.getter_name or spec.getter_name in names)
+    ]
 
 
 def _snapshot_files(directory: Path) -> set[str]:
@@ -85,6 +96,15 @@ def _mark_service_skipped(result: Dict[str, Any], reason: str) -> Dict[str, Any]
     return result
 
 
+def _mark_service_unavailable(result: Dict[str, Any], reason: str) -> str:
+    if "service not advertised:" in reason:
+        _mark_service_skipped(result, reason)
+        return "SKIP"
+    result["status"] = "failed"
+    result["message"] = reason
+    return "FAIL"
+
+
 def run_service_checks(harness, service_specs: List[ServiceSpec], log_path, emit_status=None) -> List[Dict[str, Any]]:
     results: List[Dict[str, Any]] = []
     for spec in service_specs:
@@ -93,9 +113,9 @@ def run_service_checks(harness, service_specs: List[ServiceSpec], log_path, emit
         _emit_status(emit_status, f"[SERVICE] checking {spec.name} ({spec.mode})")
         unsupported_reason = _service_support_reason(harness, spec)
         if unsupported_reason:
-            _mark_service_skipped(result, unsupported_reason)
-            append_log(log_path, f"[SERVICE] SKIP {spec.name}: {unsupported_reason}")
-            _emit_status(emit_status, f"[SERVICE][SKIP] {spec.name}: {unsupported_reason}")
+            label = _mark_service_unavailable(result, unsupported_reason)
+            append_log(log_path, f"[SERVICE] {label} {spec.name}: {unsupported_reason}")
+            _emit_status(emit_status, f"[SERVICE][{label}] {spec.name}: {unsupported_reason}")
             results.append(result)
             continue
         try:
@@ -126,9 +146,9 @@ def run_artifact_service_checks(
         _emit_status(emit_status, f"[ARTIFACT] checking {spec.name}")
         unsupported_reason = _service_support_reason(harness, spec)
         if unsupported_reason:
-            _mark_service_skipped(result, unsupported_reason)
-            append_log(log_path, f"[ARTIFACT] SKIP {spec.name}: {unsupported_reason}")
-            _emit_status(emit_status, f"[ARTIFACT][SKIP] {spec.name}: {unsupported_reason}")
+            label = _mark_service_unavailable(result, unsupported_reason)
+            append_log(log_path, f"[ARTIFACT] {label} {spec.name}: {unsupported_reason}")
+            _emit_status(emit_status, f"[ARTIFACT][{label}] {spec.name}: {unsupported_reason}")
             results.append(result)
             continue
         subscriptions = []
@@ -190,9 +210,9 @@ def run_reboot_check(
     result = {"name": reboot_spec.name, "type": reboot_spec.type, "status": "passed", "message": ""}
     unsupported_reason = _service_support_reason(harness, reboot_spec)
     if unsupported_reason:
-        _mark_service_skipped(result, unsupported_reason)
-        append_log(log_path, f"[REBOOT] SKIP {reboot_spec.name}: {unsupported_reason}")
-        _emit_status(emit_status, f"[REBOOT][SKIP] {reboot_spec.name}: {unsupported_reason}")
+        label = _mark_service_unavailable(result, unsupported_reason)
+        append_log(log_path, f"[REBOOT] {label} {reboot_spec.name}: {unsupported_reason}")
+        _emit_status(emit_status, f"[REBOOT][{label}] {reboot_spec.name}: {unsupported_reason}")
         return result
     try:
         reboot_type = resolve_service_type(reboot_spec.type, harness.ros_version)
