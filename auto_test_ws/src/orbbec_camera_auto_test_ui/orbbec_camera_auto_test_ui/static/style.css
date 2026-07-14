@@ -1129,7 +1129,7 @@ button.ghost {
   margin-bottom: 13px;
 }
 
-.sub-panel-header span {
+.sub-panel-header > span {
   max-width: 60%;
   overflow: hidden;
   color: var(--subtle);
@@ -1138,6 +1138,34 @@ button.ghost {
   letter-spacing: 0.11em;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.run-bulk-actions,
+.run-select-all {
+  display: flex;
+  align-items: center;
+}
+
+.run-bulk-actions {
+  gap: 8px;
+}
+
+.run-select-all {
+  gap: 6px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  user-select: none;
+}
+
+.run-select-all input,
+.run-select {
+  width: 16px;
+  min-height: 16px;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--primary);
 }
 
 .runs-list {
@@ -1152,7 +1180,7 @@ button.ghost {
 
 .run-item {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   gap: 5px 12px;
   align-items: center;
   border: 1px solid var(--line);
@@ -1160,6 +1188,11 @@ button.ghost {
   padding: 11px 12px;
   background: var(--surface-soft);
   transition: 150ms ease;
+}
+
+.run-item.batch-selected {
+  border-color: var(--primary-line-strong);
+  background: var(--primary-wash);
 }
 
 .run-item:hover {
@@ -1175,6 +1208,8 @@ button.ghost {
 }
 
 .run-title {
+  grid-column: 2;
+  grid-row: 1;
   min-width: 0;
   overflow-wrap: anywhere;
   color: var(--text-soft);
@@ -1184,6 +1219,8 @@ button.ghost {
 }
 
 .run-subtitle {
+  grid-column: 2;
+  grid-row: 2;
   overflow: hidden;
   color: var(--subtle);
   font-size: 11px;
@@ -1193,8 +1230,15 @@ button.ghost {
 
 .run-actions {
   display: flex;
-  grid-row: span 2;
+  grid-column: 3;
+  grid-row: 1 / span 2;
   gap: 5px;
+}
+
+.run-select {
+  grid-column: 1;
+  grid-row: 1 / span 2;
+  align-self: center;
 }
 
 .run-actions button {
@@ -1403,7 +1447,9 @@ button.ghost {
   .metric-run { grid-column: auto; }
   .perf-metrics { grid-template-columns: 1fr 1fr; }
   .actions { grid-template-columns: 1fr; }
-  .run-actions { grid-row: auto; grid-column: 1 / -1; }
+  .sub-panel-header { align-items: flex-start; flex-direction: column; }
+  .run-bulk-actions { width: 100%; justify-content: space-between; }
+  .run-actions { grid-row: 3; grid-column: 2 / -1; }
 }
 
 @media (prefers-reduced-motion: reduce) {

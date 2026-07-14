@@ -3,6 +3,7 @@ const state = {
   logOffset: 0,
   polling: null,
   selectedRunId: null,
+  selectedRunIds: new Set(),
 };
 
 const $ = (id) => document.getElementById(id);
@@ -12,6 +13,7 @@ const THEME_COLORS = {
   light: "#f4f7fb",
   dark: "#07101d",
 };
+const ACTIVE_RUN_STATUSES = new Set(["starting", "running", "stopping"]);
 const DEFAULT_SETUPS = {
   "2": {
     ros: "/opt/ros/humble/setup.bash",
@@ -552,6 +554,7 @@ async function deleteRun(runId) {
   }
   try {
     await api(`/api/runs/${encodeURIComponent(runId)}`, { method: "DELETE" });
+    state.selectedRunIds.delete(runId);
     if ($("reportTitle").textContent === runId) {
       state.selectedRunId = null;
       $("reportTitle").textContent = "";
@@ -563,10 +566,98 @@ async function deleteRun(runId) {
   }
 }
 
+function updateRunSelectionControls() {
+  const checkboxes = [...document.querySelectorAll(".run-select")].filter(
+    (checkbox) => !checkbox.disabled
+  );
+  const selectedCount = state.selectedRunIds.size;
+  const selectAll = $("selectAllRuns");
+  selectAll.checked = checkboxes.length > 0 && selectedCount === checkboxes.length;
+  selectAll.indeterminate = selectedCount > 0 && selectedCount < checkboxes.length;
+  const deleteButton = $("deleteSelectedRuns");
+  deleteButton.disabled = selectedCount === 0;
+  deleteButton.textContent = selectedCount ? `删除所选 (${selectedCount})` : "删除所选";
+}
+
+function setAllRunsSelected(selected) {
+  for (const checkbox of document.querySelectorAll(".run-select")) {
+    if (checkbox.disabled) continue;
+    checkbox.checked = selected;
+    const runId = checkbox.dataset.runId;
+    if (selected) {
+      state.selectedRunIds.add(runId);
+    } else {
+      state.selectedRunIds.delete(runId);
+    }
+    checkbox.closest(".run-item").classList.toggle("batch-selected", selected);
+  }
+  updateRunSelectionControls();
+}
+
+async function deleteSelectedRuns() {
+  const runIds = [...state.selectedRunIds];
+  if (!runIds.length || !window.confirm(`删除选中的 ${runIds.length} 条历史记录？`)) {
+    return;
+  }
+
+  const deleteButton = $("deleteSelectedRuns");
+  deleteButton.disabled = true;
+  deleteButton.textContent = "删除中...";
+  try {
+    const results = await Promise.allSettled(
+      runIds.map((runId) =>
+        api(`/api/runs/${encodeURIComponent(runId)}`, { method: "DELETE" })
+      )
+    );
+    const deleted = [];
+    const failed = [];
+    results.forEach((result, index) => {
+      const runId = runIds[index];
+      if (result.status === "fulfilled") {
+        deleted.push(runId);
+        state.selectedRunIds.delete(runId);
+      } else {
+        failed.push(`${runId}: ${result.reason.message}`);
+      }
+    });
+
+    if (deleted.includes(state.selectedRunId)) {
+      state.selectedRunId = null;
+      $("reportTitle").textContent = "";
+      $("reportView").textContent = "选择一条历史记录查看结果。";
+    }
+    await loadRuns();
+    if (failed.length) {
+      appendLogs([`[UI] batch delete failed:\n${failed.join("\n")}`]);
+    }
+  } catch (error) {
+    appendLogs([`[UI] batch delete failed: ${error.message}`]);
+    updateRunSelectionControls();
+  }
+}
+
 function runItem(run) {
   const item = document.createElement("div");
   item.className = `run-item${run.run_id === state.selectedRunId ? " selected" : ""}`;
   item.dataset.runId = run.run_id;
+
+  const checkbox = document.createElement("input");
+  checkbox.type = "checkbox";
+  checkbox.className = "run-select";
+  checkbox.dataset.runId = run.run_id;
+  checkbox.setAttribute("aria-label", `选择任务 ${run.run_id}`);
+  checkbox.disabled = ACTIVE_RUN_STATUSES.has(run.status);
+  checkbox.checked = state.selectedRunIds.has(run.run_id);
+  item.classList.toggle("batch-selected", checkbox.checked);
+  checkbox.addEventListener("change", () => {
+    if (checkbox.checked) {
+      state.selectedRunIds.add(run.run_id);
+    } else {
+      state.selectedRunIds.delete(run.run_id);
+    }
+    item.classList.toggle("batch-selected", checkbox.checked);
+    updateRunSelectionControls();
+  });
 
   const title = document.createElement("div");
   title.className = "run-title";
@@ -595,10 +686,14 @@ function runItem(run) {
   deleteButton.type = "button";
   deleteButton.className = "danger";
   deleteButton.textContent = "删除";
+  deleteButton.disabled = ACTIVE_RUN_STATUSES.has(run.status);
+  if (deleteButton.disabled) {
+    deleteButton.title = "运行中的任务不能删除";
+  }
   deleteButton.addEventListener("click", () => deleteRun(run.run_id));
 
   actions.append(viewButton, deleteButton);
-  item.append(title, actions, subtitle);
+  item.append(checkbox, title, actions, subtitle);
   return item;
 }
 
@@ -606,12 +701,22 @@ async function loadRuns() {
   const payload = await api("/api/runs");
   const list = $("runsList");
   list.innerHTML = "";
-  for (const run of payload.runs || []) {
+  const runs = payload.runs || [];
+  const availableRunIds = new Set(
+    runs
+      .filter((run) => !ACTIVE_RUN_STATUSES.has(run.status))
+      .map((run) => run.run_id)
+  );
+  state.selectedRunIds = new Set(
+    [...state.selectedRunIds].filter((runId) => availableRunIds.has(runId))
+  );
+  for (const run of runs) {
     list.appendChild(runItem(run));
   }
   if (!list.children.length) {
     list.textContent = "暂无历史记录。";
   }
+  updateRunSelectionControls();
 }
 
 function renderJsonSummary(results = {}) {
@@ -670,6 +775,10 @@ async function init() {
   $("stopButton").addEventListener("click", stopRun);
   $("refreshLaunches").addEventListener("click", loadLaunchFiles);
   $("refreshRuns").addEventListener("click", loadRuns);
+  $("selectAllRuns").addEventListener("change", (event) => {
+    setAllRunsSelected(event.target.checked);
+  });
+  $("deleteSelectedRuns").addEventListener("click", deleteSelectedRuns);
   $("copyLogs").addEventListener("click", copyLogs);
   $("clearLogs").addEventListener("click", () => {
     $("logOutput").textContent = "";

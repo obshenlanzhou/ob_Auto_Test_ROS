@@ -278,7 +278,13 @@
         </div>
         <div class="layout bottom">
           <section class="panel history-panel">
-            <div class="sub-panel-header"><h3>最近任务</h3><span>RECENT RUNS</span></div>
+            <div class="sub-panel-header">
+              <h3>最近任务</h3>
+              <div class="run-bulk-actions">
+                <label class="run-select-all"><input id="selectAllRuns" type="checkbox" /><span>全选</span></label>
+                <button type="button" class="danger text-button" id="deleteSelectedRuns" disabled>删除所选</button>
+              </div>
+            </div>
             <div id="runsList" class="runs-list"></div>
           </section>
           <section class="panel report-panel">
