@@ -7,6 +7,11 @@ const state = {
 
 const $ = (id) => document.getElementById(id);
 const MAX_VISIBLE_LOG_LINES = 500;
+const THEME_STORAGE_KEY = "orbbec-ui-theme";
+const THEME_COLORS = {
+  light: "#f4f7fb",
+  dark: "#07101d",
+};
 const DEFAULT_SETUPS = {
   "2": {
     ros: "/opt/ros/humble/setup.bash",
@@ -83,6 +88,27 @@ const STREAM_CONTROLS = {
   enable_gyro: "streamGyro",
   enable_sync_output_accel_gyro: "streamSyncImu",
 };
+
+function applyTheme(theme, persist = true) {
+  const nextTheme = theme === "dark" ? "dark" : "light";
+  document.documentElement.dataset.theme = nextTheme;
+  document.querySelector('meta[name="theme-color"]').content = THEME_COLORS[nextTheme];
+  for (const button of document.querySelectorAll("[data-theme-value]")) {
+    button.setAttribute("aria-pressed", String(button.dataset.themeValue === nextTheme));
+  }
+  if (persist) {
+    try {
+      localStorage.setItem(THEME_STORAGE_KEY, nextTheme);
+    } catch (_) {}
+  }
+}
+
+function initTheme() {
+  applyTheme(document.documentElement.dataset.theme, false);
+  for (const button of document.querySelectorAll("[data-theme-value]")) {
+    button.addEventListener("click", () => applyTheme(button.dataset.themeValue));
+  }
+}
 
 async function api(path, options = {}) {
   const response = await fetch(path, {
@@ -599,6 +625,7 @@ async function loadRunDetail(runId) {
 }
 
 async function init() {
+  initTheme();
   setStatus("idle");
   $("runForm").addEventListener("submit", startRun);
   $("stopButton").addEventListener("click", stopRun);

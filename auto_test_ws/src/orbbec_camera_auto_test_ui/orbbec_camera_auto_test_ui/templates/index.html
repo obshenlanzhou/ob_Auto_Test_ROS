@@ -1,10 +1,18 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="light">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="theme-color" content="#08111f" />
+    <meta name="theme-color" content="#f4f7fb" />
     <title>Orbbec Test Console</title>
+    <script>
+      try {
+        const savedTheme = localStorage.getItem("orbbec-ui-theme");
+        if (savedTheme === "light" || savedTheme === "dark") {
+          document.documentElement.dataset.theme = savedTheme;
+        }
+      } catch (_) {}
+    </script>
     <link rel="stylesheet" href="/static/style.css" />
   </head>
   <body>
@@ -26,10 +34,16 @@
             <p id="workspacePath">正在连接测试工作区...</p>
           </div>
         </div>
-        <div class="status-stack">
-          <span class="status-label">SYSTEM STATUS</span>
-          <div class="status-pill idle" id="runStatus" role="status" aria-live="polite">
-            <i aria-hidden="true"></i><span>idle</span>
+        <div class="header-tools">
+          <div class="theme-switch" role="group" aria-label="页面主题">
+            <button type="button" data-theme-value="light" aria-pressed="true"><span aria-hidden="true">☀</span> 浅色</button>
+            <button type="button" data-theme-value="dark" aria-pressed="false"><span aria-hidden="true">☾</span> 深色</button>
+          </div>
+          <div class="status-stack">
+            <span class="status-label">SYSTEM STATUS</span>
+            <div class="status-pill idle" id="runStatus" role="status" aria-live="polite">
+              <i aria-hidden="true"></i><span>idle</span>
+            </div>
           </div>
         </div>
       </header>
@@ -208,10 +222,10 @@
 
           <section class="performance-panel">
             <div class="perf-metrics">
-              <div class="perf-metric accent"><span>运行时间</span><strong id="perfElapsed">00:00:00</strong><small>ELAPSED</small></div>
-              <div class="perf-metric"><span>CPU 负载</span><strong id="perfCpu">—</strong><small>PROCESS</small></div>
-              <div class="perf-metric"><span>内存占用</span><strong id="perfRam">—</strong><small>RSS</small></div>
-              <div class="perf-metric"><span>进程数</span><strong id="perfPidCount">—</strong><small>ACTIVE</small></div>
+              <div class="perf-metric accent"><span>运行时间</span><strong id="perfElapsed">00:00:00</strong></div>
+              <div class="perf-metric"><span>CPU 负载</span><strong id="perfCpu">—</strong></div>
+              <div class="perf-metric"><span>内存占用</span><strong id="perfRam">—</strong></div>
+              <div class="perf-metric"><span>进程数</span><strong id="perfPidCount">—</strong></div>
             </div>
 
             <div class="perf-metrics restart-metrics is-hidden" id="restartMetrics">
@@ -223,7 +237,7 @@
             <div class="restart-message is-hidden" id="restartMessage"></div>
 
             <div class="data-section">
-              <div class="data-title"><span>系统资源</span><small>SYSTEM RESOURCES</small></div>
+              <div class="data-title"><span>系统资源</span></div>
               <div class="system-table-wrap">
                 <table class="system-table">
                   <thead><tr><th>资源范围</th><th>CPU</th><th>RAM</th><th>进程数</th></tr></thead>
@@ -233,7 +247,7 @@
             </div>
 
             <div class="data-section">
-              <div class="data-title"><span>数据流性能</span><small>STREAM PERFORMANCE</small></div>
+              <div class="data-title"><span>数据流性能</span></div>
               <div class="fps-table-wrap">
                 <table class="fps-table">
                   <thead><tr><th>Topic</th><th>分辨率</th><th>格式</th><th>当前 FPS</th><th>平均 FPS</th><th>目标 FPS</th><th>丢帧</th><th>丢帧率</th></tr></thead>
@@ -245,7 +259,7 @@
 
           <section class="log-panel">
             <div class="log-toolbar">
-              <div class="data-title"><span>实时日志</span><small>LIVE OUTPUT</small></div>
+              <div class="data-title"><span>实时日志</span></div>
               <div class="toolbar-actions">
                 <label class="follow-toggle"><input id="followLogs" type="checkbox" checked /><span>自动跟随</span></label>
                 <button type="button" class="text-button" id="copyLogs">复制</button>
