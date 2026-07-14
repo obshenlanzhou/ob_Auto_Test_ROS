@@ -79,12 +79,19 @@ def _orbbec_sdk_library_dirs(*setup_files: Optional[str]) -> list[str]:
     for setup_file in setup_files:
         if not setup_file:
             continue
+        setup_path = Path(setup_file).resolve()
         root = _setup_workspace_root(setup_file)
-        candidates = [
-            root / "install" / "orbbec_camera" / "lib",
+        source_candidates = [
+            root / "src" / "OrbbecSDK_ROS1" / "SDK" / "lib",
             root / "src" / "orbbec-ros-sdk" / "SDK" / "lib",
             root / "src" / "OrbbecSDK_ROS2" / "orbbec_camera" / "SDK" / "lib",
         ]
+        install_candidate = root / "install" / "orbbec_camera" / "lib"
+        candidates = (
+            [install_candidate, *source_candidates]
+            if setup_path.parent.name == "install"
+            else [*source_candidates, install_candidate]
+        )
         for base in candidates:
             candidate_dirs = [base] if base.name == "lib" and any(base.glob("libOrbbecSDK.so*")) else []
             candidate_dirs.extend(base / arch for arch in arch_dirs)
