@@ -176,12 +176,33 @@ function setStatus(status) {
 
 function renderCommands(commands = []) {
   const box = $("commandBox");
-  box.innerHTML = "";
+  const signature = JSON.stringify(commands);
+  if (box.dataset.commands === signature) return;
+  box.dataset.commands = signature;
+  box.replaceChildren();
+  box.open = false;
+  if (!commands.length) return;
+
+  const summary = document.createElement("summary");
+  const label = document.createElement("span");
+  label.className = "command-label";
+  label.textContent = "启动命令";
+  const preview = document.createElement("code");
+  preview.className = "command-preview";
+  preview.textContent = commands[0];
+  const toggle = document.createElement("span");
+  toggle.className = "command-toggle";
+  summary.append(label, preview, toggle);
+
+  const lines = document.createElement("div");
+  lines.className = "command-lines";
   for (const command of commands) {
     const line = document.createElement("div");
+    line.className = "command-line";
     line.textContent = command;
-    box.appendChild(line);
+    lines.appendChild(line);
   }
+  box.append(summary, lines);
 }
 
 function appendLogs(lines = []) {
@@ -241,27 +262,45 @@ function formatNumber(value, digits = 1) {
 }
 
 function renderPerformance(performance = {}) {
+  const reportedScopes = performance.system_scopes || [];
+  const hasSystemData =
+    reportedScopes.length > 0 ||
+    Number(performance.cpu_percent) > 0 ||
+    Number(performance.memory_rss_mb) > 0 ||
+    Number(performance.pid_count) > 0;
   $("perfElapsed").textContent = formatDuration(performance.elapsed_seconds);
-  $("perfCpu").textContent = performance.available
+  $("perfCpu").textContent = hasSystemData
     ? `${formatNumber(performance.cpu_percent, 1)}%`
     : "--";
-  $("perfRam").textContent = performance.available
+  $("perfRam").textContent = hasSystemData
     ? `${formatNumber(performance.memory_rss_mb, 1)} MB`
     : "--";
-  $("perfPidCount").textContent = performance.available
+  $("perfPidCount").textContent = hasSystemData
     ? String(performance.pid_count || 0)
     : "--";
 
   const systemBody = $("systemTableBody");
   systemBody.innerHTML = "";
-  const scopes = (performance.system_scopes || []).filter(
+  const detailScopes = reportedScopes.filter(
     (scope) => !(scope.scope === "total" && scope.camera_name === "all")
   );
+  const scopes = detailScopes.length
+    ? detailScopes
+    : hasSystemData
+      ? [
+          {
+            label: "总计",
+            cpu_percent: performance.cpu_percent,
+            memory_rss_mb: performance.memory_rss_mb,
+            pid_count: performance.pid_count,
+          },
+        ]
+      : [];
   if (!scopes.length) {
     const row = document.createElement("tr");
     const cell = document.createElement("td");
     cell.colSpan = 4;
-    cell.textContent = performance.available ? "暂无资源明细。" : "等待资源采样。";
+    cell.textContent = "等待资源采样。";
     row.appendChild(cell);
     systemBody.appendChild(row);
   } else {

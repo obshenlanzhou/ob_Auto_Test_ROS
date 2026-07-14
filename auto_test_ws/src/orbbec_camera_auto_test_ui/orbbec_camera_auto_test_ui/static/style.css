@@ -674,6 +674,8 @@ textarea {
   transition: 150ms ease;
 }
 
+.test-grid input,
+.test-grid select,
 .compact-section input,
 .compact-section select,
 .compact-section textarea {
@@ -763,6 +765,29 @@ button.danger {
   color: var(--danger);
 }
 
+.actions button.primary:disabled {
+  border-color: var(--line);
+  background: var(--surface-soft);
+  color: var(--muted);
+  box-shadow: none;
+  opacity: 0.72;
+}
+
+.actions button.danger:not(:disabled) {
+  border-color: #981b29;
+  background: #b42332;
+  color: #ffffff;
+  box-shadow: 0 10px 24px rgba(180, 35, 50, 0.22);
+}
+
+.actions button.danger:not(:disabled):hover {
+  border-color: #7f1723;
+  background: #981b29;
+  color: #ffffff;
+  box-shadow: 0 12px 28px rgba(180, 35, 50, 0.28);
+  transform: translateY(-1px);
+}
+
 .button-icon {
   margin-right: 7px;
   font-size: 9px;
@@ -786,19 +811,73 @@ button.danger {
 }
 
 .command-box {
-  display: grid;
-  gap: 7px;
   margin-bottom: 13px;
   font-family: var(--mono);
   font-size: 10px;
-  word-break: break-word;
 }
 
 .command-box:empty {
   display: none;
 }
 
-.command-box div {
+.command-box summary {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--primary-line);
+  border-radius: 10px;
+  padding: 9px 11px;
+  background: var(--primary-wash);
+  cursor: pointer;
+  list-style: none;
+}
+
+.command-box summary::-webkit-details-marker {
+  display: none;
+}
+
+.command-label {
+  color: var(--text-soft);
+  font-family: var(--font);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.command-preview {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.command-toggle {
+  color: var(--primary-dark);
+  font-family: var(--font);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.command-toggle::before {
+  content: "展开";
+}
+
+.command-box[open] .command-toggle::before {
+  content: "收起";
+}
+
+.command-box[open] .command-preview {
+  display: none;
+}
+
+.command-lines {
+  display: grid;
+  gap: 7px;
+  margin-top: 7px;
+}
+
+.command-line {
   position: relative;
   overflow: hidden;
   border: 1px solid var(--primary-line);
@@ -806,9 +885,10 @@ button.danger {
   padding: 10px 11px 10px 31px;
   background: var(--primary-wash);
   color: var(--text-soft);
+  word-break: break-word;
 }
 
-.command-box div::before {
+.command-line::before {
   position: absolute;
   left: 11px;
   color: var(--primary);
@@ -845,7 +925,7 @@ button.danger {
   display: block;
   color: var(--muted);
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 800;
 }
 
 .perf-metric strong {
@@ -890,7 +970,7 @@ button.danger {
 .data-title span {
   color: var(--text-soft);
   font-size: 13px;
-  font-weight: 700;
+  font-weight: 800;
 }
 
 .system-table-wrap,
@@ -931,9 +1011,9 @@ button.danger {
 .system-table th,
 .fps-table th {
   background: var(--table-head-bg);
-  color: var(--muted);
+  color: var(--text-soft);
   font-size: 11px;
-  font-weight: 700;
+  font-weight: 800;
 }
 
 .system-table td,
