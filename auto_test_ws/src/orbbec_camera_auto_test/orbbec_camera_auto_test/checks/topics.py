@@ -31,23 +31,39 @@ def _mark_topic_skipped(result: Dict[str, Any], reason: str) -> Dict[str, Any]:
     return result
 
 
+def _create_paired_subscriptions(
+    harness, topic_specs: List[TopicSpec], cached_messages: Dict[str, Any]
+):
+    subscriptions = []
+    subscribed_topics = set()
+
+    for spec in topic_specs:
+        if not spec.paired_topic or spec.paired_topic in subscribed_topics:
+            continue
+
+        def cache_paired_message(message, topic_name=spec.paired_topic) -> None:
+            cached_messages[topic_name] = message
+
+        subscription = harness.node.create_subscription(
+            resolve_message_type("sensor_msgs/msg/Image", harness.ros_version),
+            spec.paired_topic,
+            cache_paired_message,
+            make_qos_profile(spec.qos, harness.ros_version),
+        )
+        subscriptions.append(subscription)
+        subscribed_topics.add(spec.paired_topic)
+
+    return subscriptions
+
+
 def _wait_for_paired_message(harness, spec: TopicSpec, cached_messages: Dict[str, Any]):
     def cache_target_message(message) -> None:
         cached_messages[spec.name] = message
-
-    def cache_paired_message(message) -> None:
-        cached_messages[spec.paired_topic] = message
 
     target_subscription = harness.node.create_subscription(
         resolve_message_type(spec.type, harness.ros_version),
         spec.name,
         cache_target_message,
-        make_qos_profile(spec.qos, harness.ros_version),
-    )
-    paired_subscription = harness.node.create_subscription(
-        resolve_message_type("sensor_msgs/msg/Image", harness.ros_version),
-        spec.paired_topic,
-        cache_paired_message,
         make_qos_profile(spec.qos, harness.ros_version),
     )
     try:
@@ -63,7 +79,6 @@ def _wait_for_paired_message(harness, spec: TopicSpec, cached_messages: Dict[str
         )
         return cached_messages[spec.name]
     finally:
-        harness.node.destroy_subscription(paired_subscription)
         harness.node.destroy_subscription(target_subscription)
 
 
@@ -101,6 +116,9 @@ def _wait_for_validated_message(harness, spec: TopicSpec, cached_messages: Dict[
 def run_topic_checks(harness, topic_specs: List[TopicSpec], log_path, emit_status=None) -> List[Dict[str, Any]]:
     results: List[Dict[str, Any]] = []
     cached_messages: Dict[str, Any] = {}
+    paired_subscriptions = _create_paired_subscriptions(
+        harness, topic_specs, cached_messages
+    )
 
     for spec in topic_specs:
         append_log(log_path, f"[TOPIC] Checking {spec.name} ({spec.type})")
@@ -149,4 +167,7 @@ def run_topic_checks(harness, topic_specs: List[TopicSpec], log_path, emit_statu
                 append_log(log_path, f"[TOPIC] FAIL {spec.name}: {exc}")
                 _emit_status(emit_status, f"[TOPIC][FAIL] {spec.name}: {exc}")
         results.append(result)
+
+    for subscription in paired_subscriptions:
+        harness.node.destroy_subscription(subscription)
     return results

@@ -61,21 +61,35 @@ def test_metadata_keeps_paired_image_subscription_active(
     harness.wait_for_message = lambda *args, **kwargs: pytest.fail(
         "paired topics must use simultaneous subscriptions"
     )
+    harness.wait_for_topic = lambda *args, **kwargs: (
+        pytest.fail("paired image subscription was destroyed too early")
+        if "/camera/color/image_raw" not in node.active_topics
+        else None
+    )
     monkeypatch.setattr(topics, "resolve_message_type", lambda name, version: name)
-    spec = TopicSpec(
+    metadata_spec = TopicSpec(
         name="/camera/color/metadata",
         type="orbbec_camera_msgs/msg/Metadata",
         validator="metadata",
         paired_topic="/camera/color/image_raw",
         timeout=10.0,
     )
+    advertised_spec = TopicSpec(
+        name="/camera/color/image_raw/theora",
+        type="theora_image_transport/msg/Packet",
+        mode="advertised",
+        timeout=10.0,
+    )
 
-    result = topics.run_topic_checks(harness, [spec], tmp_path / "topic.log")
+    result = topics.run_topic_checks(
+        harness, [metadata_spec, advertised_spec], tmp_path / "topic.log"
+    )
 
     assert result[0]["status"] == "passed"
+    assert result[1]["status"] == "passed"
     assert node.subscription_order == [
-        "/camera/color/metadata",
         "/camera/color/image_raw",
+        "/camera/color/metadata",
     ]
     assert harness.spin_until_calls == 2
     assert node.active_topics == set()
