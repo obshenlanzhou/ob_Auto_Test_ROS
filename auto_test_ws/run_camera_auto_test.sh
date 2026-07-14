@@ -9,8 +9,7 @@ export PYTHONPATH
 
 MODE=""
 DURATION=""
-PROFILE=""
-PERFORMANCE_SCENARIO=""
+SCENARIO=""
 STABLE_SECONDS="10"
 STREAM_TIMEOUT="60"
 MAX_GAP_SECONDS="1.5"
@@ -30,16 +29,15 @@ IMAGE_TOPICS=()
 usage() {
   cat <<'EOF'
 Usage:
-  run_camera_auto_test.sh --mode functional
-  run_camera_auto_test.sh --mode performance [--performance-scenario NAME] [--duration 300]
-  run_camera_auto_test.sh --mode restart --duration 300 [--image-topic /camera/color/image_raw]
-  run_camera_auto_test.sh --mode all [--performance-scenario NAME] [--duration 300]
+  run_camera_auto_test.sh --mode functional --launch-file FILE
+  run_camera_auto_test.sh --mode performance --launch-file FILE [--scenario NAME] [--duration 300]
+  run_camera_auto_test.sh --mode restart --launch-file FILE --duration 300 [--image-topic /camera/color/image_raw]
+  run_camera_auto_test.sh --mode all --launch-file FILE [--scenario NAME] [--duration 300]
 
 Options:
   --mode functional|performance|restart|all
   --duration SECONDS   Performance duration or restart stress duration
-  --profile PROFILE_NAME_OR_PATH
-  --performance-scenario NAME
+  --scenario default|stress|drop_frame
   --stable-seconds SECONDS
   --stream-timeout SECONDS
   --max-gap-seconds SECONDS
@@ -76,12 +74,8 @@ while [[ $# -gt 0 ]]; do
       DURATION="$2"
       shift 2
       ;;
-    --profile)
-      PROFILE="$2"
-      shift 2
-      ;;
-    --performance-scenario)
-      PERFORMANCE_SCENARIO="$2"
+    --scenario)
+      SCENARIO="$2"
       shift 2
       ;;
     --stable-seconds)
@@ -162,6 +156,12 @@ if [[ -z "${MODE}" ]]; then
   exit 1
 fi
 
+if [[ -z "${LAUNCH_FILE}" ]]; then
+  echo "--launch-file is required" >&2
+  usage
+  exit 1
+fi
+
 if [[ "${ROS_VERSION}" != "1" && "${ROS_VERSION}" != "2" ]]; then
   echo "--ros-version must be 1 or 2" >&2
   exit 1
@@ -215,9 +215,6 @@ COMMON_ARGS=(
   --ros-setup "${ROS_SETUP}"
 )
 
-if [[ -n "${PROFILE}" ]]; then
-  COMMON_ARGS+=(--profile "${PROFILE}")
-fi
 if [[ -n "${CAMERA_NAME}" ]]; then
   COMMON_ARGS+=(--camera-name "${CAMERA_NAME}")
 fi
@@ -233,9 +230,7 @@ fi
 if [[ -n "${DRIVER_SETUP}" ]]; then
   COMMON_ARGS+=(--driver-setup "${DRIVER_SETUP}")
 fi
-if [[ -n "${LAUNCH_FILE}" ]]; then
-  COMMON_ARGS+=(--launch-file "${LAUNCH_FILE}")
-fi
+COMMON_ARGS+=(--launch-file "${LAUNCH_FILE}")
 for launch_arg in "${LAUNCH_ARGS[@]}"; do
   COMMON_ARGS+=(--launch-arg "${launch_arg}")
 done
@@ -253,8 +248,8 @@ run_performance() {
   mkdir -p "${performance_dir}"
   local args=("${COMMON_ARGS[@]}")
   args[1]="${performance_dir}"
-  if [[ -n "${PERFORMANCE_SCENARIO}" ]]; then
-    args+=(--performance-scenario "${PERFORMANCE_SCENARIO}")
+  if [[ -n "${SCENARIO}" ]]; then
+    args+=(--scenario "${SCENARIO}")
   fi
   if [[ -n "${DURATION}" ]]; then
     args+=(--duration "${DURATION}")
@@ -267,9 +262,6 @@ run_restart() {
   mkdir -p "${restart_dir}"
   local args=("${COMMON_ARGS[@]}")
   args[1]="${restart_dir}"
-  if [[ -n "${PERFORMANCE_SCENARIO}" ]]; then
-    args+=(--performance-scenario "${PERFORMANCE_SCENARIO}")
-  fi
   if [[ -n "${DURATION}" ]]; then
     args+=(--duration "${DURATION}")
   fi

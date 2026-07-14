@@ -41,15 +41,23 @@ def _setup_from_env(*names: str) -> str:
 
 DEFAULT_CAMERA_SETUP = _setup_from_env("ORBBEC_ROS2_CAMERA_SETUP", "ORBBEC_DRIVER_SETUP")
 DEFAULT_ROS1_CAMERA_SETUP = _setup_from_env("ORBBEC_ROS1_CAMERA_SETUP")
-DEFAULT_LAUNCH_FILES = {
-    "2": {
-        "gemini_301": "gemini_301_series.launch.py",
-        "gemini_330": "gemini_330_series.launch.py",
-    },
-    "1": {
-        "gemini_301": "gemini_301_series.launch",
-        "gemini_330": "gemini_330_series.launch",
-    },
+SPECIAL_LAUNCH_CONFIGS = {
+    "gemini_301_series.launch.py": {"dual_color": "gemini305_dual_color.yaml"},
+    "gemini_301_series.launch": {"dual_color": "gemini305_dual_color.yaml"},
+    "gemini2L.launch.py": {"dual_ir": "gemini2L_dual_ir.yaml"},
+    "gemini2L.launch": {"dual_ir": "gemini2L_dual_ir.yaml"},
+}
+STREAM_LAUNCH_ARGS = {
+    "enable_color",
+    "enable_depth",
+    "enable_ir",
+    "enable_left_ir",
+    "enable_right_ir",
+    "enable_point_cloud",
+    "enable_colored_point_cloud",
+    "enable_accel",
+    "enable_gyro",
+    "enable_sync_output_accel_gyro",
 }
 
 
@@ -59,11 +67,6 @@ def _default_ros_setup_for_version(ros_version: str) -> str:
 
 def _default_camera_setup_for_version(ros_version: str) -> str:
     return DEFAULT_ROS1_CAMERA_SETUP if str(ros_version) == "1" else DEFAULT_CAMERA_SETUP
-
-
-def _default_launch_file_for_camera(camera_model: str, ros_version: str) -> str:
-    launch_files = DEFAULT_LAUNCH_FILES.get(str(ros_version), DEFAULT_LAUNCH_FILES["2"])
-    return launch_files.get(str(camera_model or "").strip(), launch_files["gemini_330"])
 
 
 def _find_auto_test_ws() -> Path:
@@ -460,10 +463,10 @@ def load_config() -> Dict[str, Any]:
         "host": config.get("host") or "127.0.0.1",
         "port": int(config.get("port") or 8000),
         "mode": config.get("mode") or "functional",
-        "camera_model": config.get("camera_model") or "",
-        "functional_profile": config.get("functional_profile") or "gemini_330_series",
-        "performance_profile": config.get("performance_profile") or "gemini_330_series",
         "performance_scenario": config.get("performance_scenario") or "",
+        "launch_file": config.get("launch_file") or "",
+        "launch_config": config.get("launch_config") or "generic",
+        "stream_options": config.get("stream_options") or {},
         "run_count": config.get("run_count") or "1",
         "continue_on_error": config.get("continue_on_error", False),
         "duration": config.get("duration") or "",
@@ -488,10 +491,10 @@ def save_config(payload: Dict[str, Any]) -> Dict[str, Any]:
         "host",
         "port",
         "mode",
-        "camera_model",
-        "functional_profile",
-        "performance_profile",
         "performance_scenario",
+        "launch_file",
+        "launch_config",
+        "stream_options",
         "run_count",
         "continue_on_error",
         "duration",
@@ -544,6 +547,39 @@ def _bool_value(raw: Any) -> bool:
     return _safe_text(raw).lower() in {"1", "true", "yes", "on"}
 
 
+def _selected_config_file(payload: Dict[str, Any]) -> str:
+    launch_file = _safe_text(payload.get("launch_file"))
+    launch_config = _safe_text(payload.get("launch_config")) or "generic"
+    if launch_config == "generic":
+        return _safe_text(payload.get("config_file_path"))
+    return SPECIAL_LAUNCH_CONFIGS.get(launch_file, {}).get(launch_config, "")
+
+
+def _stream_launch_args(payload: Dict[str, Any]) -> List[str]:
+    if (_safe_text(payload.get("launch_config")) or "generic") != "generic":
+        return []
+    raw_options = payload.get("stream_options")
+    if not isinstance(raw_options, dict):
+        return []
+    result = []
+    for name in sorted(STREAM_LAUNCH_ARGS):
+        value = _safe_text(raw_options.get(name)).lower()
+        if value in {"true", "false"}:
+            result.append(f"{name}={value}")
+    return result
+
+
+def _special_launch_args(payload: Dict[str, Any]) -> List[str]:
+    launch_config = _safe_text(payload.get("launch_config"))
+    if launch_config == "generic":
+        return []
+    config_file = _selected_config_file(payload)
+    result = [f"config_file_path={config_file}"] if config_file else []
+    if launch_config == "dual_color":
+        result.append("device_preset=Dual Color Streams")
+    return result
+
+
 def _build_runner_args(payload: Dict[str, Any], mode: str, results_dir: Path) -> List[str]:
     modules = {
         "functional": "orbbec_camera_auto_test.runners.functional",
@@ -556,25 +592,16 @@ def _build_runner_args(payload: Dict[str, Any], mode: str, results_dir: Path) ->
     ros_version = _safe_text(payload.get("ros_version")) or "2"
     args.extend(["--ros-version", ros_version])
     _append_arg(args, "--ros-setup", payload.get("ros_setup"))
-    profile_key = f"{mode}_profile"
-    profile = "gemini_330_series"
-    if mode in {"restart", "stream_stall"}:
-        profile = ""
-    profile = payload.get(profile_key) or payload.get("profile") or profile
-    _append_arg(args, "--profile", profile)
     _append_arg(args, "--results-dir", str(results_dir))
-    launch_file = payload.get("launch_file")
-    if mode in {"restart", "stream_stall"} and not _safe_text(launch_file):
-        launch_file = _default_launch_file_for_camera(payload.get("camera_model", ""), ros_version)
-    _append_arg(args, "--launch-file", launch_file)
+    _append_arg(args, "--launch-file", payload.get("launch_file"))
     _append_arg(args, "--camera-name", payload.get("camera_name"))
     _append_arg(args, "--serial-number", payload.get("serial_number"))
     _append_arg(args, "--usb-port", payload.get("usb_port"))
-    _append_arg(args, "--config-file-path", payload.get("config_file_path"))
+    _append_arg(args, "--config-file-path", _selected_config_file(payload))
     _append_arg(args, "--driver-setup", payload.get("camera_setup"))
 
     if mode == "performance":
-        _append_arg(args, "--performance-scenario", payload.get("performance_scenario"))
+        _append_arg(args, "--scenario", payload.get("performance_scenario"))
     if mode == "performance":
         _append_arg(args, "--duration", payload.get("duration"))
     if mode == "restart":
@@ -594,7 +621,12 @@ def _build_runner_args(payload: Dict[str, Any], mode: str, results_dir: Path) ->
         for topic in _parse_multiline_values(payload.get("image_topics")):
             args.extend(["--image-topic", topic])
 
-    for launch_arg in _parse_extra_launch_args(payload.get("launch_args")):
+    launch_args = [
+        *_stream_launch_args(payload),
+        *_parse_extra_launch_args(payload.get("launch_args")),
+        *_special_launch_args(payload),
+    ]
+    for launch_arg in launch_args:
         args.extend(["--launch-arg", launch_arg])
     return args
 
@@ -713,14 +745,26 @@ def validate_run_payload(payload: Dict[str, Any]) -> List[str]:
     if ros_version not in {"1", "2"}:
         errors.append(f"unsupported ROS version: {ros_version}")
 
-    if mode in {"functional", "all"} and not _safe_text(
-        payload.get("functional_profile") or payload.get("profile")
-    ):
-        errors.append("functional profile is required")
-    if mode in {"performance", "all"} and not _safe_text(
-        payload.get("performance_profile") or payload.get("profile")
-    ):
-        errors.append("performance profile is required")
+    launch_file = _safe_text(payload.get("launch_file"))
+    if not launch_file:
+        errors.append("launch_file is required")
+    launch_config = _safe_text(payload.get("launch_config")) or "generic"
+    if launch_config != "generic" and not _selected_config_file(payload):
+        errors.append(
+            f"launch config '{launch_config}' is not supported by '{launch_file}'"
+        )
+    scenario = _safe_text(payload.get("performance_scenario"))
+    if scenario and scenario not in {"default", "stress", "drop_frame"}:
+        errors.append(f"unsupported performance scenario: {scenario}")
+    stream_options = payload.get("stream_options")
+    if stream_options is not None and not isinstance(stream_options, dict):
+        errors.append("stream_options must be an object")
+    elif isinstance(stream_options, dict):
+        for name, value in stream_options.items():
+            if name not in STREAM_LAUNCH_ARGS:
+                errors.append(f"unsupported stream option: {name}")
+            elif _safe_text(value).lower() not in {"", "true", "false"}:
+                errors.append(f"stream option {name} must be default, true, or false")
     ros_setup = Path(_safe_text(payload.get("ros_setup")) or _default_ros_setup_for_version(ros_version))
     if not ros_setup.is_file():
         errors.append(f"ROS setup file not found: {ros_setup}")
@@ -872,14 +916,10 @@ class RunManager:
                 "camera_setup": payload.get("camera_setup")
                 or _default_camera_setup_for_version(payload.get("ros_version") or "2"),
                 "mode": payload.get("mode") or "functional",
-                "camera_model": payload.get("camera_model") or "",
-                "functional_profile": payload.get("functional_profile")
-                or payload.get("profile")
-                or "gemini_330_series",
-                "performance_profile": payload.get("performance_profile")
-                or payload.get("profile")
-                or "gemini_330_series",
                 "performance_scenario": payload.get("performance_scenario") or "",
+                "launch_file": payload.get("launch_file") or "",
+                "launch_config": payload.get("launch_config") or "generic",
+                "stream_options": payload.get("stream_options") or {},
                 "run_count": payload.get("run_count") or "1",
                 "continue_on_error": _bool_value(payload.get("continue_on_error")),
                 "duration": payload.get("duration") or "",

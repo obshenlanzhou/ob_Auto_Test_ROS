@@ -63,14 +63,6 @@ def _build_launch_args(profile: CameraProfile, args) -> Dict[str, Any]:
     return launch_args
 
 
-def _select_launch_file(profile: CameraProfile | None, args) -> str:
-    launch_file = args.launch_file or (profile.launch_file if profile is not None else "")
-    if str(getattr(args, "ros_version", "2")) == "1" and not args.launch_file:
-        if launch_file.endswith(".launch.py"):
-            return launch_file[:-3]
-    return launch_file
-
-
 def _make_status_logger(*log_paths: Path):
     def emit(message: str) -> None:
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -271,9 +263,9 @@ def run_functional_test(args) -> int:
     stage_log_path = results_dir / "functional.log"
     emit_status = _make_status_logger(stage_log_path)
 
-    emit_status(f"loading functional profile '{args.profile}'")
-    profile = load_camera_profile(args.profile, profile_type="functional")
-    launch_file = _select_launch_file(profile, args)
+    emit_status("loading the generic functional interface catalog")
+    profile = load_camera_profile("all_topics_services", profile_type="functional")
+    launch_file = args.launch_file
     base_launch_args = _build_launch_args(profile, args)
     camera_name = str(base_launch_args.get("camera_name", "camera"))
     emit_status(f"functional test target launch: {launch_file}")
@@ -400,8 +392,7 @@ def run_functional_test(args) -> int:
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Run Orbbec camera functional tests")
-    parser.add_argument("--profile", default="gemini_330_series", help="Profile name or YAML path")
-    parser.add_argument("--launch-file", default="", help="Override launch file from the profile")
+    parser.add_argument("--launch-file", required=True, help="Driver launch file to test")
     parser.add_argument("--camera-name", default=None)
     parser.add_argument("--serial-number", default=None)
     parser.add_argument("--usb-port", default=None)

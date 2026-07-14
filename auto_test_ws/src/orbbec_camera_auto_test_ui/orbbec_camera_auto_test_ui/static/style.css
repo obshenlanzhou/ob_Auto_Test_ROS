@@ -132,6 +132,13 @@ button:disabled {
   transform: none;
 }
 
+input:disabled,
+select:disabled,
+textarea:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+
 .shell {
   width: min(1580px, calc(100vw - 48px));
   margin: 0 auto;

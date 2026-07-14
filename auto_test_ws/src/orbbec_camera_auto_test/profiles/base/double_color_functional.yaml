@@ -1,5 +1,0 @@
-extends: all_topics_services.yaml
-
-default_launch_args:
-  enable_left_color: true
-  enable_right_color: true

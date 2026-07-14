@@ -9,13 +9,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List
 
-from .functional import _parse_launch_args, _require_detected_camera, _select_launch_file
-from .performance import _select_performance_scenarios, _wait_for_camera_ready
+from .functional import _parse_launch_args, _require_detected_camera
+from .performance import _wait_for_camera_ready
 from ..core.reporter import append_log, ensure_dir, write_json, write_markdown
 from ..core.ros_utils import RosHarness, make_qos_profile, resolve_message_type
 from ..core.session import TestSession
-from ..profile.loader import CameraProfile, TopicSpec, load_camera_profile
-from ..profile.templating import expand_camera_template, expand_topic_specs
+from ..profile.loader import TopicSpec
+from ..profile.templating import expand_camera_template
 
 
 def _parse_duration_value(value: Any, default: float) -> float:
@@ -68,8 +68,8 @@ def _default_image_topic(camera_name: str) -> TopicSpec:
     )
 
 
-def _build_restart_launch_args(args, profile: CameraProfile | None) -> Dict[str, Any]:
-    launch_args = dict(profile.default_launch_args) if profile is not None else {}
+def _build_restart_launch_args(args) -> Dict[str, Any]:
+    launch_args: Dict[str, Any] = {}
     if args.camera_name:
         launch_args["camera_name"] = args.camera_name
     if args.serial_number:
@@ -82,20 +82,7 @@ def _build_restart_launch_args(args, profile: CameraProfile | None) -> Dict[str,
     return launch_args
 
 
-def _image_topics_from_args(
-    args, profile: CameraProfile | None, launch_args: Dict[str, Any]
-) -> List[TopicSpec]:
-    scenario_topics: List[TopicSpec] = []
-    if args.performance_scenario:
-        if profile is None:
-            raise ValueError("--performance-scenario requires --profile in restart mode")
-        selected = _select_performance_scenarios(profile, args.performance_scenario)
-        if selected:
-            launch_args.update(selected[0].launch_args)
-            scenario_topics = selected[0].topics
-    elif profile is not None and profile.performance_scenarios:
-        scenario_topics = profile.performance_scenarios[0].topics
-
+def _image_topics_from_args(args, launch_args: Dict[str, Any]) -> List[TopicSpec]:
     camera_name = str(launch_args.get("camera_name", "camera"))
     stream_timeout = _parse_duration_value(args.stream_timeout, 60.0)
     raw_topics = [item.strip() for item in args.image_topic or [] if item.strip()]
@@ -111,22 +98,6 @@ def _image_topics_from_args(
             for topic in raw_topics
         ]
 
-    expanded_scenario_topics = expand_topic_specs(scenario_topics, camera_name)
-    image_topics = [
-        TopicSpec(
-            name=topic.name,
-            type=topic.type or "sensor_msgs/msg/Image",
-            mode="message",
-            validator="image",
-            paired_topic=topic.paired_topic,
-            timeout=stream_timeout,
-            qos=topic.qos,
-        )
-        for topic in expanded_scenario_topics
-        if topic.validator == "image" and (topic.type in {"", "sensor_msgs/msg/Image"})
-    ]
-    if image_topics:
-        return image_topics
     return [_default_image_topic(camera_name)]
 
 
@@ -311,16 +282,9 @@ def run_restart_test(args) -> int:
     restart_log_path = results_dir / "restart.log"
     emit_status = _make_status_logger(restart_log_path)
 
-    profile = (
-        load_camera_profile(args.profile, profile_type="performance")
-        if str(args.profile or "").strip()
-        else None
-    )
-    launch_file = _select_launch_file(profile, args)
-    if not launch_file:
-        raise ValueError("--launch-file is required when --profile is not set")
-    base_launch_args = _build_restart_launch_args(args, profile)
-    topics = _image_topics_from_args(args, profile, base_launch_args)
+    launch_file = args.launch_file
+    base_launch_args = _build_restart_launch_args(args)
+    topics = _image_topics_from_args(args, base_launch_args)
     camera_name = str(base_launch_args.get("camera_name", "camera"))
     duration_seconds = _parse_duration_value(args.duration, 300.0)
     stable_seconds = _parse_duration_value(args.stable_seconds, 10.0)
@@ -329,7 +293,7 @@ def run_restart_test(args) -> int:
     deadline = time.monotonic() + duration_seconds
 
     result: Dict[str, Any] = {
-        "profile_name": profile.profile_name if profile is not None else "",
+        "profile_name": "generic_restart",
         "ros_version": str(args.ros_version),
         "launch_file": launch_file,
         "camera_name": camera_name,
@@ -489,13 +453,7 @@ def run_restart_test(args) -> int:
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Run Orbbec camera launch restart tests")
-    parser.add_argument("--profile", default="", help="Optional profile name or YAML path")
-    parser.add_argument("--launch-file", default="", help="Launch file to restart")
-    parser.add_argument(
-        "--performance-scenario",
-        default="",
-        help="Use launch args/topics from a performance scenario; requires --profile",
-    )
+    parser.add_argument("--launch-file", required=True, help="Launch file to restart")
     parser.add_argument("--camera-name", default=None)
     parser.add_argument("--serial-number", default=None)
     parser.add_argument("--usb-port", default=None)

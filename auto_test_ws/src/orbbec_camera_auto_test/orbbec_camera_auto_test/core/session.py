@@ -294,6 +294,30 @@ class TestSession:
         if self.status_callback is not None:
             self.status_callback(message)
 
+    def _resolve_ros1_config_file(self, runtime_env: Dict[str, str]) -> None:
+        config_value = str(self.launch_args.get("config_file_path", "")).strip()
+        if self.ros_version != "1" or not config_value:
+            return
+        config_path = Path(config_value).expanduser()
+        if config_path.is_absolute() or config_path.parent != Path("."):
+            return
+        try:
+            package_dir = subprocess.check_output(
+                ["rospack", "find", "orbbec_camera"],
+                env=runtime_env,
+                text=True,
+                stderr=subprocess.STDOUT,
+            ).strip()
+        except (OSError, subprocess.CalledProcessError) as exc:
+            raise RuntimeError(
+                f"failed to resolve ROS1 orbbec_camera config '{config_value}' with rospack"
+            ) from exc
+        resolved = Path(package_dir) / "config" / config_value
+        if not resolved.is_file():
+            raise FileNotFoundError(f"ROS1 config file not found: {resolved}")
+        self.launch_args["config_file_path"] = str(resolved)
+        self._emit_status(f"resolved ROS1 config file: {resolved}")
+
     def start(self) -> None:
         if self.process is not None:
             raise RuntimeError("Launch session is already running")
@@ -302,6 +326,7 @@ class TestSession:
             ros_version=self.ros_version,
             ros_setup=self.ros_setup,
         )
+        self._resolve_ros1_config_file(runtime_env)
         command = self.command()
         self._emit_status(f"starting launch: {' '.join(command)}")
         ensure_dir(self.log_path.parent)

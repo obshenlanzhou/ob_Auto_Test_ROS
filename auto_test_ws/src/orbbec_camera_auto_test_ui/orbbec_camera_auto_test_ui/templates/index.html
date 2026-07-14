@@ -45,7 +45,7 @@
         </div>
         <div class="metric">
           <span class="metric-icon" aria-hidden="true">03</span>
-          <div><small>Profiles</small><strong id="profileCount">—</strong></div>
+          <div><small>Launch</small><strong id="launchCount">—</strong></div>
         </div>
       </section>
 
@@ -57,7 +57,7 @@
               <h2>测试配置</h2>
               <p>设定环境、测试策略与相机参数</p>
             </div>
-            <button type="button" class="icon-button" id="refreshProfiles" title="刷新 Profile" aria-label="刷新 Profile">
+            <button type="button" class="icon-button" id="refreshLaunches" title="刷新 Launch 列表" aria-label="刷新 Launch 列表">
               <span aria-hidden="true">↻</span>
             </button>
           </div>
@@ -97,8 +97,8 @@
                 </select>
               </label>
               <label>
-                <span>相机型号</span>
-                <select id="cameraModel" name="camera_model"></select>
+                <span>Launch</span>
+                <select id="launchFile" name="launch_file"></select>
               </label>
               <label>
                 <span>运行次数</span>
@@ -108,17 +108,14 @@
                 <span>遇错继续</span>
                 <input id="continueOnError" name="continue_on_error" type="checkbox" />
               </label>
-              <label id="functionalProfileField">
-                <span>功能 Profile</span>
-                <select id="functionalProfile" name="functional_profile"></select>
-              </label>
-              <label id="performanceProfileField">
-                <span>性能 Profile</span>
-                <select id="performanceProfile" name="performance_profile"></select>
-              </label>
               <label>
                 <span>Performance Scenario</span>
-                <select id="performanceScenario" name="performance_scenario"></select>
+                <select id="performanceScenario" name="performance_scenario">
+                  <option value="">全部场景</option>
+                  <option value="default">Default · 默认</option>
+                  <option value="stress">Stress · 压力</option>
+                  <option value="drop_frame">Drop frame · 丢帧</option>
+                </select>
               </label>
               <label>
                 <span>运行时长</span>
@@ -148,8 +145,32 @@
             </div>
           </section>
 
+          <details class="form-section compact-section" open>
+            <summary class="section-title"><span>03</span><div>流配置<small>Stream configuration</small></div><i aria-hidden="true">⌄</i></summary>
+            <div class="section-content">
+              <div id="launchConfigField" class="grid two">
+                <label>
+                  <span>特殊流模式</span>
+                  <select id="launchConfig" name="launch_config"><option value="generic">通用</option></select>
+                </label>
+              </div>
+              <div id="streamOptions" class="grid two">
+                <label><span>Color</span><select id="streamColor"><option value="">默认</option><option value="true">开启</option><option value="false">关闭</option></select></label>
+                <label><span>Depth</span><select id="streamDepth"><option value="">默认</option><option value="true">开启</option><option value="false">关闭</option></select></label>
+                <label><span>IR</span><select id="streamIr"><option value="">默认</option><option value="true">开启</option><option value="false">关闭</option></select></label>
+                <label><span>Left IR</span><select id="streamLeftIr"><option value="">默认</option><option value="true">开启</option><option value="false">关闭</option></select></label>
+                <label><span>Right IR</span><select id="streamRightIr"><option value="">默认</option><option value="true">开启</option><option value="false">关闭</option></select></label>
+                <label><span>Point Cloud</span><select id="streamPointCloud"><option value="">默认</option><option value="true">开启</option><option value="false">关闭</option></select></label>
+                <label><span>Colored Point Cloud</span><select id="streamColoredPointCloud"><option value="">默认</option><option value="true">开启</option><option value="false">关闭</option></select></label>
+                <label><span>Accel</span><select id="streamAccel"><option value="">默认</option><option value="true">开启</option><option value="false">关闭</option></select></label>
+                <label><span>Gyro</span><select id="streamGyro"><option value="">默认</option><option value="true">开启</option><option value="false">关闭</option></select></label>
+                <label><span>Sync Accel + Gyro</span><select id="streamSyncImu"><option value="">默认</option><option value="true">开启</option><option value="false">关闭</option></select></label>
+              </div>
+            </div>
+          </details>
+
           <details class="form-section compact-section">
-            <summary class="section-title"><span>03</span><div>相机参数<small>Camera identity</small></div><i aria-hidden="true">⌄</i></summary>
+            <summary class="section-title"><span>04</span><div>相机参数<small>Camera identity</small></div><i aria-hidden="true">⌄</i></summary>
             <div class="section-content">
               <div class="grid two">
                 <label><span>Camera Name</span><input id="cameraName" name="camera_name" placeholder="camera" /></label>
@@ -161,9 +182,8 @@
           </details>
 
           <details class="form-section compact-section">
-            <summary class="section-title"><span>04</span><div>Launch 参数<small>Advanced launch options</small></div><i aria-hidden="true">⌄</i></summary>
+            <summary class="section-title"><span>05</span><div>Launch 参数<small>Advanced launch options</small></div><i aria-hidden="true">⌄</i></summary>
             <div class="section-content">
-              <label><span>Launch File</span><input id="launchFile" name="launch_file" /></label>
               <label><span>Extra Launch Args</span><textarea id="launchArgs" name="launch_args" rows="4" placeholder="enable_point_cloud=true"></textarea></label>
             </div>
           </details>

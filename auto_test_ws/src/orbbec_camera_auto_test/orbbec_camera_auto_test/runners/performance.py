@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict
 
-from .functional import _build_launch_args, _require_detected_camera, _select_launch_file
+from .functional import _build_launch_args, _require_detected_camera
 from .performance_fps import TopicFpsCollector
 from .performance_load import ExternalLoadController
 from .performance_system import MultiCameraSystemSampler, ProcessTreeSampler
@@ -20,12 +20,80 @@ from ..core.reporter import append_log, build_performance_summary, ensure_dir, w
 from ..core.ros_utils import RosHarness, resolve_service_type
 from ..core.session import TestSession
 from ..profile.loader import (
+    CameraProfile,
+    ExternalLoadSpec,
     FrameTimestampSpec,
     PerformanceScenarioSpec,
     TopicSpec,
-    load_camera_profile,
 )
 from ..profile.templating import expand_topic_specs
+
+
+def _generic_performance_topics() -> list[TopicSpec]:
+    """Topics eligible for generic performance sampling after graph discovery."""
+    topic_defs = (
+        ("color/image_raw", "sensor_msgs/msg/Image", "image", "color_fps"),
+        ("depth/image_raw", "sensor_msgs/msg/Image", "image", "depth_fps"),
+        ("ir/image_raw", "sensor_msgs/msg/Image", "image", "ir_fps"),
+        ("left_ir/image_raw", "sensor_msgs/msg/Image", "image", "left_ir_fps"),
+        ("right_ir/image_raw", "sensor_msgs/msg/Image", "image", "right_ir_fps"),
+        ("left_color/image_raw", "sensor_msgs/msg/Image", "image", "left_color_fps"),
+        ("right_color/image_raw", "sensor_msgs/msg/Image", "image", "right_color_fps"),
+        ("depth/points", "sensor_msgs/msg/PointCloud2", "point_cloud", None),
+        ("depth_registered/points", "sensor_msgs/msg/PointCloud2", "point_cloud", None),
+        ("accel/sample", "sensor_msgs/msg/Imu", "imu", None),
+        ("gyro/sample", "sensor_msgs/msg/Imu", "imu", None),
+        ("gyro_accel/sample", "sensor_msgs/msg/Imu", "imu", None),
+    )
+    return [
+        TopicSpec(
+            name=f"/{{camera}}/{suffix}",
+            type=message_type,
+            mode="message",
+            validator=validator,
+            timeout=10.0,
+            ideal_fps_key=ideal_fps_key,
+        )
+        for suffix, message_type, validator, ideal_fps_key in topic_defs
+    ]
+
+
+def build_generic_performance_profile() -> CameraProfile:
+    """Build the camera-independent performance scenarios used by CLI and UI."""
+    scenarios = [
+        PerformanceScenarioSpec(
+            name="default",
+            description="Monitor every discovered primary camera stream",
+            duration=240,
+            topics=_generic_performance_topics(),
+        ),
+        PerformanceScenarioSpec(
+            name="stress",
+            description="Monitor discovered streams under stress-ng system load",
+            duration=240,
+            topics=_generic_performance_topics(),
+            load=ExternalLoadSpec(type="stress-ng", workers=0),
+        ),
+        PerformanceScenarioSpec(
+            name="drop_frame",
+            description="Record driver and receiver timestamps for drop-frame analysis",
+            duration=300,
+            launch_args={
+                "enable_frame_drop_log": True,
+                "frame_timestamp_csv_file": "{results_dir}/driver_frame_timestamp.csv",
+            },
+            topics=_generic_performance_topics(),
+            frame_timestamps=FrameTimestampSpec(enabled=True, flush_every_rows=1000),
+        ),
+    ]
+    return CameraProfile(
+        profile_name="generic_performance",
+        launch_file="",
+        default_launch_args={"camera_name": "camera"},
+        launch_scenarios=[],
+        performance_topics=[],
+        performance_scenarios=scenarios,
+    )
 
 
 def _parse_duration_value(value: Any) -> float:
@@ -489,7 +557,7 @@ def _run_performance_scenario(
             f"receiver frame timestamp recording enabled: {frame_timestamp_dir} "
             f"(flush_every_rows={frame_timestamps.flush_every_rows})"
         )
-    if launch_args.get("enable_frame_timestamp_csv"):
+    if launch_args.get("frame_timestamp_csv_file"):
         emit_status(
             "driver frame timestamp csv enabled: "
             f"{launch_args.get('frame_timestamp_csv_file', '')}"
@@ -735,11 +803,11 @@ def run_performance_test(args) -> int:
     root_log_path = results_dir / "performance.log"
     emit_status = _make_status_logger(root_stage_log_path, root_log_path)
 
-    emit_status(f"loading performance profile '{args.profile}'")
-    profile = load_camera_profile(args.profile, profile_type="performance")
-    launch_file = _select_launch_file(profile, args)
+    emit_status("loading generic performance scenarios")
+    profile = build_generic_performance_profile()
+    launch_file = args.launch_file
     base_launch_args = _build_launch_args(profile, args)
-    selected_scenarios = _select_performance_scenarios(profile, args.performance_scenario)
+    selected_scenarios = _select_performance_scenarios(profile, args.scenario)
     host_environment = collect_host_environment(
         args.driver_setup,
         ros_version=args.ros_version,
@@ -802,12 +870,12 @@ def run_performance_test(args) -> int:
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Run Orbbec camera performance tests")
-    parser.add_argument("--profile", default="gemini_330_series", help="Profile name or YAML path")
-    parser.add_argument("--launch-file", default="", help="Override launch file from the profile")
+    parser.add_argument("--launch-file", required=True, help="Driver launch file to test")
     parser.add_argument(
-        "--performance-scenario",
+        "--scenario",
+        choices=("default", "stress", "drop_frame"),
         default="",
-        help="Run only the named performance scenario from the profile",
+        help="Run one scenario; when omitted all three scenarios run",
     )
     parser.add_argument("--camera-name", default=None)
     parser.add_argument("--serial-number", default=None)
