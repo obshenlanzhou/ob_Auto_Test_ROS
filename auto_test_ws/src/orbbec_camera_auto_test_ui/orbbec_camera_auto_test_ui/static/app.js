@@ -1,42 +1,116 @@
 const state = {
-  profiles: {
-    functional: [],
-    performance: [],
-  },
   config: {},
-  selectedFunctionalProfile: null,
-  selectedPerformanceProfile: null,
-  cameras: [],
   logOffset: 0,
   polling: null,
+  selectedRunId: null,
+  selectedRunIds: new Set(),
 };
 
 const $ = (id) => document.getElementById(id);
 const MAX_VISIBLE_LOG_LINES = 500;
+const THEME_STORAGE_KEY = "orbbec-ui-theme";
+const THEME_COLORS = {
+  light: "#f4f7fb",
+  dark: "#07101d",
+};
+const ACTIVE_RUN_STATUSES = new Set(["starting", "running", "stopping"]);
 const DEFAULT_SETUPS = {
   "2": {
     ros: "/opt/ros/humble/setup.bash",
     camera: "",
     cameraPlaceholder: "/path/to/orbbecsdk_ros2/install/setup.bash",
-    launch: "gemini_330_series.launch.py",
   },
   "1": {
     ros: "/opt/ros/one/setup.bash",
     camera: "",
     cameraPlaceholder: "/path/to/orbbecsdk_ros1/devel/setup.bash",
-    launch: "gemini_330_series.launch",
   },
 };
-const DEFAULT_LAUNCH_FILES = {
-  "2": {
-    gemini_301: "gemini_301_series.launch.py",
-    gemini_330: "gemini_330_series.launch.py",
-  },
-  "1": {
-    gemini_301: "gemini_301_series.launch",
-    gemini_330: "gemini_330_series.launch",
-  },
+const SINGLE_CAMERA_LAUNCH_FILES = {
+  "2": [
+    "astra.launch.py",
+    "astra2.launch.py",
+    "dabai_a.launch.py",
+    "dabai_al.launch.py",
+    "dabai_dcw2.launch.py",
+    "dabai_max_pro.launch.py",
+    "femto.launch.py",
+    "femto_bolt.launch.py",
+    "femto_mega.launch.py",
+    "gemini2.launch.py",
+    "gemini210.launch.py",
+    "gemini2L.launch.py",
+    "gemini345.launch.py",
+    "gemini345_lg.launch.py",
+    "gemini435_le.launch.py",
+    "gemini_301_series.launch.py",
+    "gemini_330_series.launch.py",
+    "gemini_330_series_low_cpu.launch.py",
+    "gemini_330_series_sdk_json.launch.py",
+  ],
+  "1": [
+    "astra.launch",
+    "astra2.launch",
+    "dabai_a.launch",
+    "dabai_al.launch",
+    "dabai_dcw2.launch",
+    "dabai_max_pro.launch",
+    "femto.launch",
+    "femto_bolt.launch",
+    "femto_mega.launch",
+    "gemini2.launch",
+    "gemini210.launch",
+    "gemini2L.launch",
+    "gemini345.launch",
+    "gemini345_lg.launch",
+    "gemini435_le.launch",
+    "gemini_301_series.launch",
+    "gemini_330_series.launch",
+    "gemini_330_series_low_cpu.launch",
+    "gemini_330_series_nodelet.launch",
+    "gemini_330_series_nodelet_low_cpu.launch",
+    "gemini_330_series_sdk_json.launch",
+  ],
 };
+const SPECIAL_LAUNCH_CONFIGS = {
+  "gemini_301_series.launch.py": [{ value: "dual_color", label: "Dual Color · 双彩色" }],
+  "gemini_301_series.launch": [{ value: "dual_color", label: "Dual Color · 双彩色" }],
+  "gemini2L.launch.py": [{ value: "dual_ir", label: "Dual IR · 双红外" }],
+  "gemini2L.launch": [{ value: "dual_ir", label: "Dual IR · 双红外" }],
+};
+const STREAM_CONTROLS = {
+  enable_color: "streamColor",
+  enable_depth: "streamDepth",
+  enable_ir: "streamIr",
+  enable_left_ir: "streamLeftIr",
+  enable_right_ir: "streamRightIr",
+  enable_point_cloud: "streamPointCloud",
+  enable_colored_point_cloud: "streamColoredPointCloud",
+  enable_accel: "streamAccel",
+  enable_gyro: "streamGyro",
+  enable_sync_output_accel_gyro: "streamSyncImu",
+};
+
+function applyTheme(theme, persist = true) {
+  const nextTheme = theme === "dark" ? "dark" : "light";
+  document.documentElement.dataset.theme = nextTheme;
+  document.querySelector('meta[name="theme-color"]').content = THEME_COLORS[nextTheme];
+  for (const button of document.querySelectorAll("[data-theme-value]")) {
+    button.setAttribute("aria-pressed", String(button.dataset.themeValue === nextTheme));
+  }
+  if (persist) {
+    try {
+      localStorage.setItem(THEME_STORAGE_KEY, nextTheme);
+    } catch (_) {}
+  }
+}
+
+function initTheme() {
+  applyTheme(document.documentElement.dataset.theme, false);
+  for (const button of document.querySelectorAll("[data-theme-value]")) {
+    button.addEventListener("click", () => applyTheme(button.dataset.themeValue));
+  }
+}
 
 async function api(path, options = {}) {
   const response = await fetch(path, {
@@ -57,10 +131,11 @@ function formPayload() {
     ros_setup: $("rosSetup").value.trim(),
     camera_setup: $("cameraSetup").value.trim(),
     mode: $("mode").value,
-    camera_model: $("cameraModel").value,
-    functional_profile: $("functionalProfile").value,
-    performance_profile: $("performanceProfile").value,
     performance_scenario: $("performanceScenario").value,
+    launch_config: $("launchConfig").value,
+    stream_options: Object.fromEntries(
+      Object.entries(STREAM_CONTROLS).map(([name, id]) => [name, $(id).value])
+    ),
     run_count: $("runCount").value.trim(),
     continue_on_error: $("continueOnError").checked,
     duration: $("duration").value.trim(),
@@ -89,8 +164,13 @@ function truthy(value) {
 
 function setStatus(status) {
   const node = $("runStatus");
-  node.textContent = status || "idle";
-  node.className = `status-pill ${status || "idle"}`;
+  const value = status || "idle";
+  const dot = document.createElement("i");
+  dot.setAttribute("aria-hidden", "true");
+  const label = document.createElement("span");
+  label.textContent = value;
+  node.replaceChildren(dot, label);
+  node.className = `status-pill ${value}`;
   const running = ["starting", "running", "stopping"].includes(status);
   $("startButton").disabled = running;
   $("stopButton").disabled = !running;
@@ -98,12 +178,33 @@ function setStatus(status) {
 
 function renderCommands(commands = []) {
   const box = $("commandBox");
-  box.innerHTML = "";
+  const signature = JSON.stringify(commands);
+  if (box.dataset.commands === signature) return;
+  box.dataset.commands = signature;
+  box.replaceChildren();
+  box.open = false;
+  if (!commands.length) return;
+
+  const summary = document.createElement("summary");
+  const label = document.createElement("span");
+  label.className = "command-label";
+  label.textContent = "启动命令";
+  const preview = document.createElement("code");
+  preview.className = "command-preview";
+  preview.textContent = commands[0];
+  const toggle = document.createElement("span");
+  toggle.className = "command-toggle";
+  summary.append(label, preview, toggle);
+
+  const lines = document.createElement("div");
+  lines.className = "command-lines";
   for (const command of commands) {
     const line = document.createElement("div");
+    line.className = "command-line";
     line.textContent = command;
-    box.appendChild(line);
+    lines.appendChild(line);
   }
+  box.append(summary, lines);
 }
 
 function appendLogs(lines = []) {
@@ -115,9 +216,37 @@ function appendLogs(lines = []) {
   if (visibleLines.length > MAX_VISIBLE_LOG_LINES + 1) {
     log.textContent = `${visibleLines.slice(-(MAX_VISIBLE_LOG_LINES + 1)).join("\n")}`;
   }
-  if (atBottom) {
+  const shouldFollow = $("followLogs")?.checked ?? true;
+  if (shouldFollow && atBottom) {
     log.scrollTop = log.scrollHeight;
   }
+}
+
+async function copyLogs() {
+  const button = $("copyLogs");
+  const logs = $("logOutput").textContent;
+  if (!logs) return;
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(logs);
+    } else {
+      const fallback = document.createElement("textarea");
+      fallback.value = logs;
+      fallback.style.position = "fixed";
+      fallback.style.opacity = "0";
+      document.body.appendChild(fallback);
+      fallback.select();
+      document.execCommand("copy");
+      fallback.remove();
+    }
+    button.textContent = "已复制";
+  } catch (error) {
+    appendLogs([`[UI] copy failed: ${error.message}`]);
+    button.textContent = "复制失败";
+  }
+  window.setTimeout(() => {
+    button.textContent = "复制";
+  }, 1400);
 }
 
 function formatDuration(seconds) {
@@ -135,27 +264,45 @@ function formatNumber(value, digits = 1) {
 }
 
 function renderPerformance(performance = {}) {
+  const reportedScopes = performance.system_scopes || [];
+  const hasSystemData =
+    reportedScopes.length > 0 ||
+    Number(performance.cpu_percent) > 0 ||
+    Number(performance.memory_rss_mb) > 0 ||
+    Number(performance.pid_count) > 0;
   $("perfElapsed").textContent = formatDuration(performance.elapsed_seconds);
-  $("perfCpu").textContent = performance.available
+  $("perfCpu").textContent = hasSystemData
     ? `${formatNumber(performance.cpu_percent, 1)}%`
     : "--";
-  $("perfRam").textContent = performance.available
+  $("perfRam").textContent = hasSystemData
     ? `${formatNumber(performance.memory_rss_mb, 1)} MB`
     : "--";
-  $("perfPidCount").textContent = performance.available
+  $("perfPidCount").textContent = hasSystemData
     ? String(performance.pid_count || 0)
     : "--";
 
   const systemBody = $("systemTableBody");
   systemBody.innerHTML = "";
-  const scopes = (performance.system_scopes || []).filter(
+  const detailScopes = reportedScopes.filter(
     (scope) => !(scope.scope === "total" && scope.camera_name === "all")
   );
+  const scopes = detailScopes.length
+    ? detailScopes
+    : hasSystemData
+      ? [
+          {
+            label: "总计",
+            cpu_percent: performance.cpu_percent,
+            memory_rss_mb: performance.memory_rss_mb,
+            pid_count: performance.pid_count,
+          },
+        ]
+      : [];
   if (!scopes.length) {
     const row = document.createElement("tr");
     const cell = document.createElement("td");
     cell.colSpan = 4;
-    cell.textContent = performance.available ? "暂无资源明细。" : "等待资源采样。";
+    cell.textContent = "等待资源采样。";
     row.appendChild(cell);
     systemBody.appendChild(row);
   } else {
@@ -231,102 +378,34 @@ function renderRestart(restart = {}, mode = "") {
   $("restartMessage").textContent = restart.message || "";
 }
 
-function profileId(profile) {
-  return profile.id || profile.name || "";
-}
-
-function findProfile(profiles, value) {
-  return profiles.find((profile) => profileId(profile) === value)
-    || profiles.find((profile) => profile.name === value)
-    || null;
-}
-
-function allProfiles() {
-  return [...state.profiles.functional, ...state.profiles.performance];
-}
-
-function selectedCamera() {
-  return $("cameraModel")?.value || "";
-}
-
-function profilesForType(type) {
-  const camera = selectedCamera();
-  const profiles = state.profiles[type] || [];
-  if (!camera) return profiles;
-  return profiles.filter((profile) => profile.camera === camera);
-}
-
-function profileLabel(profile) {
-  if (selectedCamera() && profile.camera === selectedCamera()) {
-    return profile.name;
-  }
-  return profile.camera ? `${profile.camera} / ${profile.name}` : profile.name;
-}
-
-function inferCameraFromConfig() {
-  if (state.config.camera_model) {
-    return state.config.camera_model;
-  }
-  const candidates = [
-    state.config.performance_profile,
-    state.config.functional_profile,
-  ];
-  for (const value of candidates) {
-    const profile = findProfile(allProfiles(), value);
-    if (profile?.camera) return profile.camera;
-  }
-  return state.cameras[0] || "";
-}
-
-function fillCameraSelect(preferredCamera) {
-  const select = $("cameraModel");
-  select.innerHTML = "";
-
-  const allOption = document.createElement("option");
-  allOption.value = "";
-  allOption.textContent = "全部相机";
-  select.appendChild(allOption);
-
-  for (const camera of state.cameras) {
+function updateLaunchConfigOptions(preferred = "") {
+  const select = $("launchConfig");
+  const options = SPECIAL_LAUNCH_CONFIGS[$("launchFile").value] || [];
+  select.replaceChildren();
+  const generic = document.createElement("option");
+  generic.value = "generic";
+  generic.textContent = "通用";
+  select.appendChild(generic);
+  for (const item of options) {
     const option = document.createElement("option");
-    option.value = camera;
-    option.textContent = camera;
+    option.value = item.value;
+    option.textContent = item.label;
     select.appendChild(option);
   }
-
-  if (preferredCamera && state.cameras.includes(preferredCamera)) {
-    select.value = preferredCamera;
+  if ([...select.options].some((option) => option.value === preferred)) {
+    select.value = preferred;
   }
+  $("launchConfigField").classList.toggle("is-hidden", options.length === 0);
+  updateSpecialConfigControls();
 }
 
-function defaultLaunchFileForCamera() {
-  const rosVersion = $("rosVersion").value || "2";
-  const launchFiles = DEFAULT_LAUNCH_FILES[rosVersion] || DEFAULT_LAUNCH_FILES["2"];
-  return launchFiles[selectedCamera()] || launchFiles.gemini_330;
-}
-
-function updateScenarioOptions() {
-  const selected = findProfile(profilesForType("performance"), $("performanceProfile").value);
-  state.selectedPerformanceProfile = selected || null;
-  $("performanceScenario").innerHTML = "";
-
-  const empty = document.createElement("option");
-  empty.value = "";
-  empty.textContent = "全部 / 默认";
-  $("performanceScenario").appendChild(empty);
-
-  for (const scenario of selected?.performance_scenarios || []) {
-    const option = document.createElement("option");
-    option.value = scenario.name;
-    option.textContent = scenario.duration
-      ? `${scenario.name} (${scenario.duration}s)`
-      : scenario.name;
-    $("performanceScenario").appendChild(option);
+function updateSpecialConfigControls() {
+  const special = $("launchConfig").value !== "generic";
+  for (const id of Object.values(STREAM_CONTROLS)) {
+    $(id).disabled = special;
   }
-
-  if (selected?.launch_file) {
-    $("launchFile").placeholder = selected.launch_file;
-  }
+  $("configFilePath").disabled = special;
+  $("streamOptions").title = special ? "特殊配置 YAML 会覆盖普通流参数" : "";
 }
 
 function updateRosVersionControls({ fillBlank = false } = {}) {
@@ -346,65 +425,17 @@ function updateRosVersionControls({ fillBlank = false } = {}) {
 
 function updateModeControls() {
   const mode = $("mode").value;
-  const needsFunctional = mode === "functional" || mode === "all";
   const needsPerformance = mode === "performance" || mode === "all";
   const needsPerformanceRuntime = mode === "performance" || mode === "restart" || mode === "stream_stall" || mode === "all";
   const needsRestart = mode === "restart";
   const needsStreamStall = mode === "stream_stall";
   const needsStreamTopics = needsRestart || needsStreamStall;
-  $("functionalProfileField").classList.toggle("is-hidden", !needsFunctional);
-  $("performanceProfileField").classList.toggle("is-hidden", !needsPerformance);
   $("performanceScenario").closest("label").classList.toggle("is-hidden", !needsPerformance);
   $("duration").closest("label").classList.toggle("is-hidden", !needsPerformanceRuntime);
   $("restartFields").classList.toggle("is-hidden", !needsRestart);
   $("streamStallFields").classList.toggle("is-hidden", !needsStreamStall);
   $("streamTopicFields").classList.toggle("is-hidden", !needsStreamTopics);
 
-  const functional = findProfile(profilesForType("functional"), $("functionalProfile").value);
-  const performance = findProfile(profilesForType("performance"), $("performanceProfile").value);
-  state.selectedFunctionalProfile = functional || null;
-  state.selectedPerformanceProfile = performance || null;
-  const activeProfile = needsRestart ? null : needsPerformance ? performance : functional;
-  if (activeProfile?.launch_file) {
-    $("launchFile").placeholder = activeProfile.launch_file;
-  } else if (needsRestart) {
-    $("launchFile").placeholder = defaultLaunchFileForCamera();
-  } else if (needsStreamStall) {
-    $("launchFile").placeholder = defaultLaunchFileForCamera();
-  }
-}
-
-function fillProfileSelect(selectId, profiles, preferredName) {
-  const select = $(selectId);
-  select.innerHTML = "";
-  for (const profile of profiles) {
-    const option = document.createElement("option");
-    option.value = profileId(profile);
-    option.textContent = profileLabel(profile);
-    select.appendChild(option);
-  }
-  const preferredProfile = findProfile(profiles, preferredName);
-  if (preferredProfile) {
-    select.value = profileId(preferredProfile);
-  }
-}
-
-function refreshProfileSelects(functionalPreferred, performancePreferred) {
-  fillProfileSelect(
-    "functionalProfile",
-    profilesForType("functional"),
-    functionalPreferred || state.config.functional_profile || "gemini_330_series"
-  );
-  fillProfileSelect(
-    "performanceProfile",
-    profilesForType("performance"),
-    performancePreferred || state.config.performance_profile || "gemini_330_series"
-  );
-  updateScenarioOptions();
-  if (state.config.performance_scenario) {
-    $("performanceScenario").value = state.config.performance_scenario;
-  }
-  updateModeControls();
 }
 
 async function loadConfig() {
@@ -426,20 +457,36 @@ async function loadConfig() {
   $("warmupSec").value = config.warmup_sec || "2.0";
   $("saveCsv").value = config.save_csv || "true";
   $("queueSize").value = config.queue_size || "10";
+  $("performanceScenario").value = config.performance_scenario || "";
+  for (const [name, id] of Object.entries(STREAM_CONTROLS)) {
+    $(id).value = config.stream_options?.[name] || "";
+  }
   $("workspacePath").textContent = `工作区: ${config.auto_test_ws}`;
   updateRosVersionControls({ fillBlank: true });
 }
 
-async function loadProfiles() {
-  const payload = await api("/api/profiles");
-  state.profiles = {
-    functional: payload.profiles_by_type?.functional || [],
-    performance: payload.profiles_by_type?.performance || [],
-  };
-  state.cameras = [...new Set(allProfiles().map((profile) => profile.camera).filter(Boolean))].sort();
-  $("profileCount").textContent = `${state.profiles.functional.length}/${state.profiles.performance.length}`;
-  fillCameraSelect(inferCameraFromConfig());
-  refreshProfileSelects();
+function renderLaunchFileOptions(files, preferred = "") {
+  const select = $("launchFile");
+  select.replaceChildren();
+  for (const launchFile of files) {
+    const option = document.createElement("option");
+    option.value = launchFile;
+    option.textContent = launchFile;
+    select.appendChild(option);
+  }
+  if (files.includes(preferred)) {
+    select.value = preferred;
+  }
+}
+
+function loadLaunchFiles() {
+  const rosVersion = $("rosVersion").value || "2";
+  const files = SINGLE_CAMERA_LAUNCH_FILES[rosVersion] || [];
+  const configured = state.config.ros_version === rosVersion ? state.config.launch_file : "";
+  renderLaunchFileOptions(files, configured);
+  $("launchFile").title = `内置 ${files.length} 个 ROS${rosVersion} 单相机 Launch`;
+  $("launchCount").textContent = `${files.length} · ROS ${rosVersion}`;
+  updateLaunchConfigOptions(configured ? state.config.launch_config : "");
 }
 
 async function pollStatus() {
@@ -452,8 +499,8 @@ async function pollStatus() {
       $("currentMode").textContent = payload.mode || "-";
     } else {
       $("runMeta").textContent = "";
-      $("currentRunId").textContent = "-";
-      $("currentMode").textContent = "-";
+      $("currentRunId").textContent = "未运行";
+      $("currentMode").textContent = "—";
     }
     if (payload.command_lines) {
       renderCommands(payload.command_lines);
@@ -507,7 +554,9 @@ async function deleteRun(runId) {
   }
   try {
     await api(`/api/runs/${encodeURIComponent(runId)}`, { method: "DELETE" });
+    state.selectedRunIds.delete(runId);
     if ($("reportTitle").textContent === runId) {
+      state.selectedRunId = null;
       $("reportTitle").textContent = "";
       $("reportView").textContent = "选择一条历史记录查看结果。";
     }
@@ -517,9 +566,98 @@ async function deleteRun(runId) {
   }
 }
 
+function updateRunSelectionControls() {
+  const checkboxes = [...document.querySelectorAll(".run-select")].filter(
+    (checkbox) => !checkbox.disabled
+  );
+  const selectedCount = state.selectedRunIds.size;
+  const selectAll = $("selectAllRuns");
+  selectAll.checked = checkboxes.length > 0 && selectedCount === checkboxes.length;
+  selectAll.indeterminate = selectedCount > 0 && selectedCount < checkboxes.length;
+  const deleteButton = $("deleteSelectedRuns");
+  deleteButton.disabled = selectedCount === 0;
+  deleteButton.textContent = selectedCount ? `删除所选 (${selectedCount})` : "删除所选";
+}
+
+function setAllRunsSelected(selected) {
+  for (const checkbox of document.querySelectorAll(".run-select")) {
+    if (checkbox.disabled) continue;
+    checkbox.checked = selected;
+    const runId = checkbox.dataset.runId;
+    if (selected) {
+      state.selectedRunIds.add(runId);
+    } else {
+      state.selectedRunIds.delete(runId);
+    }
+    checkbox.closest(".run-item").classList.toggle("batch-selected", selected);
+  }
+  updateRunSelectionControls();
+}
+
+async function deleteSelectedRuns() {
+  const runIds = [...state.selectedRunIds];
+  if (!runIds.length || !window.confirm(`删除选中的 ${runIds.length} 条历史记录？`)) {
+    return;
+  }
+
+  const deleteButton = $("deleteSelectedRuns");
+  deleteButton.disabled = true;
+  deleteButton.textContent = "删除中...";
+  try {
+    const results = await Promise.allSettled(
+      runIds.map((runId) =>
+        api(`/api/runs/${encodeURIComponent(runId)}`, { method: "DELETE" })
+      )
+    );
+    const deleted = [];
+    const failed = [];
+    results.forEach((result, index) => {
+      const runId = runIds[index];
+      if (result.status === "fulfilled") {
+        deleted.push(runId);
+        state.selectedRunIds.delete(runId);
+      } else {
+        failed.push(`${runId}: ${result.reason.message}`);
+      }
+    });
+
+    if (deleted.includes(state.selectedRunId)) {
+      state.selectedRunId = null;
+      $("reportTitle").textContent = "";
+      $("reportView").textContent = "选择一条历史记录查看结果。";
+    }
+    await loadRuns();
+    if (failed.length) {
+      appendLogs([`[UI] batch delete failed:\n${failed.join("\n")}`]);
+    }
+  } catch (error) {
+    appendLogs([`[UI] batch delete failed: ${error.message}`]);
+    updateRunSelectionControls();
+  }
+}
+
 function runItem(run) {
   const item = document.createElement("div");
-  item.className = "run-item";
+  item.className = `run-item${run.run_id === state.selectedRunId ? " selected" : ""}`;
+  item.dataset.runId = run.run_id;
+
+  const checkbox = document.createElement("input");
+  checkbox.type = "checkbox";
+  checkbox.className = "run-select";
+  checkbox.dataset.runId = run.run_id;
+  checkbox.setAttribute("aria-label", `选择任务 ${run.run_id}`);
+  checkbox.disabled = ACTIVE_RUN_STATUSES.has(run.status);
+  checkbox.checked = state.selectedRunIds.has(run.run_id);
+  item.classList.toggle("batch-selected", checkbox.checked);
+  checkbox.addEventListener("change", () => {
+    if (checkbox.checked) {
+      state.selectedRunIds.add(run.run_id);
+    } else {
+      state.selectedRunIds.delete(run.run_id);
+    }
+    item.classList.toggle("batch-selected", checkbox.checked);
+    updateRunSelectionControls();
+  });
 
   const title = document.createElement("div");
   title.className = "run-title";
@@ -548,10 +686,14 @@ function runItem(run) {
   deleteButton.type = "button";
   deleteButton.className = "danger";
   deleteButton.textContent = "删除";
+  deleteButton.disabled = ACTIVE_RUN_STATUSES.has(run.status);
+  if (deleteButton.disabled) {
+    deleteButton.title = "运行中的任务不能删除";
+  }
   deleteButton.addEventListener("click", () => deleteRun(run.run_id));
 
   actions.append(viewButton, deleteButton);
-  item.append(title, actions, subtitle);
+  item.append(checkbox, title, actions, subtitle);
   return item;
 }
 
@@ -559,12 +701,22 @@ async function loadRuns() {
   const payload = await api("/api/runs");
   const list = $("runsList");
   list.innerHTML = "";
-  for (const run of payload.runs || []) {
+  const runs = payload.runs || [];
+  const availableRunIds = new Set(
+    runs
+      .filter((run) => !ACTIVE_RUN_STATUSES.has(run.status))
+      .map((run) => run.run_id)
+  );
+  state.selectedRunIds = new Set(
+    [...state.selectedRunIds].filter((runId) => availableRunIds.has(runId))
+  );
+  for (const run of runs) {
     list.appendChild(runItem(run));
   }
   if (!list.children.length) {
     list.textContent = "暂无历史记录。";
   }
+  updateRunSelectionControls();
 }
 
 function renderJsonSummary(results = {}) {
@@ -585,6 +737,10 @@ function renderJsonSummary(results = {}) {
 
 async function loadRunDetail(runId) {
   const payload = await api(`/api/runs/${encodeURIComponent(runId)}`);
+  state.selectedRunId = runId;
+  for (const item of document.querySelectorAll(".run-item")) {
+    item.classList.toggle("selected", item.dataset.runId === runId);
+  }
   $("reportTitle").textContent = runId;
   const view = $("reportView");
   view.innerHTML = "";
@@ -613,29 +769,38 @@ async function loadRunDetail(runId) {
 }
 
 async function init() {
+  initTheme();
   setStatus("idle");
   $("runForm").addEventListener("submit", startRun);
   $("stopButton").addEventListener("click", stopRun);
-  $("refreshProfiles").addEventListener("click", loadProfiles);
+  $("refreshLaunches").addEventListener("click", loadLaunchFiles);
   $("refreshRuns").addEventListener("click", loadRuns);
+  $("selectAllRuns").addEventListener("change", (event) => {
+    setAllRunsSelected(event.target.checked);
+  });
+  $("deleteSelectedRuns").addEventListener("click", deleteSelectedRuns);
+  $("copyLogs").addEventListener("click", copyLogs);
+  $("clearLogs").addEventListener("click", () => {
+    $("logOutput").textContent = "";
+  });
+  $("followLogs").addEventListener("change", () => {
+    if ($("followLogs").checked) {
+      $("logOutput").scrollTop = $("logOutput").scrollHeight;
+    }
+  });
   $("rosVersion").addEventListener("change", () => {
     const defaults = DEFAULT_SETUPS[$("rosVersion").value] || DEFAULT_SETUPS["2"];
     $("rosSetup").value = defaults.ros;
     $("cameraSetup").value = defaults.camera;
     updateRosVersionControls();
+    loadLaunchFiles();
   });
   $("mode").addEventListener("change", updateModeControls);
-  $("cameraModel").addEventListener("change", () => {
-    refreshProfileSelects($("functionalProfile").value, $("performanceProfile").value);
-  });
-  $("functionalProfile").addEventListener("change", updateModeControls);
-  $("performanceProfile").addEventListener("change", () => {
-    updateScenarioOptions();
-    updateModeControls();
-  });
+  $("launchFile").addEventListener("change", () => updateLaunchConfigOptions());
+  $("launchConfig").addEventListener("change", updateSpecialConfigControls);
 
   await loadConfig();
-  await loadProfiles();
+  loadLaunchFiles();
   await loadRuns();
   await pollStatus();
   state.polling = setInterval(pollStatus, 1000);

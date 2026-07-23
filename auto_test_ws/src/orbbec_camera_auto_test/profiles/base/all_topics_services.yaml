@@ -1,3 +1,8 @@
+# Canonical Orbbec interface catalog. The generic functional runner loads this
+# file directly; runtime discovery decides which advertised interfaces are tested.
+profile_name: generic_functional
+launch_file: ""
+
 default_launch_args:
   camera_name: camera
 
@@ -51,13 +56,165 @@ launch_scenarios:
         type: sensor_msgs/msg/PointCloud2
         mode: message
         validator: point_cloud
-      - name: /{camera}/depth_filter_status
-        type: std_msgs/msg/String
+      - name: /{camera}/depth_registered/points
+        type: sensor_msgs/msg/PointCloud2
         mode: message
-        validator: string_non_empty
-        qos: transient_local
+        validator: point_cloud
 
-      # Device and ROS system topics
+      # Infrared topics
+      - name: /{camera}/ir/camera_info
+        type: sensor_msgs/msg/CameraInfo
+        mode: message
+        validator: camera_info_matches_image
+        paired_topic: /{camera}/ir/image_raw
+      - name: /{camera}/ir/image_raw
+        type: sensor_msgs/msg/Image
+        mode: message
+        validator: image
+      - name: /{camera}/ir/image_raw/compressed
+        type: sensor_msgs/msg/CompressedImage
+        mode: advertised
+      - name: /{camera}/ir/metadata
+        type: orbbec_camera_msgs/msg/Metadata
+        mode: message
+        validator: metadata
+      - name: /{camera}/left_ir/camera_info
+        type: sensor_msgs/msg/CameraInfo
+        mode: message
+        validator: camera_info_matches_image
+        paired_topic: /{camera}/left_ir/image_raw
+      - name: /{camera}/left_ir/image_raw
+        type: sensor_msgs/msg/Image
+        mode: message
+        validator: image
+      - name: /{camera}/left_ir/image_raw/compressed
+        type: sensor_msgs/msg/CompressedImage
+        mode: advertised
+      - name: /{camera}/left_ir/metadata
+        type: orbbec_camera_msgs/msg/Metadata
+        mode: message
+        validator: metadata
+      - name: /{camera}/right_ir/camera_info
+        type: sensor_msgs/msg/CameraInfo
+        mode: message
+        validator: camera_info_matches_image
+        paired_topic: /{camera}/right_ir/image_raw
+      - name: /{camera}/right_ir/image_raw
+        type: sensor_msgs/msg/Image
+        mode: message
+        validator: image
+      - name: /{camera}/right_ir/image_raw/compressed
+        type: sensor_msgs/msg/CompressedImage
+        mode: advertised
+      - name: /{camera}/right_ir/metadata
+        type: orbbec_camera_msgs/msg/Metadata
+        mode: message
+        validator: metadata
+
+      # Dual-color topics
+      - name: /{camera}/left_color/camera_info
+        type: sensor_msgs/msg/CameraInfo
+        mode: message
+        validator: camera_info_matches_image
+        paired_topic: /{camera}/left_color/image_raw
+      - name: /{camera}/left_color/image_raw
+        type: sensor_msgs/msg/Image
+        mode: message
+        validator: image
+      - name: /{camera}/left_color/image_raw/compressed
+        type: sensor_msgs/msg/CompressedImage
+        mode: advertised
+      - name: /{camera}/left_color/metadata
+        type: orbbec_camera_msgs/msg/Metadata
+        mode: message
+        validator: metadata
+        paired_topic: /{camera}/left_color/image_raw
+      - name: /{camera}/right_color/camera_info
+        type: sensor_msgs/msg/CameraInfo
+        mode: message
+        validator: camera_info_matches_image
+        paired_topic: /{camera}/right_color/image_raw
+      - name: /{camera}/right_color/image_raw
+        type: sensor_msgs/msg/Image
+        mode: message
+        validator: image
+      - name: /{camera}/right_color/image_raw/compressed
+        type: sensor_msgs/msg/CompressedImage
+        mode: advertised
+      - name: /{camera}/right_color/metadata
+        type: orbbec_camera_msgs/msg/Metadata
+        mode: message
+        validator: metadata
+        paired_topic: /{camera}/right_color/image_raw
+
+      # IMU topics
+      - name: /{camera}/accel/sample
+        type: sensor_msgs/msg/Imu
+        mode: message
+        validator: imu
+      - name: /{camera}/accel/imu_info
+        type: orbbec_camera_msgs/msg/IMUInfo
+        mode: message
+        validator: any
+      - name: /{camera}/gyro/sample
+        type: sensor_msgs/msg/Imu
+        mode: message
+        validator: imu
+      - name: /{camera}/gyro/imu_info
+        type: orbbec_camera_msgs/msg/IMUInfo
+        mode: message
+        validator: any
+      - name: /{camera}/gyro_accel/sample
+        type: sensor_msgs/msg/Imu
+        mode: message
+        validator: imu
+
+      # Extrinsics and device-state topics
+      - name: /{camera}/depth_to_ir
+        type: orbbec_camera_msgs/msg/Extrinsics
+        mode: message
+        validator: extrinsics
+        qos: transient_local
+      - name: /{camera}/depth_to_color
+        type: orbbec_camera_msgs/msg/Extrinsics
+        mode: message
+        validator: extrinsics
+        qos: transient_local
+      - name: /{camera}/depth_to_left_ir
+        type: orbbec_camera_msgs/msg/Extrinsics
+        mode: message
+        validator: extrinsics
+        qos: transient_local
+      - name: /{camera}/depth_to_right_ir
+        type: orbbec_camera_msgs/msg/Extrinsics
+        mode: message
+        validator: extrinsics
+        qos: transient_local
+      - name: /{camera}/depth_to_accel
+        type: orbbec_camera_msgs/msg/Extrinsics
+        mode: message
+        validator: extrinsics
+        qos: transient_local
+      - name: /{camera}/depth_to_gyro
+        type: orbbec_camera_msgs/msg/Extrinsics
+        mode: message
+        validator: extrinsics
+        qos: transient_local
+      - name: /{camera}/left_color_to_right_color
+        type: orbbec_camera_msgs/msg/Extrinsics
+        mode: message
+        validator: extrinsics
+        qos: transient_local
+      - name: /{camera}/depth_filters/status
+        type: orbbec_camera_msgs/msg/DepthFiltersStatus
+        mode: message
+        validator: any
+        qos: transient_local
+      - name: /{camera}/lrm/obstacle_distance
+        type: std_msgs/msg/Int32
+        mode: message
+        validator: any
+
       - name: /{camera}/device_status
         type: orbbec_camera_msgs/msg/DeviceStatus
         mode: message
@@ -331,6 +488,176 @@ launch_scenarios:
         type: orbbec_camera_msgs/srv/SetInt32
         mode: advertised
 
+      # Generic IR stream controls
+      - name: /{camera}/get_ir_exposure
+        type: orbbec_camera_msgs/srv/GetInt32
+        mode: read
+        response_checks: [success_true]
+      - name: /{camera}/get_ir_gain
+        type: orbbec_camera_msgs/srv/GetInt32
+        mode: read
+        response_checks: [success_true]
+      - name: /{camera}/set_ir_exposure
+        type: orbbec_camera_msgs/srv/SetInt32
+        mode: advertised
+      - name: /{camera}/set_ir_gain
+        type: orbbec_camera_msgs/srv/SetInt32
+        mode: advertised
+      - name: /{camera}/set_ir_ae_roi
+        type: orbbec_camera_msgs/srv/SetArrays
+        mode: advertised
+      - name: /{camera}/set_ir_auto_exposure
+        type: std_srvs/srv/SetBool
+        mode: advertised
+      - name: /{camera}/set_ir_flip
+        type: std_srvs/srv/SetBool
+        mode: advertised
+      - name: /{camera}/set_ir_mirror
+        type: std_srvs/srv/SetBool
+        mode: advertised
+      - name: /{camera}/set_ir_rotation
+        type: orbbec_camera_msgs/srv/SetInt32
+        mode: advertised
+      - name: /{camera}/toggle_ir
+        type: std_srvs/srv/SetBool
+        mode: advertised
+
+      # Left IR stream controls
+      - name: /{camera}/get_left_ir_exposure
+        type: orbbec_camera_msgs/srv/GetInt32
+        mode: read
+        response_checks: [success_true]
+      - name: /{camera}/get_left_ir_gain
+        type: orbbec_camera_msgs/srv/GetInt32
+        mode: read
+        response_checks: [success_true]
+      - name: /{camera}/set_left_ir_exposure
+        type: orbbec_camera_msgs/srv/SetInt32
+        mode: advertised
+      - name: /{camera}/set_left_ir_gain
+        type: orbbec_camera_msgs/srv/SetInt32
+        mode: advertised
+      - name: /{camera}/set_left_ir_ae_roi
+        type: orbbec_camera_msgs/srv/SetArrays
+        mode: advertised
+      - name: /{camera}/set_left_ir_auto_exposure
+        type: std_srvs/srv/SetBool
+        mode: advertised
+      - name: /{camera}/set_left_ir_flip
+        type: std_srvs/srv/SetBool
+        mode: advertised
+      - name: /{camera}/set_left_ir_mirror
+        type: std_srvs/srv/SetBool
+        mode: advertised
+      - name: /{camera}/set_left_ir_rotation
+        type: orbbec_camera_msgs/srv/SetInt32
+        mode: advertised
+      - name: /{camera}/toggle_left_ir
+        type: std_srvs/srv/SetBool
+        mode: advertised
+
+      # Right IR stream controls
+      - name: /{camera}/get_right_ir_exposure
+        type: orbbec_camera_msgs/srv/GetInt32
+        mode: read
+        response_checks: [success_true]
+      - name: /{camera}/get_right_ir_gain
+        type: orbbec_camera_msgs/srv/GetInt32
+        mode: read
+        response_checks: [success_true]
+      - name: /{camera}/set_right_ir_exposure
+        type: orbbec_camera_msgs/srv/SetInt32
+        mode: advertised
+      - name: /{camera}/set_right_ir_gain
+        type: orbbec_camera_msgs/srv/SetInt32
+        mode: advertised
+      - name: /{camera}/set_right_ir_ae_roi
+        type: orbbec_camera_msgs/srv/SetArrays
+        mode: advertised
+      - name: /{camera}/set_right_ir_auto_exposure
+        type: std_srvs/srv/SetBool
+        mode: advertised
+      - name: /{camera}/set_right_ir_flip
+        type: std_srvs/srv/SetBool
+        mode: advertised
+      - name: /{camera}/set_right_ir_mirror
+        type: std_srvs/srv/SetBool
+        mode: advertised
+      - name: /{camera}/set_right_ir_rotation
+        type: orbbec_camera_msgs/srv/SetInt32
+        mode: advertised
+      - name: /{camera}/toggle_right_ir
+        type: std_srvs/srv/SetBool
+        mode: advertised
+
+      # Left color stream controls
+      - name: /{camera}/get_left_color_exposure
+        type: orbbec_camera_msgs/srv/GetInt32
+        mode: read
+        response_checks: [success_true]
+      - name: /{camera}/get_left_color_gain
+        type: orbbec_camera_msgs/srv/GetInt32
+        mode: read
+        response_checks: [success_true]
+      - name: /{camera}/set_left_color_exposure
+        type: orbbec_camera_msgs/srv/SetInt32
+        mode: advertised
+      - name: /{camera}/set_left_color_gain
+        type: orbbec_camera_msgs/srv/SetInt32
+        mode: advertised
+      - name: /{camera}/set_left_color_ae_roi
+        type: orbbec_camera_msgs/srv/SetArrays
+        mode: advertised
+      - name: /{camera}/set_left_color_auto_exposure
+        type: std_srvs/srv/SetBool
+        mode: advertised
+      - name: /{camera}/set_left_color_flip
+        type: std_srvs/srv/SetBool
+        mode: advertised
+      - name: /{camera}/set_left_color_mirror
+        type: std_srvs/srv/SetBool
+        mode: advertised
+      - name: /{camera}/set_left_color_rotation
+        type: orbbec_camera_msgs/srv/SetInt32
+        mode: advertised
+      - name: /{camera}/toggle_left_color
+        type: std_srvs/srv/SetBool
+        mode: advertised
+
+      # Right color stream controls
+      - name: /{camera}/get_right_color_exposure
+        type: orbbec_camera_msgs/srv/GetInt32
+        mode: read
+        response_checks: [success_true]
+      - name: /{camera}/get_right_color_gain
+        type: orbbec_camera_msgs/srv/GetInt32
+        mode: read
+        response_checks: [success_true]
+      - name: /{camera}/set_right_color_exposure
+        type: orbbec_camera_msgs/srv/SetInt32
+        mode: advertised
+      - name: /{camera}/set_right_color_gain
+        type: orbbec_camera_msgs/srv/SetInt32
+        mode: advertised
+      - name: /{camera}/set_right_color_ae_roi
+        type: orbbec_camera_msgs/srv/SetArrays
+        mode: advertised
+      - name: /{camera}/set_right_color_auto_exposure
+        type: std_srvs/srv/SetBool
+        mode: advertised
+      - name: /{camera}/set_right_color_flip
+        type: std_srvs/srv/SetBool
+        mode: advertised
+      - name: /{camera}/set_right_color_mirror
+        type: std_srvs/srv/SetBool
+        mode: advertised
+      - name: /{camera}/set_right_color_rotation
+        type: orbbec_camera_msgs/srv/SetInt32
+        mode: advertised
+      - name: /{camera}/toggle_right_color
+        type: std_srvs/srv/SetBool
+        mode: advertised
+
       # Device / status / system
       - name: /{camera}/set_fan_work_mode
         type: orbbec_camera_msgs/srv/SetInt32
@@ -380,6 +707,18 @@ launch_scenarios:
       - name: /{camera}/toggle_depth
         type: std_srvs/srv/SetBool
         mode: advertised
+      - name: /{camera}/read_customer_data
+        type: orbbec_camera_msgs/srv/GetString
+        mode: advertised
+      - name: /{camera}/write_customer_data
+        type: orbbec_camera_msgs/srv/SetString
+        mode: advertised
+      - name: /{camera}/get_user_calib_params
+        type: orbbec_camera_msgs/srv/GetUserCalibParams
+        mode: advertised
+      - name: /{camera}/set_user_calib_params
+        type: orbbec_camera_msgs/srv/SetUserCalibParams
+        mode: advertised
 
       # Artifact services
       - name: /{camera}/save_images
@@ -392,6 +731,16 @@ launch_scenarios:
           - name: /{camera}/color/image_raw
             type: sensor_msgs/msg/Image
           - name: /{camera}/depth/image_raw
+            type: sensor_msgs/msg/Image
+          - name: /{camera}/ir/image_raw
+            type: sensor_msgs/msg/Image
+          - name: /{camera}/left_ir/image_raw
+            type: sensor_msgs/msg/Image
+          - name: /{camera}/right_ir/image_raw
+            type: sensor_msgs/msg/Image
+          - name: /{camera}/left_color/image_raw
+            type: sensor_msgs/msg/Image
+          - name: /{camera}/right_color/image_raw
             type: sensor_msgs/msg/Image
       - name: /{camera}/save_point_cloud
         type: std_srvs/srv/Empty

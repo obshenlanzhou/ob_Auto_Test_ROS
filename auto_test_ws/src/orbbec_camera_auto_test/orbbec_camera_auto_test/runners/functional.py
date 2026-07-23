@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict
@@ -12,8 +13,9 @@ from ..checks.services import (
     run_artifact_service_checks,
     run_reboot_check,
     run_service_checks,
+    select_discovered_service_specs,
 )
-from ..checks.topics import run_topic_checks
+from ..checks.topics import run_topic_checks, select_discovered_topic_specs
 from ..core.reporter import build_functional_summary, collect_failures, ensure_dir, write_json, write_markdown
 from ..core.ros_utils import RosHarness, resolve_service_type
 from ..core.session import TestSession, discover_orbbec_devices
@@ -59,14 +61,6 @@ def _build_launch_args(profile: CameraProfile, args) -> Dict[str, Any]:
         launch_args["config_file_path"] = args.config_file_path
     launch_args.update(_parse_launch_args(args.launch_arg))
     return launch_args
-
-
-def _select_launch_file(profile: CameraProfile | None, args) -> str:
-    launch_file = args.launch_file or (profile.launch_file if profile is not None else "")
-    if str(getattr(args, "ros_version", "2")) == "1" and not args.launch_file:
-        if launch_file.endswith(".launch.py"):
-            return launch_file[:-3]
-    return launch_file
 
 
 def _make_status_logger(*log_paths: Path):
@@ -184,9 +178,47 @@ def _run_scenario(
             _wait_for_camera_ready(session, harness, camera_name, emit_status)
             emit_status(f"collecting ROS graph snapshot for scenario '{scenario.name}'")
             scenario_result["graph_snapshot"] = harness.graph_snapshot()
+            discovered_topic_names = {
+                item.get("name") for item in scenario_result["graph_snapshot"].get("topics", [])
+            }
+            discovered_service_names = {
+                item.get("name") for item in scenario_result["graph_snapshot"].get("services", [])
+            }
+            discovered_topics = select_discovered_topic_specs(
+                scenario.topics, discovered_topic_names
+            )
+            regular_services = select_discovered_service_specs(
+                regular_services, discovered_service_names
+            )
+            artifact_services = select_discovered_service_specs(
+                artifact_services, discovered_service_names
+            )
+            artifact_services = [
+                replace(
+                    spec,
+                    keepalive_topics=select_discovered_topic_specs(
+                        spec.keepalive_topics, discovered_topic_names
+                    ),
+                )
+                for spec in artifact_services
+            ]
+            if reboot_service is not None and reboot_service.name not in discovered_service_names:
+                scenario_result["reboot"] = {
+                    "status": "skipped",
+                    "message": "reboot service not discovered",
+                }
+                reboot_service = None
+            emit_status(
+                f"topic discovery selected {len(discovered_topics)}/{len(scenario.topics)} interfaces"
+            )
+            emit_status(
+                "service discovery selected "
+                f"{len(regular_services) + len(artifact_services) + int(reboot_service is not None)}"
+                f"/{len(scenario.services)} interfaces"
+            )
             emit_status(f"testing scenario topics for '{scenario.name}'")
             scenario_result["topics"] = run_topic_checks(
-                harness, scenario.topics, topic_log_path, emit_status=emit_status
+                harness, discovered_topics, topic_log_path, emit_status=emit_status
             )
             emit_status(f"testing scenario services for '{scenario.name}'")
             scenario_result["services"] = run_service_checks(
@@ -231,9 +263,9 @@ def run_functional_test(args) -> int:
     stage_log_path = results_dir / "functional.log"
     emit_status = _make_status_logger(stage_log_path)
 
-    emit_status(f"loading functional profile '{args.profile}'")
-    profile = load_camera_profile(args.profile, profile_type="functional")
-    launch_file = _select_launch_file(profile, args)
+    emit_status("loading the generic functional interface catalog")
+    profile = load_camera_profile("all_topics_services", profile_type="functional")
+    launch_file = args.launch_file
     base_launch_args = _build_launch_args(profile, args)
     camera_name = str(base_launch_args.get("camera_name", "camera"))
     emit_status(f"functional test target launch: {launch_file}")
@@ -316,8 +348,15 @@ def run_functional_test(args) -> int:
             reboot_session.start()
             with RosHarness("orbbec_camera_functional_reboot_test", ros_version=args.ros_version) as harness:
                 _wait_for_camera_ready(reboot_session, harness, camera_name, emit_status)
+                tested_topic_names = {
+                    item.get("name")
+                    for item in scenario_result["topics"]
+                    if item.get("status") == "passed"
+                }
                 image_topics = [
-                    topic for topic in expanded_scenario.topics if topic.validator == "image"
+                    topic
+                    for topic in expanded_scenario.topics
+                    if topic.validator == "image" and topic.name in tested_topic_names
                 ]
                 topic_names = ", ".join(topic.name for topic in image_topics) or "<none>"
                 emit_status(
@@ -353,8 +392,7 @@ def run_functional_test(args) -> int:
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Run Orbbec camera functional tests")
-    parser.add_argument("--profile", default="gemini_330_series", help="Profile name or YAML path")
-    parser.add_argument("--launch-file", default="", help="Override launch file from the profile")
+    parser.add_argument("--launch-file", required=True, help="Driver launch file to test")
     parser.add_argument("--camera-name", default=None)
     parser.add_argument("--serial-number", default=None)
     parser.add_argument("--usb-port", default=None)

@@ -1,587 +1,276 @@
-# Orbbec Camera Auto Test 使用文档
+# Orbbec Camera Auto Test
 
-## 1. 说明
+面向 Orbbec ROS 相机的通用自动化测试工作区，支持 ROS2、ROS1、命令行和本地 Web UI。单相机测试不再按相机型号维护 YAML：用户选择驱动 Launch，并按需指定开关流参数；测试框架只检查 ROS Graph 实际发现的接口。
 
-`auto_test_ws` 提供一套面向 Orbbec ROS 相机的自动化测试工具，当前支持 ROS2 和 ROS1 两种运行方式：
+## 测试能力
 
-- ROS2：`ros2 launch orbbec_camera <launch.py>`
-- ROS1：`roslaunch orbbec_camera <launch>`
+- 功能测试：检查已发现的 Topic、Service、数据内容、文件保存和设备重启恢复。
+- 性能测试：统计已发现主数据流的 FPS、丢帧、CPU、内存和进程数。
+- 丢帧分析：同时记录驱动端 CSV 与接收端帧时间戳。
+- Launch 重启测试：重复启动驱动并验证图像流稳定恢复。
+- 长时间断流测试：持续监控图像帧间隔并记录异常。
+- 组合测试：依次执行功能测试和性能测试。
 
-测试能力分成三个独立模块：
+## 快速开始
 
-1. 功能测试
-2. 性能压测
-3. launch 重启出流测试
-
-也支持按顺序执行：
-
-1. 先跑功能测试
-2. 功能通过后再跑性能压测
-
-当前统一入口脚本为：
-
-- [run_camera_auto_test.sh](run_camera_auto_test.sh)
-- [run_camera_auto_test_ui.sh](run_camera_auto_test_ui.sh)
-
-
-## 2. 当前目录结构
-
-核心文件如下：
-
-- [run_camera_auto_test.sh](run_camera_auto_test.sh)
-- [run_camera_auto_test_ui.sh](run_camera_auto_test_ui.sh)
-- [README.md](README.md)
-- [depth_color_ir_functional.yaml](src/orbbec_camera_auto_test/profiles/base/depth_color_ir_functional.yaml)
-- [depth_color_ir_performance.yaml](src/orbbec_camera_auto_test/profiles/base/depth_color_ir_performance.yaml)
-- [functional.py](src/orbbec_camera_auto_test/orbbec_camera_auto_test/runners/functional.py)
-- [performance.py](src/orbbec_camera_auto_test/orbbec_camera_auto_test/runners/performance.py)
-- [restart.py](src/orbbec_camera_auto_test/orbbec_camera_auto_test/runners/restart.py)
-
-
-## 3. 环境要求
-
-运行前需要满足以下条件：
-
-- 系统已安装 ROS2 Humble 或 ROS1 Noetic/Melodic
-- `orbbec_camera` 驱动已经可用
-- 目标相机已经连接并能被驱动正常启动
-- Python 依赖可用：
-  - ROS2 使用 `rclpy`
-  - ROS1 使用 `rospy`
-  - `PyYAML`
-  - `psutil`
-
-脚本运行时会自动：
-
-- ROS2 默认 `source /opt/ros/humble/setup.bash`
-- ROS1 默认 `source /opt/ros/one/setup.bash`
-- 如提供 `--driver-setup`，则额外 `source` 对应驱动环境
-- 通过 `--ros-version 1|2` 切换 ROS 版本
-
-
-## 4. 驱动环境准备
-
-如果 Orbbec 驱动已经编译并安装到某个工作区，先确认对应 `setup.bash` 路径，例如：
-
-```bash
-$HOME/ORBBEC/orbbecsdk_ros2_v2-main/install/setup.bash
-```
-
-运行测试时可以通过以下两种方式提供：
-
-1. 命令行显式传入：
-
-```bash
-./run_camera_auto_test.sh --mode functional --driver-setup /path/to/install/setup.bash
-```
-
-ROS1 示例：
-
-```bash
-./run_camera_auto_test.sh \
-  --mode functional \
-  --ros-version 1 \
-  --ros-setup /opt/ros/one/setup.bash \
-  --driver-setup "$HOME/ORBBEC/orbbecsdk_ros1_v2-main/devel/setup.bash"
-```
-
-2. 通过环境变量提供：
-
-```bash
-export ORBBEC_DRIVER_SETUP=/path/to/install/setup.bash
-./run_camera_auto_test.sh --mode functional
-```
-
-
-## 5. 快速开始
-
-进入工作区目录：
+进入工作区：
 
 ```bash
 cd "$HOME/ORBBEC/ob_Auto_Test_ROS/auto_test_ws"
 ```
 
-### 5.1 只跑功能测试
+启动 Web UI：
+
+```bash
+./run_camera_auto_test_ui.sh
+```
+
+浏览器访问 `http://127.0.0.1:8000`。页面中选择 ROS 版本、单相机 Launch、测试模式和需要覆盖的流开关，然后填写驱动环境路径。
+
+ROS2 命令行示例：
 
 ```bash
 ./run_camera_auto_test.sh \
   --mode functional \
-  --driver-setup /path/to/install/setup.bash
-```
-
-### 5.2 只跑性能压测
-
-例如压测 300 秒：
-
-```bash
-./run_camera_auto_test.sh \
-  --mode performance \
-  --duration 300 \
-  --driver-setup /path/to/install/setup.bash
-```
-
-### 5.3 顺序执行功能测试 + 性能压测
-
-```bash
-./run_camera_auto_test.sh \
-  --mode all \
-  --duration 300 \
-  --driver-setup /path/to/install/setup.bash
-```
-
-说明：
-
-- `all` 模式会先跑功能测试
-- 只有功能测试通过后，才会继续跑性能压测
-
-### 5.4 launch 重启出流测试
-
-默认每轮启动指定 launch，等待图像 topic 连续稳定出流 10 秒；成功后关闭 launch 并继续重启测试，直到达到指定压测时间。如果图像一直不出流，会打印 warning，并保持当前 launch 不关闭，方便人工继续确认。
-
-```bash
-./run_camera_auto_test.sh \
-  --mode restart \
-  --duration 30m \
   --launch-file gemini_330_series.launch.py \
-  --launch-arg camera_name=camera \
-  --launch-arg color_width=1280 \
-  --launch-arg color_height=720 \
-  --image-topic /camera/color/image_raw \
-  --stable-seconds 10 \
-  --stream-timeout 60 \
-  --driver-setup /path/to/install/setup.bash
+  --driver-setup /path/to/ros2_driver/install/setup.bash
 ```
 
+ROS1 命令行示例：
 
-## 6. 常用参数
+```bash
+./run_camera_auto_test.sh \
+  --mode functional \
+  --launch-file gemini_330_series.launch \
+  --ros-version 1 \
+  --ros-setup /opt/ros/one/setup.bash \
+  --driver-setup /path/to/ros1_driver/devel/setup.bash
+```
 
-脚本支持的主要参数如下：
-
-- `--mode functional|performance|restart|all`
-- `--duration SECONDS`
-- `--profile PROFILE_NAME_OR_PATH`
-- `--performance-scenario NAME`
-- `--stable-seconds SECONDS`
-- `--stream-timeout SECONDS`
-- `--max-gap-seconds SECONDS`
-- `--restart-delay SECONDS`
-- `--image-topic TOPIC`
-- `--camera-name NAME`
-- `--serial-number SERIAL`
-- `--usb-port PORT`
-- `--config-file-path PATH`
-- `--driver-setup PATH`
-- `--ros-version 1|2`
-- `--ros-setup PATH`
-- `--results-root PATH`
-- `--launch-file FILE`
-- `--launch-arg KEY=VALUE`
-
-`restart` 模式支持指定 launch 和 launch 参数：
-
-- `--launch-file` 指定要反复启动的 launch 文件
-- `--launch-arg KEY=VALUE` 可重复传入多个 launch 参数
-- ROS2 launch 通常传 `*.launch.py`
-- ROS1 launch 通常传 `*.launch`
-
-Web UI 中选择 `restart` 后，在底部 `Launch` 区域填写 `Launch file` 和 `Extra launch args` 即可；`Extra launch args` 每行一个 `KEY=VALUE`。
-
-查看帮助：
+查看参数：
 
 ```bash
 ./run_camera_auto_test.sh --help
 ```
 
+## 环境
 
-## 7. Web UI
+默认 ROS 环境：
 
-项目也提供一个本地 Web UI。这个 UI 不是 ROS2 package，不需要 `colcon build` 或 `ros2 run`。
+- ROS2：`/opt/ros/humble/setup.bash`
+- ROS1：`/opt/ros/one/setup.bash`
 
-启动方式：
+脚本先加载 ROS 环境，再加载 Orbbec 驱动环境。驱动环境使用 `--driver-setup` 或 `ORBBEC_DRIVER_SETUP` 传入，不在源码中写死。
+
+Web UI 可分别预置两套驱动环境：
 
 ```bash
-cd "$HOME/ORBBEC/ob_Auto_Test_ROS/auto_test_ws"
+export ORBBEC_ROS2_CAMERA_SETUP=/path/to/ros2_driver/install/setup.bash
+export ORBBEC_ROS1_CAMERA_SETUP=/path/to/ros1_driver/devel/setup.bash
 ./run_camera_auto_test_ui.sh
 ```
 
-浏览器访问：
+依赖包括 `PyYAML`、`psutil` 以及对应 ROS 版本的 `rclpy` 或 `rospy`。运行 `stress` 场景还需要安装 `stress-ng`。
 
-```text
-http://127.0.0.1:8000
-```
+## 通用单相机模型
 
-如需指定监听地址或端口：
+单相机测试由三部分组成：
 
-```bash
-./run_camera_auto_test_ui.sh --host 127.0.0.1 --port 8001
-```
+1. **Launch**：决定使用哪个驱动入口。
+2. **流参数**：可选地覆盖 `enable_color`、`enable_depth`、`enable_ir`、左右 IR、点云、IMU 等参数；“默认”表示不传参数，由 Launch 决定。
+3. **运行时发现**：只测试 ROS Graph 中实际发布的 Topic 和 Service。
 
-UI 启动测试时会作为 CLI proxy 执行测试命令，并自动 source：
+因此新增相机通常只需要使用它已有的新 Launch，不需要创建相机专用测试 YAML。用户需要确认所选 Launch 是否支持显式传入的流参数。
 
-```bash
-source /opt/ros/humble/setup.bash
-source <页面中填写的 Camera ROS setup.bash 或 setup.zsh>
-```
+Web UI 内置驱动包当前的单相机 Launch 候选：ROS2 19 个，ROS1 21 个。`lidar` Launch 不包含丢帧场景所需的驱动参数，因此不放入通用单相机列表。
 
-页面中可以通过 `ROS version` 选择 ROS2 或 ROS1。选择 ROS1 后，UI 会生成带有 `--ros-version 1` 的测试命令，并默认使用：
+### 特殊模式
 
-```text
-/opt/ros/one/setup.bash
-```
+两个模式需要驱动配置 YAML：
 
-`Camera ROS setup.bash` 不写死个人路径。可以在页面中填写，也可以在启动 UI 前通过环境变量预置：
+| Launch | UI 配置 | 传入文件 |
+| --- | --- | --- |
+| `gemini_301_series.launch.py` / `.launch` | Dual Color | `gemini305_dual_color.yaml`，并传入 `device_preset=Dual Color Streams` |
+| `gemini2L.launch.py` / `.launch` | Dual IR | `gemini2L_dual_ir.yaml` |
 
-```bash
-export ORBBEC_ROS2_CAMERA_SETUP="$HOME/ORBBEC/orbbecsdk_ros2_v2-main/install/setup.bash"
-export ORBBEC_ROS1_CAMERA_SETUP="$HOME/ORBBEC/orbbecsdk_ros1_v2-main/devel/setup.bash"
-```
+特殊模式会传入 `config_file_path`，并禁用普通流开关，避免同一参数同时由 UI 和 YAML 控制。ROS2 由驱动 Launch 在包内解析配置文件；ROS1 运行时使用 `rospack find orbbec_camera` 定位当前 ROS1 驱动包自己的 `config/` 文件。
 
-如果使用 `setup.zsh`，UI 后端会切换到 zsh 执行测试命令，并优先 source 对应的 `setup.zsh`。UI 会把测试记录写入：
+## 测试模式
 
-```text
-results/ui_runs/
-```
+| 模式 | 作用 |
+| --- | --- |
+| `functional` | 对统一目录中且已发现的 Topic、Service 执行功能检查 |
+| `performance` | 对已发现的主数据流采集 FPS 与系统资源 |
+| `restart` | 反复启动 Launch 并等待图像流稳定 |
+| `stream_stall` | 长时间监控断流；当前由 Web UI 或独立 runner 使用 |
+| `all` | 功能测试成功后继续执行性能测试 |
 
-性能压测运行时，UI 会实时读取当前结果目录中的 `system_usage.csv` 和 `fps.csv`，展示已压测时间、CPU 占用、RAM 占用、进程数和各图像话题 FPS。
-
-UI 的测试配置会按模式切换：
-
-- `functional`：只选择功能 profile
-- `performance`：只选择性能 profile，并可选择性能场景
-- `all`：分别选择功能 profile 和性能 profile，先执行功能测试，再执行性能压测
-
-最近一次 UI 配置会保存到：
-
-```text
-results/ui_config.json
-```
-
-
-## 8. 常见用法示例
-
-### 8.1 指定相机名
+### 功能测试
 
 ```bash
 ./run_camera_auto_test.sh \
   --mode functional \
-  --camera-name camera \
+  --launch-file gemini_301_series.launch.py \
+  --launch-arg enable_color=true \
+  --launch-arg enable_depth=true \
   --driver-setup /path/to/install/setup.bash
 ```
 
-### 8.2 指定序列号
+统一接口目录是 [all_topics_services.yaml](src/orbbec_camera_auto_test/profiles/base/all_topics_services.yaml)。执行流程为：
 
-```bash
-./run_camera_auto_test.sh \
-  --mode functional \
-  --serial-number SN123456789 \
-  --driver-setup /path/to/install/setup.bash
-```
+1. 检查相机是否连接。
+2. 启动用户选择的 Launch。
+3. 等待相机节点和基础 Service。
+4. 获取 ROS Graph 快照。
+5. 仅检查目录中且已发现的接口。
+6. 输出 JSON、Markdown 和详细日志。
 
-### 8.3 指定 USB 端口
+日志中的 `[TOPIC][SKIP] ... topic not advertised` 表示统一目录包含该接口，但当前 Launch 没有发布它；这是发现过滤结果，不是测试失败。
 
-```bash
-./run_camera_auto_test.sh \
-  --mode functional \
-  --usb-port 2-7 \
-  --driver-setup /path/to/install/setup.bash
-```
+### 性能测试
 
-### 8.4 指定自定义 launch 参数
+通用性能场景固定为：
 
-例如覆盖分辨率：
+- `default`：监控所有已发现的主数据流。
+- `stress`：在 `stress-ng` 负载下监控相同数据流。
+- `drop_frame`：开启驱动与接收端时间戳记录，分析丢帧。
+
+未传 `--scenario` 时依次运行全部场景：
 
 ```bash
 ./run_camera_auto_test.sh \
   --mode performance \
+  --launch-file gemini_330_series.launch.py \
   --duration 300 \
-  --launch-arg color_width=1280 \
-  --launch-arg color_height=800 \
-  --launch-arg color_fps=30 \
   --driver-setup /path/to/install/setup.bash
 ```
 
-### 8.5 自定义结果输出目录
+只运行压力场景：
 
 ```bash
 ./run_camera_auto_test.sh \
-  --mode all \
-  --duration 600 \
-  --results-root /tmp/orbbec_results \
+  --mode performance \
+  --launch-file gemini_330_series.launch.py \
+  --scenario stress \
+  --duration 15m \
   --driver-setup /path/to/install/setup.bash
 ```
 
+性能候选包括 Color、Depth、IR、左右 IR、左右 Color、普通/彩色点云和 IMU。`camera_info`、metadata、压缩传输、TF、状态和 diagnostics 不参与性能采样。候选 Topic 仍需先通过 ROS Graph 发现。
 
-## 9. 功能测试说明
+`--duration` 支持秒数以及 `15m`、`2h`、`1d` 等格式，并覆盖场景默认时长。
 
-功能测试现在按“启动场景”执行。
-
-每个场景都对应：
-
-- 一组 `launch_args`
-- 一组要检查的 topic
-- 一组要检查的 service
-
-当前 [depth_color_ir_functional.yaml](src/orbbec_camera_auto_test/profiles/base/depth_color_ir_functional.yaml) 里已经定义了这些场景：
-
-- `default`
-
-### default 场景
-
-默认启动 `gemini_330_series.launch.py`，验证：
-
-- 你列出的默认话题是否出现或能收到消息
-- 你列出的默认服务是否出现
-- 一部分只读服务是否能正常调用
-- `save_images` / `save_point_cloud` 是否能生成文件
-- `/camera/reboot_device` 后是否能恢复
-
-## 10. 性能压测说明
-
-性能压测会独立启动一轮干净的 launch，不复用功能测试实例。
-
-当前统计内容包括：
-
-### 图像流性能
-
-基于 YAML profile 中的 `performance_topics` 统计：
-
-- 平均 FPS
-- 最小 FPS
-- 最大 FPS
-- 消息数量
-
-### 系统资源占用
-
-基于 launch 进程树 PID 集合统计：
-
-- CPU 占用
-- RSS 内存占用
-- 进程数
-
-当前首版为“报告优先”：
-
-- 若相机进程异常退出或采集失败，则判失败
-- 性能数值先统计并输出，不做硬阈值拦截
-
-### 丢帧压测
-
-丢帧压测 profile：
-
-```text
-gemini_330_drop_frame
-```
-
-该 profile 会启动：
-
-```bash
-ros2 launch orbbec_camera gemini_330_series.launch.py \
-  enable_frame_timestamp_csv:=true \
-  frame_timestamp_csv_file:=<results_dir>/driver_frame_timestamp.csv
-```
-
-同时测试工具会订阅：
-
-```text
-/camera/color/image_raw
-/camera/depth/image_raw
-```
-
-并输出：
-
-- `fps.csv`：接收端 color/depth FPS、平均 FPS、估算丢帧数
-- `frame_timestamps/camera_color_image_raw.csv`：接收端 color 每帧时间戳、帧间隔和估算丢帧
-- `frame_timestamps/camera_depth_image_raw.csv`：接收端 depth 每帧时间戳、帧间隔和估算丢帧
-- `driver_frame_timestamp.csv`：驱动端通过 `enable_frame_timestamp_csv` 生成的时间戳文件
-
-示例：
+### 丢帧分析
 
 ```bash
 ./run_camera_auto_test.sh \
   --mode performance \
-  --profile gemini_330_drop_frame \
-  --duration 300
+  --launch-file gemini_330_series.launch.py \
+  --scenario drop_frame \
+  --duration 300 \
+  --driver-setup /path/to/install/setup.bash
 ```
 
-### 多相机性能压测
+该场景默认传入：
 
-多相机压测支持两种资源统计模式：
+```text
+enable_frame_drop_log=true
+frame_timestamp_csv_file=<scenario_results_dir>/driver_frame_timestamp.csv
+```
 
-- `gemini_330_multi_isolated`：对应 `multi_camera.launch.py`，每台相机独立 component container，输出每台相机 CPU/RAM/FPS 和总 CPU/RAM。
-- `gemini_330_multi_shared`：对应 `orbbec_multicamera.launch.py`，多台相机共享 `orbbec_container`，FPS 按相机 topic 统计，CPU/RAM 只统计共享 container 整体。
+同时默认开启接收端帧时间戳记录。产物通常包括 `fps.csv`、`driver_frame_timestamp.csv` 和 `frame_timestamps/*.csv`。
 
-示例：
+### Launch 重启测试
 
 ```bash
 ./run_camera_auto_test.sh \
-  --mode performance \
-  --profile gemini_330_multi_isolated \
-  --duration 300
-
-./run_camera_auto_test.sh \
-  --mode performance \
-  --profile gemini_330_multi_shared \
-  --duration 300
+  --mode restart \
+  --launch-file gemini_330_series.launch.py \
+  --duration 30m \
+  --image-topic /camera/color/image_raw \
+  --stable-seconds 10 \
+  --stream-timeout 60 \
+  --max-gap-seconds 1.5 \
+  --restart-delay 2 \
+  --driver-setup /path/to/install/setup.bash
 ```
 
-若实际 launch 中相机名称和示例 profile 不一致，请同步修改 profile 中的 `multi_camera.cameras` 和 `multi_camera.topic_templates`。
+`--image-topic` 可以重复传入。
 
+### 长时间断流测试
 
-## 11. 结果目录说明
+Web UI 可直接选择 `stream_stall`。命令行可调用独立 runner：
 
-每次运行都会在结果根目录下生成一个时间戳目录：
+```bash
+PYTHONPATH=src/orbbec_camera_auto_test \
+python3 -m orbbec_camera_auto_test.runners.stream_stall \
+  --launch-file gemini_330_series.launch.py \
+  --results-dir results/stream_stall \
+  --duration 30m \
+  --image-topic /camera/color/image_raw \
+  --driver-setup /path/to/install/setup.bash
+```
+
+## 常用参数
+
+| 参数 | 说明 |
+| --- | --- |
+| `--mode` | `functional`、`performance`、`restart` 或 `all` |
+| `--launch-file FILE` | 必填，选择驱动 Launch |
+| `--launch-arg KEY=VALUE` | 覆盖 Launch 参数，可重复 |
+| `--config-file-path PATH` | 使用自定义驱动配置文件 |
+| `--scenario NAME` | `default`、`stress` 或 `drop_frame` |
+| `--duration VALUE` | 覆盖性能或重启时长 |
+| `--camera-name NAME` | 覆盖相机命名空间，默认 `camera` |
+| `--serial-number SERIAL` | 指定序列号 |
+| `--usb-port PORT` | 指定 USB 端口 |
+| `--ros-version 1\|2` | 选择 ROS 版本 |
+| `--ros-setup PATH` | ROS 环境脚本 |
+| `--driver-setup PATH` | 驱动工作区环境脚本 |
+
+Launch 参数优先级为：显式 `--launch-arg` 和专用参数，高于驱动 Launch 默认值。
+
+## 结果目录
+
+默认结果写入 `auto_test_ws/results/`；Web UI 写入 `results/ui_runs/`。常见文件：
+
+- `result.json`、`summary.md`
+- `launch_args.json`、`launch.log`
+- `topic.log`、`service.log`
+- `fps.csv`、`system_usage.csv`
+- `driver_frame_timestamp.csv`、`frame_timestamps/*.csv`
+
+`results/` 是运行产物，不应提交到 Git。
+
+## 目录结构
 
 ```text
-results/<run_id>/
+auto_test_ws/
+├── run_camera_auto_test.sh
+├── run_camera_auto_test_ui.sh
+├── src/
+│   ├── orbbec_camera_auto_test/
+│   │   ├── orbbec_camera_auto_test/
+│   │   │   ├── checks/
+│   │   │   ├── core/
+│   │   │   ├── profile/
+│   │   │   └── runners/
+│   │   └── profiles/
+│   │       ├── base/all_topics_services.yaml
+│   │       └── cameras/.../performance/   # 暂存的独立多相机配置
+│   └── orbbec_camera_auto_test_ui/
+└── results/
 ```
 
-其中功能测试和性能压测分别独立归档：
+单相机功能和性能测试不再读取相机专用 Profile。多相机 Profile 暂时保留为独立能力，不出现在当前通用 Web UI 流程中。
 
-```text
-results/<run_id>/functional/
-results/<run_id>/performance/
-```
-
-### 功能测试目录
-
-典型产物包括：
-
-- `launch.log`
-- `launch_args.json`
-- `result.json`
-- `summary.md`
-- `topic.log`
-- `service.log`
-- `artifacts/image/`
-- `artifacts/point_cloud/`
-
-### 性能压测目录
-
-典型产物包括：
-
-- `launch.log`
-- `launch_args.json`
-- `result.json`
-- `summary.md`
-- `performance.log`
-- `fps.csv`
-- `system_usage.csv`
-
-
-## 12. YAML Profile 说明
-
-当前默认 profile 文件按测试类型拆分：
-
-- 功能测试：[depth_color_ir_functional.yaml](src/orbbec_camera_auto_test/profiles/base/depth_color_ir_functional.yaml)
-- 性能压测：[depth_color_ir_performance.yaml](src/orbbec_camera_auto_test/profiles/base/depth_color_ir_performance.yaml)
-
-功能 profile 负责描述：
-
-- 使用哪个 launch 文件
-- 默认 launch 参数
-- 基础话题清单
-- 基础服务清单
-- 功能组
-- 副产物服务
-
-性能 profile 负责描述：
-
-- 使用哪个 launch 文件
-- 默认 launch 参数
-- 性能压测关注的话题
-- 压测场景、时长、负载和多相机资源模式
-
-如果后续要支持其他机型，建议做法是：
-
-1. 功能差异新增到 `profiles/base` 或按机型新增 profile 子目录
-2. 性能/压测场景新增到 `profiles/base` 或按机型新增 profile 子目录
-3. 保持主测试逻辑不变
-4. 通过 `--profile` 选择对应机型
-
-
-## 13. 可选构建方式
-
-当前推荐直接使用根目录脚本运行，不强制先构建。
-
-如果希望按 ROS2 包方式安装，也可以在 `auto_test_ws` 下执行：
+## 验证
 
 ```bash
-cd "$HOME/ORBBEC/ob_Auto_Test_ROS/auto_test_ws"
-colcon build --packages-select orbbec_camera_auto_test
-source install/setup.bash
+cd auto_test_ws
+bash -n run_camera_auto_test.sh run_camera_auto_test_ui.sh
+PYTHONPATH=src/orbbec_camera_auto_test:src/orbbec_camera_auto_test_ui \
+python3 -m unittest discover -s src/orbbec_camera_auto_test/test -p 'test_*.py'
+PYTHONPATH=src/orbbec_camera_auto_test:src/orbbec_camera_auto_test_ui \
+python3 -m unittest discover -s src/orbbec_camera_auto_test_ui/test -p 'test_*.py'
 ```
-
-然后也可以直接调用 Python 入口：
-
-```bash
-run_functional_test --help
-run_performance_test --help
-run_restart_test --help
-```
-
-
-## 14. 当前限制
-
-当前实现有以下限制：
-
-- 默认 profile 主要覆盖 `gemini_330_series`，ROS2 默认 launch 为 `gemini_330_series.launch.py`，ROS1 会自动切到 `gemini_330_series.launch`
-- 功能测试和性能压测都依赖真实相机在线
-- 性能压测当前只做统计和报告，不做硬阈值判定
-- YAML profile 目前只提供一个机型模板
-
-
-## 15. 故障排查
-
-### 15.1 找不到 ROS2 Humble
-
-检查：
-
-```bash
-ls /opt/ros/humble/setup.bash
-```
-
-### 15.2 驱动环境无效
-
-检查：
-
-```bash
-source /path/to/install/setup.bash
-ros2 pkg list | grep orbbec_camera
-```
-
-ROS1 检查：
-
-```bash
-source /path/to/devel/setup.bash
-rospack find orbbec_camera
-roslaunch orbbec_camera gemini_330_series.launch
-```
-
-如果 ROS1 日志提示 `libOrbbecSDK.so` 找不到，需要确认当前驱动工作区的 SDK 动态库版本和已编译节点一致。
-
-### 15.3 相机起不来
-
-建议先手动验证：
-
-```bash
-source /opt/ros/humble/setup.bash
-source /path/to/install/setup.bash
-ros2 launch orbbec_camera gemini_330_series.launch.py
-```
-
-### 15.4 没有生成图像或点云产物
-
-检查：
-
-- `save_images` / `save_point_cloud` 服务是否真的可用
-- 测试日志中是否有 service 调用失败
-- 当前工作目录是否有写权限
-
-
-## 16. 建议运行顺序
-
-建议首次联调时按以下顺序：
-
-1. 手动启动一次相机 launch，确认驱动正常
-2. 运行 `functional` 模式
-3. 查看 `functional/summary.md`
-4. 功能稳定后，再运行 `performance` 或 `all` 模式
