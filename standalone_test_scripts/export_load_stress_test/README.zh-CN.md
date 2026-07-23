@@ -28,8 +28,8 @@ python3 ./export_load_stress_test/export_load_stress_test.py \
   --ros-setup /opt/ros/humble/setup.bash \
   --driver-setup /path/to/camera_ws/install/setup.bash \
   --launch-file gemini_330_series_sdk_json.launch.py \
-  --camera camera \
-  --test-count 10
+  --camera name=camera \
+  --run-count 10
 ```
 
 ### 多相机
@@ -40,12 +40,13 @@ python3 ./export_load_stress_test/export_load_stress_test.py \
   --ros-setup /opt/ros/humble/setup.bash \
   --driver-setup /path/to/camera_ws/install/setup.bash \
   --launch-file gemini_330_series_sdk_json.launch.py \
-  --camera camera_01,usb_port=2-1 \
-  --camera camera_02,usb_port=2-3 \
-  --test-count 10
+  --camera name=camera_01,usb-port=2-1 \
+  --camera name=camera_02,usb-port=2-3 \
+  --run-count 10
 ```
 
-`--camera` 格式：`name[,usb_port=PORT][,serial_number=SN]`
+`--camera` 使用逗号分隔的 `KEY=VALUE` 格式。支持 `name`、`serial-number`、
+`usb-port`、`device-ip`、`device-port`、`config-file-path`，每个字段均可选。
 
 ### 可配置参数
 
@@ -57,7 +58,8 @@ python3 ./export_load_stress_test/export_load_stress_test.py \
 | `--launch-file` | `gemini_330_series_sdk_json.launch.py` | launch 文件名或路径 |
 | `--camera` | 空 | 相机配置，可重复传入；格式见上文 |
 | `--launch-arg` | — | 额外的 launch 参数（如 `enable_ir=true`），可重复传入，格式 `KEY=VALUE` 或 `KEY:=VALUE` |
-| `--test-count` | `10` | 导入导出轮次数 |
+| `--run-count` | `10` | 导入导出最大轮次数 |
+| `--duration` | 空 | 可选的最长运行时间；任一已配置上限先达到即结束 |
 | `--sdk-log-level` | `debug` | Orbbec SDK 日志级别 |
 | `--save-image-count` | `1` | 每轮每个 topic 保存的图片数（`0` = 不存图） |
 | `--image-topic` | color + depth | 监控和存图的 topic，可重复传入 |
@@ -102,6 +104,7 @@ export_load_stress_test/config/Gemini_336L_2.json
 export_load_stress_test/results/YYYYMMDD_HHMMSS_export_load/
 ├── summary.md       # 最终结果和每次压测通过/失败状态
 ├── result.json      # 完整机器可读结果
+├── events.jsonl     # 结构化生命周期和进度事件
 ├── images/          # 每次压测/每台相机/每个 topic 的 JPG 图像
 ├── exports/         # 每次压测/每台相机的导出 JSON 和失败 diff
 ├── logs/test_XXXX/<camera>/<camera>.launch.log  # 每轮 ROS launch 日志

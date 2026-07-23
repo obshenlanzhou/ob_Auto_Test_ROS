@@ -33,8 +33,8 @@ python3 ./launch_param_load_stress/launch_param_load_stress.py \
   --ros-setup /opt/ros/humble/setup.bash \
   --driver-setup /path/to/camera_ws/install/setup.bash \
   --launch-file gemini_330_series.launch.py \
-  --config-file-path ./config/sample_config_file_path.yaml \
-  --repeat 20
+  --camera name=camera,config-file-path=./config/sample_config_file_path.yaml \
+  --run-count 20
 ```
 
 ROS 1：
@@ -45,8 +45,8 @@ python3 ./launch_param_load_stress/launch_param_load_stress.py \
   --ros-setup /opt/ros/noetic/setup.bash \
   --driver-setup /path/to/camera_ws/devel/setup.bash \
   --launch-file gemini_330_series.launch \
-  --config-file-path ./config/sample_config_file_path.yaml \
-  --repeat 20
+  --camera name=camera,config-file-path=./config/sample_config_file_path.yaml \
+  --run-count 20
 ```
 
 ### 多相机
@@ -58,15 +58,14 @@ python3 ./launch_param_load_stress/launch_param_load_stress.py \
   --ros-version 2 \
   --driver-setup /path/to/install/setup.bash \
   --launch-file gemini_330_series.launch.py \
-  --camera camera1,usb_port=2-1,config_file_path=./config/cam1.yaml \
-  --camera camera2,usb_port=2-2,config_file_path=./config/cam2.yaml \
-  --repeat 10
+  --camera name=camera1,usb-port=2-1,config-file-path=./config/cam1.yaml \
+  --camera name=camera2,usb-port=2-2,config-file-path=./config/cam2.yaml \
+  --run-count 10
 ```
 
-`--camera` 格式：`name[,serial_number=SN][,usb_port=X][,config_file_path=/path]`
-
-也可以用 `--config-file-path` 指定公用配置，作为未配置 `config_file_path` 的相机
-的默认值。
+`--camera` 使用逗号分隔的 `KEY=VALUE` 格式。支持 `name`、`serial-number`、
+`usb-port`、`device-ip`、`device-port`、`config-file-path`，每个字段均可选。
+本脚本要求每个相机配置都包含 `config-file-path`。
 
 ### 可配置参数
 
@@ -76,15 +75,15 @@ python3 ./launch_param_load_stress/launch_param_load_stress.py \
 | `--ros-setup` | `$ORBBEC_ROS_SETUP` 或空 | ROS 环境 setup 脚本路径 |
 | `--driver-setup` | `$ORBBEC_DRIVER_SETUP`、`$ORBBEC_CAMERA_SETUP` 或空 | Orbbec 驱动环境 setup 脚本路径 |
 | `--launch-file` | 必填 | launch 文件名或路径 |
-| `--config-file-path` | 单相机模式必填 | 单相机模式使用的参数配置文件 |
-| `--camera` | 空 | 多相机配置，可重复传入；格式见上文 |
+| `--camera` | 必填 | 包含 `config-file-path` 的相机配置，可重复传入 |
 | `--launch-arg` | — | 额外的 launch 参数（如 `enable_depth=true`），可重复传入，格式 `KEY=VALUE` 或 `KEY:=VALUE` |
 | `--sdk-log-level` | `debug` | SDK 文件日志级别，可选 `debug/info/warn/error/fatal/none` |
-| `--repeat N` | `1` | 完整启动→检查→停止的循环次数 |
+| `--run-count N` | `1` | 完整启动→检查→停止的最大循环次数 |
+| `--duration` | 空 | 可选的最长运行时间；任一已配置上限先达到即结束 |
 | `--startup-timeout SECS` | `30` | 等待设备初始化完成的最大秒数 |
 | `--topic-timeout SECS` | `20` | 等待每个已启用流 topic 的最大秒数 |
 | `--service-timeout SECS` | `15` | 每次参数/service 查询的最大秒数 |
-| `--save-images-count N` | `1` | 每台相机每个已启用流保存的图片数（`0` = 不存图） |
+| `--save-image-count N` | `1` | 每台相机每个已启用流保存的图片数（`0` = 不存图） |
 | `--jpg-quality Q` | `80` | 保存图片的 JPEG 压缩质量（1–100） |
 | `--skip-topic-check` | — | 跳过图像 topic 验证 |
 | `--skip-service-check` | — | 跳过 getter service 验证 |
@@ -101,7 +100,7 @@ launch_param_load_stress/config/sample_config_file_path.yaml
 
 ```bash
 cp ./config/sample_config_file_path.yaml /tmp/my_config.yaml
-# 按需修改值后通过 --config-file-path 传入
+# 按需修改值后通过相机配置中的 config-file-path 传入
 ```
 
 占位值（`-1`、空字符串、`ANY`、`none`、`null`）在 service 检查层会被跳过，
@@ -120,11 +119,12 @@ launch_param_load_stress/results/YYYYMMDD_HHMMSS_launch_param_load_stress/
 │       └── camera1.log         # 本轮 camera1 的 Orbbec SDK 日志
 ├── test_0002/
 │   └── ...
-├── images/                # 仅在 --save-images-count > 0 时生成
+├── images/                # 仅在 --save-image-count > 0 时生成
 │   ├── test_0001/
 │   │   └── camera1/<topic>/image_0001.jpg
 │   └── test_0002/
 │       └── ...
 ├── summary.md             # 每轮通过/失败汇总
+├── events.jsonl           # 结构化生命周期和进度事件
 └── result.json            # 所有轮次的机器可读结果
 ```

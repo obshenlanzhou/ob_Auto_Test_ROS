@@ -35,8 +35,8 @@ python3 ./launch_param_load_stress/launch_param_load_stress.py \
   --ros-setup /opt/ros/humble/setup.bash \
   --driver-setup /path/to/camera_ws/install/setup.bash \
   --launch-file gemini_330_series.launch.py \
-  --config-file-path ./config/sample_config_file_path.yaml \
-  --repeat 20
+  --camera name=camera,config-file-path=./config/sample_config_file_path.yaml \
+  --run-count 20
 ```
 
 ROS 1:
@@ -47,8 +47,8 @@ python3 ./launch_param_load_stress/launch_param_load_stress.py \
   --ros-setup /opt/ros/noetic/setup.bash \
   --driver-setup /path/to/camera_ws/devel/setup.bash \
   --launch-file gemini_330_series.launch \
-  --config-file-path ./config/sample_config_file_path.yaml \
-  --repeat 20
+  --camera name=camera,config-file-path=./config/sample_config_file_path.yaml \
+  --run-count 20
 ```
 
 ### Multi-Camera
@@ -60,15 +60,15 @@ python3 ./launch_param_load_stress/launch_param_load_stress.py \
   --ros-version 2 \
   --driver-setup /path/to/install/setup.bash \
   --launch-file gemini_330_series.launch.py \
-  --camera camera1,usb_port=2-1,config_file_path=./config/cam1.yaml \
-  --camera camera2,usb_port=2-2,config_file_path=./config/cam2.yaml \
-  --repeat 10
+  --camera name=camera1,usb-port=2-1,config-file-path=./config/cam1.yaml \
+  --camera name=camera2,usb-port=2-2,config-file-path=./config/cam2.yaml \
+  --run-count 10
 ```
 
-`--camera` format: `name[,serial_number=SN][,usb_port=X][,config_file_path=/path]`
-
-A shared `--config-file-path` may be used as a fallback for cameras without a
-per-camera `config_file_path`.
+`--camera` is a comma-separated `KEY=VALUE` specification. Supported keys are
+`name`, `serial-number`, `usb-port`, `device-ip`, `device-port`, and
+`config-file-path`; every field is optional. This script requires
+`config-file-path` in each camera specification.
 
 ### Options
 
@@ -78,14 +78,14 @@ per-camera `config_file_path`.
 | `--ros-setup` | `$ORBBEC_ROS_SETUP` or empty | Path to the ROS environment setup script |
 | `--driver-setup` | `$ORBBEC_DRIVER_SETUP`, `$ORBBEC_CAMERA_SETUP`, or empty | Path to the Orbbec driver environment setup script |
 | `--launch-file` | required | Launch filename or path |
-| `--config-file-path` | required in single-camera mode | Parameter configuration file used in single-camera mode |
-| `--camera` | empty | Multi-camera specification; repeatable, using the format shown above |
+| `--camera` | required | Camera specification with `config-file-path`; repeatable |
 | `--launch-arg` | — | Extra launch argument (e.g. `enable_depth=true`); repeatable, format `KEY=VALUE` or `KEY:=VALUE` |
-| `--repeat N` | `1` | Number of full launch–check–stop cycles |
+| `--run-count N` | `1` | Maximum number of full launch–check–stop cycles |
+| `--duration` | empty | Optional maximum wall time; the first configured limit reached stops the run |
 | `--startup-timeout SECS` | `30` | Max wait for device initialization |
 | `--topic-timeout SECS` | `20` | Max wait for each enabled stream topic |
 | `--service-timeout SECS` | `15` | Max wait for each param/service query |
-| `--save-images-count N` | `1` | Images saved per enabled topic per camera (`0` = disabled) |
+| `--save-image-count N` | `1` | Images saved per enabled topic per camera (`0` = disabled) |
 | `--jpg-quality Q` | `80` | JPEG quality for saved images (1–100) |
 | `--skip-topic-check` | — | Skip image topic verification |
 | `--skip-service-check` | — | Skip getter service verification |
@@ -103,7 +103,7 @@ Copy and edit it for the connected device:
 
 ```bash
 cp ./config/sample_config_file_path.yaml /tmp/my_config.yaml
-# Edit values, then pass it to --config-file-path
+# Edit values, then pass it as the camera's config-file-path
 ```
 
 Placeholder values (`-1`, empty string, `ANY`, `none`, `null`) are skipped at
@@ -125,11 +125,12 @@ launch_param_load_stress/results/YYYYMMDD_HHMMSS_launch_param_load_stress/
 │       └── camera1.log         # Orbbec SDK log for this run
 ├── test_0002/
 │   └── ...
-├── images/                # Present only when --save-images-count > 0
+├── images/                # Present only when --save-image-count > 0
 │   ├── test_0001/
 │   │   └── camera1/<topic>/image_0001.jpg
 │   └── test_0002/
 │       └── ...
 ├── summary.md             # Per-run pass/fail summary
+├── events.jsonl           # Structured lifecycle and progress events
 └── result.json            # Machine-readable result for all runs
 ```

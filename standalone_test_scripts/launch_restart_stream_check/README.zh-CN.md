@@ -91,5 +91,6 @@ launch_restart_stream_check/results/YYYYMMDD_HHMMSS_restart_stream/
 ├── logs/test_XXXX/<camera>.launch.log      # 每次重启的 ROS launch 日志
 ├── logs/test_XXXX/sdk/Log/<camera>/        # 每次重启的 SDK debug 日志
 ├── summary.md                              # 运行命令、最终结果、运行时长、监控流列表
+├── events.jsonl                            # 结构化生命周期和进度事件
 └── result.json                             # 每次重启的结构化结果和日志路径
 ```

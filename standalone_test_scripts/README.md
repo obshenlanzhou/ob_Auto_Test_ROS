@@ -60,8 +60,30 @@ environments by command-line options:
 --driver-setup /path/to/orbbec_camera_ws/install/setup.bash
 ```
 
-`image_receive_stats_test` is a subscriber-only tool. Source the ROS
-environment before running it.
+`image_receive_stats_test` is a subscriber-only tool, but accepts the same
+environment options so it can be launched consistently.
+
+## Common Command and Result Contract
+
+All public long options use kebab-case. Scripts use `--run-count` for a cycle
+limit and `--duration` for a wall-time limit; when both are supplied, the first
+limit reached stops the run. A camera is supplied as a repeatable launch-style
+specification:
+
+```bash
+--camera name=camera_01,serial-number=SN001,usb-port=2-1
+```
+
+The supported fields are `name`, `serial-number`, `usb-port`, `device-ip`,
+`device-port`, and `config-file-path`. Every field is optional and compatible
+fields may be combined. Scripts that do not require explicit camera
+configuration provide their own default.
+
+Every completed run writes `result.json`, `summary.md`, and `events.jsonl`.
+`result.json` uses the common status values `passed`, `failed`, and
+`interrupted`; the corresponding process exit codes are `0`, `1`, and `130`.
+Invalid command-line usage returns `2`. Script-specific logs, images, CSV files,
+and exports are listed in `result.json` under `artifacts`.
 
 ## Script Index
 
@@ -84,6 +106,7 @@ Include README.md and README.zh-CN.md in the script directory
 Use a clear name that describes the test scenario
 Keep it independent from orbbec_camera_auto_test framework modules
 Support --ros-version, --ros-setup, --driver-setup when ROS is needed
-Write final results into script-specific files such as summary.md, summary.csv, or result.json
-Return 0 for pass and non-zero for failure
+Accept the common camera, lifecycle, and environment options when applicable
+Write result.json, summary.md, and events.jsonl using the common contract
+Return 0 for pass, 1 for failure, 130 for interruption, and 2 for invalid arguments
 ```

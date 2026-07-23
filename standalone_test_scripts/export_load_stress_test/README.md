@@ -29,8 +29,8 @@ python3 ./export_load_stress_test/export_load_stress_test.py \
   --ros-setup /opt/ros/humble/setup.bash \
   --driver-setup /path/to/camera_ws/install/setup.bash \
   --launch-file gemini_330_series_sdk_json.launch.py \
-  --camera camera \
-  --test-count 10
+  --camera name=camera \
+  --run-count 10
 ```
 
 ### Multi-Camera
@@ -41,12 +41,14 @@ python3 ./export_load_stress_test/export_load_stress_test.py \
   --ros-setup /opt/ros/humble/setup.bash \
   --driver-setup /path/to/camera_ws/install/setup.bash \
   --launch-file gemini_330_series_sdk_json.launch.py \
-  --camera camera_01,usb_port=2-1 \
-  --camera camera_02,usb_port=2-3 \
-  --test-count 10
+  --camera name=camera_01,usb-port=2-1 \
+  --camera name=camera_02,usb-port=2-3 \
+  --run-count 10
 ```
 
-`--camera` format: `name[,usb_port=PORT][,serial_number=SN]`
+`--camera` is a comma-separated `KEY=VALUE` specification. Supported keys are
+`name`, `serial-number`, `usb-port`, `device-ip`, `device-port`, and
+`config-file-path`; every field is optional.
 
 ### Options
 
@@ -58,7 +60,8 @@ python3 ./export_load_stress_test/export_load_stress_test.py \
 | `--launch-file` | `gemini_330_series_sdk_json.launch.py` | Launch filename or path |
 | `--camera` | empty | Camera specification; repeatable, using the format shown above |
 | `--launch-arg` | — | Extra launch argument (e.g. `enable_ir=true`); repeatable, format `KEY=VALUE` or `KEY:=VALUE` |
-| `--test-count` | `10` | Number of import/export cycles |
+| `--run-count` | `10` | Maximum number of import/export cycles |
+| `--duration` | empty | Optional maximum wall time; the first configured limit reached stops the run |
 | `--sdk-log-level` | `debug` | Orbbec SDK log level |
 | `--save-image-count` | `1` | Images saved per topic per test (`0` = disabled) |
 | `--image-topic` | color + depth | Topics to monitor and save; repeatable |
@@ -103,6 +106,7 @@ Each run creates:
 export_load_stress_test/results/YYYYMMDD_HHMMSS_export_load/
 ├── summary.md       # Final result and per-test pass/fail status
 ├── result.json      # Full machine-readable result
+├── events.jsonl     # Structured lifecycle and progress events
 ├── images/          # Saved JPG images per test/camera/topic
 ├── exports/         # Exported JSON and failure diffs per test/camera
 ├── logs/test_XXXX/<camera>/<camera>.launch.log  # Per-test ROS launch log

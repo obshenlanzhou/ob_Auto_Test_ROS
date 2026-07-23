@@ -27,8 +27,8 @@ python3 ./preset_upgrade_stress_test/preset_upgrade_stress_test.py \
   --ros-version 2 \
   --ros-setup /opt/ros/humble/setup.bash \
   --driver-setup /path/to/camera_ws/install/setup.bash \
-  --test-count 10 \
-  --save-images-count 1
+  --run-count 10 \
+  --save-image-count 1
 ```
 
 ROS 1：
@@ -38,25 +38,26 @@ python3 ./preset_upgrade_stress_test/preset_upgrade_stress_test.py \
   --ros-version 1 \
   --ros-setup /opt/ros/noetic/setup.bash \
   --driver-setup /path/to/camera_ws/devel/setup.bash \
-  --test-count 10
+  --run-count 10
 ```
 
 ### 多相机
 
-多次传入 `--camera`，建议配置 `usb_port` 或 `serial_number` 以避免选错设备：
+多次传入 `--camera`，建议配置 `usb-port` 或 `serial-number` 以避免选错设备：
 
 ```bash
 python3 ./preset_upgrade_stress_test/preset_upgrade_stress_test.py \
   --ros-version 2 \
   --ros-setup /opt/ros/humble/setup.bash \
   --driver-setup /path/to/camera_ws/install/setup.bash \
-  --camera camera_01,usb_port=2-1 \
-  --camera camera_02,usb_port=2-3 \
-  --test-count 10 \
-  --save-images-count 1
+  --camera name=camera_01,usb-port=2-1 \
+  --camera name=camera_02,usb-port=2-3 \
+  --run-count 10 \
+  --save-image-count 1
 ```
 
-`--camera` 格式：`name[,usb_port=PORT][,serial_number=SN]`
+`--camera` 使用逗号分隔的 `KEY=VALUE` 格式。支持 `name`、`serial-number`、
+`usb-port`、`device-ip`、`device-port`、`config-file-path`，每个字段均可选。
 
 ### 可配置参数
 
@@ -69,9 +70,9 @@ python3 ./preset_upgrade_stress_test/preset_upgrade_stress_test.py \
 | `--preset-a-path` / `--preset-b-path` | 内置 bin 文件 | 交替升级的 preset 文件路径 |
 | `--preset-a-name` | `K High Confidence` | preset A 对应的 `device_preset` 名称 |
 | `--preset-b-name` | `K High Accuracy` | preset B 对应的 `device_preset` 名称 |
-| `--test-count` | `0` | 升级轮次数；`0` = 持续运行到 `--duration` 或 Ctrl-C |
-| `--duration` | `300` | 时间限制，配合 `--test-count 0` 使用；支持 `300`、`15m`、`2h` |
-| `--save-images-count` | `1` | 每轮每个 topic 保存的图片数（`0` = 不存图） |
+| `--run-count` | 空 | 可选的升级最大轮次数 |
+| `--duration` | `300` | 最长运行时间，支持 `300`、`15m`、`2h` |
+| `--save-image-count` | `1` | 每轮每个 topic 保存的图片数（`0` = 不存图） |
 | `--jpg-quality` | `95` | 保存图片的 JPEG 压缩质量（1–100） |
 | `--image-topic` | color + depth | 监控的 topic，可重复传入；`{camera}` 自动展开为各相机名 |
 | `--launch-arg` | — | 额外 launch 参数（如 `enable_left_ir=true`），可重复传入 |
@@ -118,6 +119,7 @@ config/g336x_K_High_Accuracy_0.0.2.bin   → device_preset: K High Accuracy
 preset_upgrade_stress_test/results/YYYYMMDD_HHMMSS_preset_upgrade/
 ├── summary.md                              # 最终摘要
 ├── result.json                             # 完整机器可读结果
+├── events.jsonl                            # 结构化生命周期和进度事件
 ├── logs/test_XXXX/<camera>/upgrade.log     # firmware_update_tool 输出
 ├── logs/test_XXXX/<camera>/<camera>.launch.log  # launch 输出
 ├── logs/test_XXXX/<camera>/sdk/Log/         # 升级工具及相机 SDK debug 日志

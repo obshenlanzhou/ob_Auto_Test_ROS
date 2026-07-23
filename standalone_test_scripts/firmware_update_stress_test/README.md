@@ -37,7 +37,7 @@ python3 ./firmware_update_stress_test/firmware_update_stress_test.py \
   --driver-setup /path/to/camera_ws/install/setup.bash \
   --firmware /path/to/firmware_A.bin \
   --firmware /path/to/firmware_B.bin \
-  --test-count 10
+  --run-count 10
 ```
 
 ### ROS 1
@@ -48,7 +48,7 @@ python3 ./firmware_update_stress_test/firmware_update_stress_test.py \
   --ros-setup /opt/ros/noetic/setup.bash \
   --driver-setup /path/to/camera_ws/devel/setup.bash \
   --firmware /path/to/firmware_A.bin \
-  --test-count 10
+  --run-count 10
 ```
 
 ### Multi-Camera Batch by Serial Number
@@ -60,17 +60,17 @@ a comma-separated batch:
 python3 ./firmware_update_stress_test/firmware_update_stress_test.py \
   --ros-version 2 \
   --driver-setup /path/to/camera_ws/install/setup.bash \
-  --serial-number SN001,SN002,SN003 \
+  --camera name=camera_01,serial-number=SN001 \
+  --camera name=camera_02,serial-number=SN002 \
+  --camera name=camera_03,serial-number=SN003 \
   --firmware /path/to/firmware_A.bin \
   --firmware /path/to/firmware_B.bin \
-  --test-count 6
+  --run-count 6
 ```
 
-`--serial-number` can also be repeated:
-
-```bash
---serial-number SN001 --serial-number SN002
-```
+Each `--camera` is a comma-separated `KEY=VALUE` specification. Supported keys
+are `name`, `serial-number`, `usb-port`, `device-ip`, `device-port`, and
+`config-file-path`; every field is optional.
 
 ## Options
 
@@ -80,20 +80,18 @@ python3 ./firmware_update_stress_test/firmware_update_stress_test.py \
 | `--ros-setup` | `$ORBBEC_ROS_SETUP` or empty | Path to the ROS environment setup script |
 | `--driver-setup` | `$ORBBEC_CAMERA_SETUP` or empty | Path to the Orbbec driver environment setup script |
 | `--firmware` | required | Firmware image path; repeat to cycle files in order |
-| `--test-count` | `10` | Number of update command invocations; `0` = run until `--duration` |
-| `--duration` | `300` | Duration for `--test-count 0`; supports `300`, `15m`, `2h` |
+| `--run-count` | `10` | Maximum number of update command invocations |
+| `--duration` | empty | Optional maximum wall time; supports `300`, `15m`, `2h` |
 | `--restart-delay` | `2` | Delay seconds between update commands |
-| `--serial-number` | empty | Target serial number(s); repeatable or comma-separated |
-| `--usb-port` | empty | Single target USB port selector |
-| `--device-ip` | empty | Single target network device IP selector |
-| `--device-port` | `8090` | Network device port passed to the firmware tool |
+| `--camera` | default camera | Camera target specification; repeatable |
 | `--reconnect-timeout-sec` | `120` | Passed to `firmware_update_tool` |
 | `--reconnect-poll-ms` | `1000` | Passed to `firmware_update_tool` |
 | `--sdk-log-level` | `debug` | Passed to `firmware_update_tool` |
 | `--continue-on-error` | disabled | Passed to `firmware_update_tool` |
 
-Only one selector type can be used at a time: serial number, USB port, or device
-IP. Multi-camera mode is serial-number batch mode.
+Compatible selectors in a camera specification may be combined. Multiple
+serial numbers are sent as one firmware-tool batch; USB and network selectors
+must resolve to one target value.
 
 ## Result Files
 
@@ -103,6 +101,7 @@ Each run creates:
 firmware_update_stress_test/results/YYYYMMDD_HHMMSS_firmware_update/
 ├── summary.md                  # Final result and per-test pass/fail status
 ├── result.json                 # Full machine-readable result
+├── events.jsonl                # Structured lifecycle and progress events
 ├── logs/test_XXXX/update.log   # firmware_update_tool terminal output
 └── logs/test_XXXX/sdk/Log/     # Per-test firmware_update_tool SDK debug logs
 ```

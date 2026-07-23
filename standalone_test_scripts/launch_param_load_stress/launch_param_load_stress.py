@@ -15,6 +15,16 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
+from _test_protocol import (
+    EventWriter,
+    artifact_list,
+    atomic_write_json,
+    contract_result,
+    iso_now,
+    namespace_request,
+    parse_camera,
+)
+
 try:
     import yaml
 except Exception as exc:  # noqa: BLE001
@@ -26,7 +36,8 @@ else:
 
 ENV_READY_VAR = "LAUNCH_PARAM_LOAD_STRESS_ENV_READY"
 INTERRUPTED = False
-TOOL_VERSION = "0.1"
+TOOL_VERSION = "1.0"
+TEST_ID = "launch_param_load_stress"
 
 
 @dataclass
@@ -34,38 +45,14 @@ class CameraSpec:
     name: str
     serial_number: str = ""
     usb_port: str = ""
+    device_ip: str = ""
+    device_port: str = ""
     config_file_path: str = ""
 
 
 def parse_camera_spec(raw: str) -> "CameraSpec":
-    """Parse --camera name[,serial_number=SN][,usb_port=XX][,config_file_path=/path]"""
-    text = raw.strip()
-    if not text:
-        raise ValueError("--camera cannot be empty")
-    name = ""
-    fields: Dict[str, str] = {}
-    for index, part in enumerate(item.strip() for item in text.split(",")):
-        if not part:
-            continue
-        if "=" in part:
-            key, value = part.split("=", 1)
-            fields[key.strip()] = value.strip()
-        elif index == 0:
-            name = part
-        else:
-            raise ValueError(f"unsupported item '{part}' in --camera {raw}")
-    name = fields.pop("name", name).strip()
-    if not name:
-        raise ValueError(f"camera name is required in --camera {raw}")
-    unsupported = sorted(set(fields) - {"serial_number", "usb_port", "config_file_path"})
-    if unsupported:
-        raise ValueError(f"unsupported fields in --camera {raw}: {', '.join(unsupported)}")
-    return CameraSpec(
-        name=name,
-        serial_number=fields.get("serial_number", ""),
-        usb_port=fields.get("usb_port", ""),
-        config_file_path=fields.get("config_file_path", ""),
-    )
+    """Parse the unified repeatable --camera KEY=VALUE specification."""
+    return CameraSpec(**parse_camera(raw))
 
 
 PLACEHOLDER_VALUES = {"", "any", "none", "null"}
@@ -125,8 +112,13 @@ def timestamp() -> str:
 
 
 class StatusLogger:
-    def __call__(self, message: str) -> None:
+    def __init__(self, events: Optional[EventWriter] = None) -> None:
+        self.events = events
+
+    def __call__(self, message: str, *, event: str = "log", **fields: Any) -> None:
         print(f"[{timestamp()}] {message}", flush=True)
+        if self.events is not None:
+            self.events.emit(event, message, **fields)
 
 
 def build_verification_map_text() -> str:
@@ -810,7 +802,7 @@ class ImageCaptureMonitor:
         except Exception as exc:  # noqa: BLE001
             raise RuntimeError(
                 "saving JPG images requires cv_bridge and OpenCV. "
-                "Source the camera driver environment or set --save-images-count 0. "
+                "Source the camera driver environment or set --save-image-count 0. "
                 f"Original error: {exc}"
             ) from exc
         self._bridge = CvBridge()
@@ -1093,8 +1085,9 @@ def _summary_camera_section(cam: Dict[str, Any]) -> List[str]:
 def build_summary(result: Dict[str, Any]) -> str:
     command = result.get("command", [])
     command_text = " ".join(shlex.quote(str(item)) for item in command) if command else ""
-    repeat_total = result.get("repeat_total", 1)
-    repeat_passed = result.get("repeat_passed", 0)
+    run_count = result.get("run_count", 1)
+    runs_passed = result.get("runs_passed", 0)
+    runs = result.get("runs", [])
     lines = [
         "# Launch Param Load Stress",
         "",
@@ -1111,7 +1104,7 @@ def build_summary(result: Dict[str, Any]) -> str:
         f"- ROS version: {result.get('ros_version', '')}",
         f"- Launch file: {result.get('launch_file', '')}",
         f"- SDK log level: {result.get('sdk_log_level', '')}",
-        f"- Runs: {repeat_passed}/{repeat_total} passed",
+        f"- Runs: {runs_passed}/{len(runs)} completed runs passed",
         "",
     ]
     notes = result.get("notes", [])
@@ -1122,7 +1115,7 @@ def build_summary(result: Dict[str, Any]) -> str:
     for run in result.get("runs", []):
         run_idx = run.get("run", "?")
         run_status = run.get("status", "")
-        lines.append(f"## Run {run_idx}/{repeat_total} — {run_status}")
+        lines.append(f"## Run {run_idx}/{run_count} — {run_status}")
         if run.get("error"):
             lines += ["", f"**Error:** {run['error']}", ""]
             continue
@@ -1217,6 +1210,10 @@ def _build_camera_launch_args(
         launch_args["serial_number"] = camera.serial_number
     if camera.usb_port:
         launch_args["usb_port"] = camera.usb_port
+    if camera.device_ip:
+        launch_args["net_device_ip"] = camera.device_ip
+    if camera.device_port:
+        launch_args["net_device_port"] = camera.device_port
     return launch_args
 
 
@@ -1225,19 +1222,8 @@ def run(args) -> int:
     signal.signal(signal.SIGINT, handle_sigint)
     runtime_env = prepare_runtime_env(args)
 
-    if args.camera:
-        cameras = [parse_camera_spec(raw) for raw in args.camera]
-        if len(cameras) > 1 and any(not c.serial_number and not c.usb_port for c in cameras):
-            raise ValueError("multi-camera mode requires serial_number or usb_port for every --camera")
-    else:
-        cameras = [CameraSpec(
-            name=args.camera_name,
-            serial_number=getattr(args, "serial_number", ""),
-            usb_port=getattr(args, "usb_port", ""),
-            config_file_path="",
-        )]
-
-    shared_config_path = Path(args.config_file_path).expanduser().resolve() if args.config_file_path else None
+    cameras = [parse_camera_spec(raw) for raw in args.camera]
+    shared_config_path = None
 
     # Load yaml_params per camera (per-camera config overrides shared config)
     camera_configs: List[Path] = []
@@ -1247,7 +1233,7 @@ def run(args) -> int:
         elif shared_config_path:
             camera_configs.append(shared_config_path)
         else:
-            raise ValueError(f"no config_file_path for camera '{camera.name}'")
+            raise ValueError(f"no config-file-path for camera '{camera.name}'")
     yaml_params_list = [load_yaml_file(p) for p in camera_configs]
 
     # Common launch args (everything except per-camera overrides)
@@ -1268,14 +1254,19 @@ def run(args) -> int:
     startup_timeout = parse_duration(args.startup_timeout, 30.0)
     topic_timeout = parse_duration(args.topic_timeout, 20.0)
     service_timeout = parse_duration(args.service_timeout, 15.0)
-    repeat_total = args.repeat
-    save_images_count = args.save_images_count
+    run_count = args.run_count
+    duration_seconds = (
+        parse_duration(args.duration, 0.0) if str(args.duration or "").strip() else None
+    )
+    save_images_count = args.save_image_count
     jpg_quality = args.jpg_quality
 
     run_id = datetime.now().strftime("%Y%m%d_%H%M%S_launch_param_load_stress")
+    run_started_at = iso_now()
     default_results_dir = Path(__file__).resolve().parent / "results" / run_id
     results_dir = ensure_dir(Path(args.results_dir).resolve() if args.results_dir else default_results_dir)
-    emit = StatusLogger()
+    events = EventWriter(results_dir / "events.jsonl")
+    emit = StatusLogger(events)
 
     result: Dict[str, Any] = {
         "status": "failed",
@@ -1286,25 +1277,44 @@ def run(args) -> int:
         "launch_file": args.launch_file,
         "sdk_log_level": args.sdk_log_level,
         "notes": [declaration_note],
-        "repeat_total": repeat_total,
-        "repeat_passed": 0,
+        "run_count": run_count,
+        "duration_limit_seconds": duration_seconds,
+        "runs_passed": 0,
         "runs": [],
+        "elapsed_seconds": 0.0,
     }
 
+    emit("test started", event="phase", phase="starting")
     emit(f"tool version: {TOOL_VERSION}")
     emit(f"results dir: {results_dir}")
     emit(f"cameras: {', '.join(c.name for c in cameras)}")
-    emit(f"repeat: {repeat_total}")
+    emit(f"run count: {run_count}")
     emit(f"SDK log level: {args.sdk_log_level}")
 
+    test_start_monotonic = time.monotonic()
+    deadline = (
+        test_start_monotonic + duration_seconds
+        if duration_seconds is not None
+        else None
+    )
     try:
-        for repeat_idx in range(repeat_total):
+        run_index = 0
+        while run_index < run_count:
+            if deadline is not None and time.monotonic() >= deadline:
+                break
             if INTERRUPTED:
                 break
-            emit(f"--- run {repeat_idx + 1}/{repeat_total} ---")
-            test_name = f"test_{repeat_idx + 1:04d}"
+            run_index += 1
+            emit(
+                f"--- run {run_index}/{run_count} ---",
+                event="progress",
+                current=run_index,
+                total=run_count,
+                phase="running",
+            )
+            test_name = f"test_{run_index:04d}"
             run_dir = ensure_dir(results_dir / test_name)
-            run_result: Dict[str, Any] = {"run": repeat_idx + 1, "status": "failed", "cameras": []}
+            run_result: Dict[str, Any] = {"run": run_index, "status": "failed", "cameras": []}
             sessions: List[LaunchSession] = []
             try:
                 # Start all camera launches
@@ -1380,28 +1390,47 @@ def run(args) -> int:
 
             result["runs"].append(run_result)
             if run_result["status"] == "passed":
-                result["repeat_passed"] += 1
-            emit(f"run {repeat_idx + 1}/{repeat_total}: {run_result['status']}")
+                result["runs_passed"] += 1
+            emit(f"run {run_index}/{run_count}: {run_result['status']}")
             if INTERRUPTED:
                 break
 
         if INTERRUPTED:
             result["status"] = "interrupted"
         else:
-            result["status"] = "passed" if result["repeat_passed"] == repeat_total else "failed"
+            completed = len(result["runs"])
+            result["status"] = (
+                "passed" if result["runs_passed"] == completed else "failed"
+            )
     except KeyboardInterrupt:
         result["status"] = "interrupted"
         emit("test interrupted by user")
     finally:
+        result["elapsed_seconds"] = time.monotonic() - test_start_monotonic
         (results_dir / "summary.md").write_text(build_summary(result), encoding="utf-8")
-        (results_dir / "result.json").write_text(
-            json.dumps(result, ensure_ascii=False, indent=2) + "\n",
-            encoding="utf-8",
+        emit(
+            f"test finished with status {result['status']}",
+            event="completed",
+            status=result["status"],
         )
+        payload = contract_result(
+            test_id=TEST_ID,
+            run_id=run_id,
+            started_at=run_started_at,
+            ended_at=iso_now(),
+            request=namespace_request(args),
+            details=result,
+            summary={
+                "passed_runs": result["runs_passed"],
+                "completed_runs": len(result["runs"]),
+            },
+            artifacts=artifact_list(results_dir),
+        )
+        atomic_write_json(results_dir / "result.json", payload)
         signal.signal(signal.SIGINT, previous_sigint_handler)
 
-    passed = result["repeat_passed"]
-    emit(f"finished: {passed}/{repeat_total} runs passed")
+    passed = result["runs_passed"]
+    emit(f"finished: {passed}/{len(result['runs'])} completed runs passed")
     if result["status"] == "passed":
         return 0
     if result["status"] == "interrupted":
@@ -1418,16 +1447,16 @@ def parse_args():
             "  # Single camera\n"
             "  python3 ./launch_param_load_stress.py --ros-version 2 "
             "--launch-file gemini_330_series.launch.py "
-            "--config-file-path /path/to/test_config.yaml\n\n"
+            "--camera name=camera,config-file-path=/path/to/test_config.yaml\n\n"
             "  # Multi-camera (each with own serial and config)\n"
             "  python3 ./launch_param_load_stress.py --ros-version 2 "
             "--launch-file gemini_330_series.launch.py "
-            "--camera camera1,serial_number=SN001,config_file_path=/path/cam1.yaml "
-            "--camera camera2,serial_number=SN002,config_file_path=/path/cam2.yaml\n\n"
+            "--camera name=camera1,serial-number=SN001,config-file-path=/path/cam1.yaml "
+            "--camera name=camera2,serial-number=SN002,config-file-path=/path/cam2.yaml\n\n"
             "  # Stress test (repeat 20 times)\n"
             "  python3 ./launch_param_load_stress.py --ros-version 2 "
             "--launch-file gemini_330_series.launch.py "
-            "--config-file-path /path/to/test_config.yaml --repeat 20\n"
+            "--camera name=camera,config-file-path=/path/to/test_config.yaml --run-count 20\n"
         ),
     )
     parser.add_argument(
@@ -1443,17 +1472,17 @@ def parse_args():
     )
     parser.add_argument("--launch-package", default="orbbec_camera")
     parser.add_argument("--launch-file", default="", help="Launch filename or absolute/relative launch path")
-    # Multi-camera: --camera name[,serial_number=SN][,usb_port=XX][,config_file_path=/path]
-    parser.add_argument("--camera", action="append", default=[],
-                        metavar="SPEC",
-                        help="Camera spec: name[,serial_number=SN][,usb_port=XX][,config_file_path=/path] "
-                             "(repeatable for multi-camera)")
-    # Single-camera convenience args (used when --camera is not specified)
-    parser.add_argument("--camera-name", default="camera", help="Camera name (single-camera mode)")
-    parser.add_argument("--serial-number", default="", help="Serial number (single-camera mode)")
-    parser.add_argument("--usb-port", default="", help="USB port (single-camera mode)")
-    parser.add_argument("--config-file-path", default="",
-                        help="Shared config YAML (or per-camera via --camera config_file_path=)")
+    parser.add_argument(
+        "--camera",
+        action="append",
+        default=[],
+        metavar="SPEC",
+        help=(
+            "Camera launch arguments as comma-separated KEY=VALUE fields. "
+            "Supported keys: name, serial-number, usb-port, device-ip, "
+            "device-port, config-file-path. Repeat for multiple cameras."
+        ),
+    )
     parser.add_argument("--launch-arg", action="append", default=[], help="Extra launch arg, KEY=VALUE or KEY:=VALUE")
     parser.add_argument(
         "--sdk-log-level",
@@ -1464,13 +1493,18 @@ def parse_args():
     parser.add_argument("--startup-timeout", default="30", help="Wait time before checks, supports seconds, 1m")
     parser.add_argument("--topic-timeout", default="20", help="Max wait time for each enabled stream topic")
     parser.add_argument("--service-timeout", default="15", help="Max wait time for each param/service command")
-    parser.add_argument("--repeat", type=int, default=1, metavar="N",
-                        help="Repeat the full test cycle N times (stress test)")
+    parser.add_argument("--run-count", type=int, default=1, metavar="N",
+                        help="Maximum complete test cycles")
+    parser.add_argument(
+        "--duration",
+        default="",
+        help="Optional maximum wall time, such as 300, 15m, or 2h",
+    )
     parser.add_argument("--results-dir", default="")
     parser.add_argument("--skip-topic-check", action="store_true")
     parser.add_argument("--skip-service-check", action="store_true")
     parser.add_argument(
-        "--save-images-count",
+        "--save-image-count",
         type=int,
         default=1,
         metavar="N",
@@ -1492,10 +1526,14 @@ def parse_args():
     if not args.show_verification_map:
         if not args.launch_file:
             parser.error("--launch-file is required unless --show-verification-map is used")
-        if not args.camera and not args.config_file_path:
-            parser.error("--config-file-path is required when --camera is not used")
-        if args.repeat < 1:
-            parser.error("--repeat must be >= 1")
+        if not args.camera:
+            parser.error("at least one --camera with config-file-path is required")
+        if args.run_count < 1:
+            parser.error("--run-count must be >= 1")
+        if args.save_image_count < 0:
+            parser.error("--save-image-count must be >= 0")
+        if not 1 <= args.jpg_quality <= 100:
+            parser.error("--jpg-quality must be in range 1-100")
     return args
 
 

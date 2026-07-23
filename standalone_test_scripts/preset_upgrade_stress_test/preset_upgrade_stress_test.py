@@ -16,11 +16,21 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from _test_protocol import (
+    EventWriter,
+    artifact_list,
+    atomic_write_json,
+    contract_result,
+    iso_now,
+    namespace_request,
+    parse_camera,
+)
 
 ENV_READY_VAR = "PRESET_UPGRADE_STRESS_TEST_ENV_READY"
 INTERRUPTED = False
 SCRIPT_DIR = Path(__file__).resolve().parent
-TOOL_VERSION = "0.1"
+TOOL_VERSION = "1.0"
+TEST_ID = "preset_upgrade_stress_test"
 DEFAULT_PRESET_A_PATH = SCRIPT_DIR / "config" / "g336x_K_High_Confidence_0.0.2.bin"
 DEFAULT_PRESET_B_PATH = SCRIPT_DIR / "config" / "g336x_K_High_Accuracy_0.0.2.bin"
 DEFAULT_IMAGE_TOPIC_TEMPLATES = [
@@ -45,6 +55,9 @@ class CameraSpec:
     name: str
     usb_port: str = ""
     serial_number: str = ""
+    device_ip: str = ""
+    device_port: str = ""
+    config_file_path: str = ""
 
 
 def timestamp() -> str:
@@ -55,7 +68,6 @@ def handle_sigint(signum, frame) -> None:
     del signum, frame
     global INTERRUPTED
     INTERRUPTED = True
-    raise KeyboardInterrupt
 
 
 def ensure_dir(path: Path) -> Path:
@@ -97,32 +109,7 @@ def parse_launch_arg(raw: str) -> tuple[str, str]:
 
 
 def parse_camera_spec(raw: str) -> CameraSpec:
-    text = raw.strip()
-    if not text:
-        raise ValueError("--camera cannot be empty")
-    name = ""
-    fields: Dict[str, str] = {}
-    for index, part in enumerate(item.strip() for item in text.split(",")):
-        if not part:
-            continue
-        if "=" in part:
-            key, value = part.split("=", 1)
-            fields[key.strip()] = value.strip()
-        elif index == 0:
-            name = part
-        else:
-            raise ValueError(f"unsupported camera item '{part}' in {raw}")
-    name = fields.pop("name", name).strip()
-    if not name:
-        raise ValueError(f"camera name is required in --camera {raw}")
-    unsupported = sorted(set(fields).difference({"usb_port", "serial_number"}))
-    if unsupported:
-        raise ValueError(f"unsupported camera fields in --camera {raw}: {', '.join(unsupported)}")
-    return CameraSpec(
-        name=name,
-        usb_port=fields.get("usb_port", ""),
-        serial_number=fields.get("serial_number", ""),
-    )
+    return CameraSpec(**parse_camera(raw))
 
 
 def sanitize_path_part(value: str) -> str:
@@ -175,6 +162,8 @@ def build_upgrade_command(
     preset_path: Path,
     serial_number: str,
     usb_port: str,
+    device_ip: str,
+    device_port: str,
     sdk_log_level: str,
 ) -> List[str]:
     command = (
@@ -186,6 +175,10 @@ def build_upgrade_command(
         command.extend(["--serial_number", serial_number])
     if usb_port:
         command.extend(["--usb_port", usb_port])
+    if device_ip:
+        command.extend(["--device_ip", device_ip])
+    if device_port:
+        command.extend(["--device_port", device_port])
     command.extend(["--preset_path", str(preset_path)])
     if sdk_log_level:
         command.extend(["--sdk_log_level", sdk_log_level])
@@ -193,8 +186,13 @@ def build_upgrade_command(
 
 
 class StatusLogger:
-    def __call__(self, message: str) -> None:
+    def __init__(self, events: Optional[EventWriter] = None) -> None:
+        self.events = events
+
+    def __call__(self, message: str, *, event: str = "log", **fields: Any) -> None:
         print(f"[{timestamp()}] {message}", flush=True)
+        if self.events is not None:
+            self.events.emit(event, message, **fields)
 
 
 def capture_sourced_env(ros_setup: str, driver_setup: str, ros_version: str) -> Dict[str, str]:
@@ -500,7 +498,7 @@ class ImageCaptureMonitor:
         except Exception as exc:  # noqa: BLE001
             raise RuntimeError(
                 "saving JPG images requires cv_bridge and OpenCV Python modules. "
-                "Source the camera driver environment or set --save-images-count 0 "
+                "Source the camera driver environment or set --save-image-count 0 "
                 f"to disable image saving. Original error: {exc}"
             ) from exc
         self._bridge = CvBridge()
@@ -668,10 +666,7 @@ def build_summary(result: Dict[str, Any]) -> str:
         status_counts[status] = status_counts.get(status, 0) + 1
         if status != "passed":
             failed_tests.append(test)
-    planned_tests = result.get("planned_tests")
-    if planned_tests is None:
-        test_count = int(result.get("test_count", 0) or 0)
-        planned_tests = test_count if test_count > 0 else "duration mode"
+    planned_tests = result.get("planned_tests", "duration mode")
     lines = [
         "# Preset Upgrade Stress Test",
         "",
@@ -684,7 +679,7 @@ def build_summary(result: Dict[str, Any]) -> str:
         f"- Completed tests: {len(tests)}",
         f"- Failed tests: {len(failed_tests)}",
         f"- Elapsed seconds: {float(result.get('elapsed_seconds', 0.0) or 0.0):.1f}",
-        f"- JPG images per topic per test: {result.get('save_image_count', result.get('save_images_count', 0))}",
+        f"- JPG images per topic per test: {result.get('save_image_count', 0)}",
         "",
         "## Cameras",
         "",
@@ -694,9 +689,9 @@ def build_summary(result: Dict[str, Any]) -> str:
         label = str(camera.get("name", ""))
         selectors = []
         if camera.get("usb_port"):
-            selectors.append(f"usb_port={camera['usb_port']}")
+            selectors.append(f"usb-port={camera['usb_port']}")
         if camera.get("serial_number"):
-            selectors.append(f"serial_number={camera['serial_number']}")
+            selectors.append(f"serial-number={camera['serial_number']}")
         if selectors:
             label += f" ({', '.join(selectors)})"
         lines.append(f"- {label}")
@@ -788,8 +783,6 @@ def build_base_launch_args(args) -> Dict[str, str]:
         "enable_color": "true",
         "enable_depth": "true",
     }
-    if args.config_file_path:
-        launch_args["config_file_path"] = args.config_file_path
     for raw_arg in args.launch_arg:
         key, value = parse_launch_arg(raw_arg)
         launch_args[key] = value
@@ -809,6 +802,12 @@ def build_camera_launch_args(
         launch_args["usb_port"] = camera.usb_port
     if camera.serial_number:
         launch_args["serial_number"] = camera.serial_number
+    if camera.device_ip:
+        launch_args["net_device_ip"] = camera.device_ip
+    if camera.device_port:
+        launch_args["net_device_port"] = camera.device_port
+    if camera.config_file_path:
+        launch_args["config_file_path"] = camera.config_file_path
     return launch_args
 
 
@@ -818,29 +817,22 @@ def run(args) -> int:
     runtime_env = prepare_runtime_env(args)
     apply_python_paths(runtime_env)
 
-    if args.camera:
-        cameras = [parse_camera_spec(raw) for raw in args.camera]
-    else:
-        cameras = [
-            CameraSpec(
-                name=args.camera_name,
-                usb_port=args.usb_port,
-                serial_number=args.serial_number,
-            )
-        ]
-    if len(cameras) > 1 and any(not camera.usb_port and not camera.serial_number for camera in cameras):
-        raise ValueError("multi-camera mode requires usb_port or serial_number for every --camera")
+    cameras = [parse_camera_spec(raw) for raw in args.camera] or [
+        parse_camera_spec("name=camera")
+    ]
 
-    test_count = int(args.test_count)
-    if test_count < 0:
-        raise ValueError("--test-count must be >= 0")
-    save_images_count = int(args.save_images_count)
+    run_count = args.run_count
+    if run_count is not None and run_count <= 0:
+        raise ValueError("--run-count must be > 0")
+    save_images_count = int(args.save_image_count)
     if save_images_count < 0:
-        raise ValueError("--save-images-count must be >= 0")
+        raise ValueError("--save-image-count must be >= 0")
     jpg_quality = int(args.jpg_quality)
     if jpg_quality < 1 or jpg_quality > 100:
         raise ValueError("--jpg-quality must be in range 1-100")
-    duration_seconds = parse_duration(args.duration, 300.0)
+    duration_seconds = (
+        parse_duration(args.duration, 0.0) if str(args.duration or "").strip() else None
+    )
     stream_timeout = parse_duration(args.stream_timeout, 30.0)
     preset_log_timeout = parse_duration(args.preset_log_timeout, 20.0)
     restart_delay = float(args.restart_delay)
@@ -865,10 +857,12 @@ def run(args) -> int:
     }
 
     run_id = datetime.now().strftime("%Y%m%d_%H%M%S_preset_upgrade")
+    run_started_at = iso_now()
     results_dir = ensure_dir(
         Path(args.results_dir or (SCRIPT_DIR / "results" / run_id)).expanduser().resolve()
     )
-    emit = StatusLogger()
+    events = EventWriter(results_dir / "events.jsonl")
+    emit = StatusLogger(events)
     result: Dict[str, Any] = {
         "status": "passed",
         "tool_version": TOOL_VERSION,
@@ -879,12 +873,11 @@ def run(args) -> int:
         "camera_name": cameras[0].name if cameras else "",
         "cameras": [asdict(camera) for camera in cameras],
         "image_topics": topics,
-        "test_count": test_count,
-        "planned_tests": test_count * len(presets) if test_count > 0 else "duration mode",
-        "duration_seconds": duration_seconds,
+        "run_count": run_count,
+        "planned_tests": run_count * len(presets) if run_count is not None else "duration mode",
+        "duration_limit_seconds": duration_seconds,
         "stream_timeout_seconds": stream_timeout,
         "preset_log_timeout_seconds": preset_log_timeout,
-        "save_images_count": save_images_count,
         "save_image_count": save_images_count,
         "save_image_timeout_seconds": stream_timeout,
         "jpg_quality": jpg_quality,
@@ -894,14 +887,19 @@ def run(args) -> int:
         "elapsed_seconds": 0.0,
     }
 
+    emit("test started", event="phase", phase="starting")
     emit(f"tool version: {TOOL_VERSION}")
     emit(f"results dir: {results_dir}")
-    emit(f"test count: {test_count} ({'duration mode' if test_count == 0 else 'round mode'})")
+    emit(f"run count: {run_count if run_count is not None else 'duration-limited'}")
     emit(f"cameras: {', '.join(camera.name for camera in cameras)}")
     emit(f"monitor topics: {', '.join(topics)}")
     emit(f"save images per topic: {save_images_count}")
     start_monotonic = time.monotonic()
-    deadline = start_monotonic + duration_seconds
+    deadline = (
+        start_monotonic + duration_seconds
+        if duration_seconds is not None
+        else None
+    )
     active_sessions: List[LaunchSession] = []
     test_index = 0
 
@@ -909,13 +907,21 @@ def run(args) -> int:
         with RosImageHarness(args.ros_version, "preset_upgrade_stress_test", args.queue_size) as harness:
             round_index = 0
             while True:
-                if test_count > 0 and round_index >= test_count:
+                if INTERRUPTED:
+                    result["status"] = "interrupted"
+                    emit(
+                        "stop requested; current preset cycle completed",
+                        event="phase",
+                        phase="stopped-at-safe-point",
+                    )
                     break
-                if test_count == 0 and time.monotonic() >= deadline:
+                if run_count is not None and round_index >= run_count:
+                    break
+                if deadline is not None and time.monotonic() >= deadline:
                     break
                 round_index += 1
                 for preset in presets:
-                    if test_count == 0 and time.monotonic() >= deadline:
+                    if deadline is not None and time.monotonic() >= deadline:
                         break
                     test_index += 1
                     test_name = f"test_{test_index:04d}"
@@ -940,12 +946,20 @@ def run(args) -> int:
 
                     for camera in cameras:
                         camera_log_dir = ensure_dir(test_log_dir / sanitize_path_part(camera.name))
-                        emit(f"{test_name}: upgrade {preset.name} for {camera.name}")
+                        emit(
+                            f"{test_name}: upgrade {preset.name} for {camera.name}",
+                            event="progress",
+                            current=round_index,
+                            total=run_count,
+                            phase="updating",
+                        )
                         upgrade_command = build_upgrade_command(
                             ros_version=args.ros_version,
                             preset_path=preset.path,
                             serial_number=camera.serial_number,
                             usb_port=camera.usb_port,
+                            device_ip=camera.device_ip,
+                            device_port=camera.device_port,
                             sdk_log_level=args.sdk_log_level,
                         )
                         upgrade_result = {
@@ -968,6 +982,24 @@ def run(args) -> int:
                             raise RuntimeError(
                                 f"{camera.name}: preset upgrade failed with code {upgrade_code}"
                             )
+                        if INTERRUPTED:
+                            test_record["status"] = "interrupted"
+                            test_record["message"] = (
+                                "stop requested after current preset upgrade completed"
+                            )
+                            test_record["ended_at"] = datetime.now().isoformat(
+                                timespec="seconds"
+                            )
+                            result["status"] = "interrupted"
+                            emit(
+                                test_record["message"],
+                                event="phase",
+                                phase="stopped-at-safe-point",
+                            )
+                            break
+
+                    if INTERRUPTED:
+                        break
 
                     sessions: List[LaunchSession] = []
                     expected_log = f"Loaded device preset: {preset.name}"
@@ -1056,7 +1088,21 @@ def run(args) -> int:
                     test_record["status"] = "passed"
                     test_record["ended_at"] = datetime.now().isoformat(timespec="seconds")
                     result["passed_tests"] += 1
-                    emit(f"{test_name}: passed, preset={preset.name}")
+                    emit(
+                        f"{test_name}: passed, preset={preset.name}",
+                        event="progress",
+                        current=round_index,
+                        total=run_count,
+                        phase="completed-cycle",
+                    )
+                    if INTERRUPTED:
+                        result["status"] = "interrupted"
+                        emit(
+                            "stop requested; current preset update completed",
+                            event="phase",
+                            phase="stopped-at-safe-point",
+                        )
+                        break
                     if restart_delay > 0:
                         time.sleep(restart_delay)
     except KeyboardInterrupt:
@@ -1088,8 +1134,26 @@ def run(args) -> int:
             if not test.get("ended_at"):
                 test["ended_at"] = datetime.now().isoformat(timespec="seconds")
         result["elapsed_seconds"] = time.monotonic() - start_monotonic
-        write_json(results_dir / "result.json", result)
         (results_dir / "summary.md").write_text(build_summary(result), encoding="utf-8")
+        emit(
+            f"test finished with status {result['status']}",
+            event="completed",
+            status=result["status"],
+        )
+        payload = contract_result(
+            test_id=TEST_ID,
+            run_id=run_id,
+            started_at=run_started_at,
+            ended_at=iso_now(),
+            request=namespace_request(args),
+            details=result,
+            summary={
+                "passed_tests": result["passed_tests"],
+                "completed_tests": len(result["tests"]),
+            },
+            artifacts=artifact_list(results_dir),
+        )
+        atomic_write_json(results_dir / "result.json", payload)
         signal.signal(signal.SIGINT, previous_sigint_handler)
 
     if result["status"] == "passed":
@@ -1107,9 +1171,10 @@ def parse_args():
         epilog=(
             "Examples:\n"
             "  python3 ./preset_upgrade_stress_test/preset_upgrade_stress_test.py "
-            "--ros-version 2 --driver-setup /path/to/install/setup.bash --test-count 1\n\n"
+            "--ros-version 2 --driver-setup /path/to/install/setup.bash --run-count 1\n\n"
             "  python3 ./preset_upgrade_stress_test/preset_upgrade_stress_test.py "
-            "--test-count 1 --camera camera_01,usb_port=2-1 --camera camera_02,usb_port=2-3\n\n"
+            "--run-count 1 --camera name=camera_01,usb-port=2-1 "
+            "--camera name=camera_02,usb-port=2-3\n\n"
             "  python3 ./preset_upgrade_stress_test/preset_upgrade_stress_test.py "
             "--preset-a-path /path/a.bin --preset-a-name 'K High Confidence' "
             "--preset-b-path /path/b.bin --preset-b-name 'K High Accuracy'\n"
@@ -1126,23 +1191,20 @@ def parse_args():
         action="append",
         default=[],
         help=(
-            "Camera spec, can repeat. Format: name[,usb_port=PORT][,serial_number=SN]. "
-            "If omitted, --camera-name/--usb-port/--serial-number are used for one camera."
+            "Camera launch arguments as comma-separated KEY=VALUE fields. "
+            "Supported keys: name, serial-number, usb-port, device-ip, "
+            "device-port, config-file-path. Repeat for multiple cameras."
         ),
     )
-    parser.add_argument("--camera-name", default="camera", help="Single-camera name when --camera is omitted")
-    parser.add_argument("--serial-number", default="", help="Single-camera serial number when --camera is omitted")
-    parser.add_argument("--usb-port", default="", help="Single-camera USB port when --camera is omitted")
-    parser.add_argument("--config-file-path", default="")
     parser.add_argument("--preset-a-path", default=str(DEFAULT_PRESET_A_PATH))
     parser.add_argument("--preset-a-name", default="K High Confidence")
     parser.add_argument("--preset-b-path", default=str(DEFAULT_PRESET_B_PATH))
     parser.add_argument("--preset-b-name", default="K High Accuracy")
-    parser.add_argument("--test-count", type=int, default=0, help="Rounds to run; 0 means run until duration")
-    parser.add_argument("--duration", default="300", help="Duration used when --test-count is 0; supports 300, 15m, 2h")
+    parser.add_argument("--run-count", type=int, default=None, help="Optional maximum preset rounds")
+    parser.add_argument("--duration", default="300", help="Maximum wall time; supports 300, 15m, 2h")
     parser.add_argument("--stream-timeout", default="30", help="Max wait time for image streams per preset")
     parser.add_argument("--preset-log-timeout", default="20", help="Max wait time for Loaded device preset log")
-    parser.add_argument("--save-images-count", type=int, default=1, help="Images to save per topic; 0 disables saving")
+    parser.add_argument("--save-image-count", type=int, default=1, help="Images to save per topic; 0 disables saving")
     parser.add_argument("--jpg-quality", type=int, default=95, help="JPG quality, 1-100")
     parser.add_argument("--restart-delay", default="2", help="Delay seconds after stopping launch")
     parser.add_argument(

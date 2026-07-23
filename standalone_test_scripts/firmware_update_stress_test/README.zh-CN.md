@@ -35,7 +35,7 @@ python3 ./firmware_update_stress_test/firmware_update_stress_test.py \
   --driver-setup /path/to/camera_ws/install/setup.bash \
   --firmware /path/to/firmware_A.bin \
   --firmware /path/to/firmware_B.bin \
-  --test-count 10
+  --run-count 10
 ```
 
 ### ROS 1
@@ -46,7 +46,7 @@ python3 ./firmware_update_stress_test/firmware_update_stress_test.py \
   --ros-setup /opt/ros/noetic/setup.bash \
   --driver-setup /path/to/camera_ws/devel/setup.bash \
   --firmware /path/to/firmware_A.bin \
-  --test-count 10
+  --run-count 10
 ```
 
 ### 多相机按 SN 批量升级
@@ -57,17 +57,16 @@ python3 ./firmware_update_stress_test/firmware_update_stress_test.py \
 python3 ./firmware_update_stress_test/firmware_update_stress_test.py \
   --ros-version 2 \
   --driver-setup /path/to/camera_ws/install/setup.bash \
-  --serial-number SN001,SN002,SN003 \
+  --camera name=camera_01,serial-number=SN001 \
+  --camera name=camera_02,serial-number=SN002 \
+  --camera name=camera_03,serial-number=SN003 \
   --firmware /path/to/firmware_A.bin \
   --firmware /path/to/firmware_B.bin \
-  --test-count 6
+  --run-count 6
 ```
 
-`--serial-number` 也可以重复传入：
-
-```bash
---serial-number SN001 --serial-number SN002
-```
+每个 `--camera` 使用逗号分隔的 `KEY=VALUE` 格式。支持 `name`、`serial-number`、
+`usb-port`、`device-ip`、`device-port`、`config-file-path`，每个字段均可选。
 
 ## 可配置参数
 
@@ -77,19 +76,17 @@ python3 ./firmware_update_stress_test/firmware_update_stress_test.py \
 | `--ros-setup` | `$ORBBEC_ROS_SETUP` 或空 | ROS 环境 setup 脚本路径 |
 | `--driver-setup` | `$ORBBEC_CAMERA_SETUP` 或空 | Orbbec 驱动环境 setup 脚本路径 |
 | `--firmware` | 必填 | 固件文件路径，可重复传入并按顺序循环 |
-| `--test-count` | `10` | 升级命令调用次数；`0` = 持续运行到 `--duration` |
-| `--duration` | `300` | `--test-count 0` 时使用，支持 `300`、`15m`、`2h` |
+| `--run-count` | `10` | 升级命令最大调用次数 |
+| `--duration` | 空 | 可选的最长运行时间，支持 `300`、`15m`、`2h` |
 | `--restart-delay` | `2` | 两次升级命令之间的等待秒数 |
-| `--serial-number` | 空 | 目标 SN，可重复或逗号分隔 |
-| `--usb-port` | 空 | 单设备 USB port 选择器 |
-| `--device-ip` | 空 | 单设备网络 IP 选择器 |
-| `--device-port` | `8090` | 传给 firmware tool 的网络设备端口 |
+| `--camera` | 默认相机 | 相机目标配置，可重复传入 |
 | `--reconnect-timeout-sec` | `120` | 传给 `firmware_update_tool` |
 | `--reconnect-poll-ms` | `1000` | 传给 `firmware_update_tool` |
 | `--sdk-log-level` | `debug` | 传给 `firmware_update_tool` |
 | `--continue-on-error` | 关闭 | 传给 `firmware_update_tool` |
 
-同一轮只能使用一种设备选择方式：SN、USB port 或 device IP。多相机场景使用 SN 批量模式。
+同一相机配置中可组合兼容的选择字段。多个 SN 会作为一次 firmware tool 批量调用；
+USB 和网络选择字段必须最终对应一个目标值。
 
 ## 结果文件
 
@@ -99,6 +96,7 @@ python3 ./firmware_update_stress_test/firmware_update_stress_test.py \
 firmware_update_stress_test/results/YYYYMMDD_HHMMSS_firmware_update/
 ├── summary.md                  # 最终结果和每次压测通过/失败状态
 ├── result.json                 # 完整机器可读结果
+├── events.jsonl                # 结构化生命周期和进度事件
 ├── logs/test_XXXX/update.log   # firmware_update_tool 终端输出
 └── logs/test_XXXX/sdk/Log/     # 每轮 firmware_update_tool SDK debug 日志
 ```
