@@ -85,6 +85,20 @@ Every completed run writes `result.json`, `summary.md`, and `events.jsonl`.
 Invalid command-line usage returns `2`. Script-specific logs, images, CSV files,
 and exports are listed in `result.json` under `artifacts`.
 
+## Local Web UI Integration
+
+Each script directory contains a developer-maintained `ui_manifest.json`.
+The local Web UI discovers these manifests and generates basic and advanced
+forms without exposing a raw argument field:
+
+```text
+http://127.0.0.1:8000/?workspace=standalone
+```
+
+The manifest declares field types, defaults, risk level, and stop policy. Keep
+the script independent: the manifest may describe its CLI, but the script must
+not import the Web UI package.
+
 ## Script Index
 
 | Script directory | Purpose | Details |
@@ -103,6 +117,7 @@ When adding a new script:
 ```text
 Put each test script in its own directory
 Include README.md and README.zh-CN.md in the script directory
+Include a ui_manifest.json when the script should appear in the local Web UI
 Use a clear name that describes the test scenario
 Keep it independent from orbbec_camera_auto_test framework modules
 Support --ros-version, --ros-setup, --driver-setup when ROS is needed

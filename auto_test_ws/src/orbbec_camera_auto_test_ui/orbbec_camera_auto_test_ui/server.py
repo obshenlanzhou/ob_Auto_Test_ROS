@@ -16,13 +16,16 @@ from .run_manager import (
     AUTO_TEST_WS,
     CONFIG_PATH,
     CORE_PACKAGE_ROOT,
+    STANDALONE_ROOT,
     UI_RESULTS_ROOT,
     RunManager,
     ensure_dir,
     load_config,
     read_json,
     save_config,
+    setup_defaults,
 )
+from .standalone import default_values, load_manifests, public_manifest
 
 
 MANAGER = RunManager()
@@ -107,6 +110,42 @@ def list_profiles() -> Dict[str, Any]:
     }
 
 
+def list_standalone_tests() -> Dict[str, Any]:
+    config = load_config()
+    saved = config.get("standalone_configs") or {}
+    version_defaults = setup_defaults()
+    tests = []
+    for manifest in load_manifests(STANDALONE_ROOT):
+        public = public_manifest(manifest)
+        saved_values = saved.get(manifest["id"]) or {}
+        values = {
+            **default_values(manifest),
+            **saved_values,
+        }
+        ros_version = str(values.get("ros_version") or "2")
+        selected_defaults = version_defaults.get(ros_version, version_defaults["2"])
+        saved_ros_setup = str(saved_values.get("ros_setup") or "").strip()
+        known_ros_setups = {
+            item["ros_setup"] for item in version_defaults.values()
+        }
+        if not saved_ros_setup or saved_ros_setup in known_ros_setups:
+            values["ros_setup"] = selected_defaults["ros_setup"]
+        if not str(saved_values.get("driver_setup") or "").strip():
+            values["driver_setup"] = selected_defaults["driver_setup"]
+        launch_file = str(values.get("launch_file") or "").strip()
+        if ros_version == "1" and launch_file.endswith(".launch.py"):
+            values["launch_file"] = launch_file[:-3]
+        elif ros_version == "2" and launch_file.endswith(".launch"):
+            values["launch_file"] = f"{launch_file}.py"
+        public["values"] = values
+        tests.append(public)
+    return {
+        "tests": tests,
+        "standalone_root": str(STANDALONE_ROOT),
+        "setup_defaults": version_defaults,
+    }
+
+
 def _find_result_json(run_dir: Path) -> Dict[str, Any]:
     result: Dict[str, Any] = {}
     for candidate in sorted(run_dir.rglob("result.json")):
@@ -174,6 +213,9 @@ def list_runs() -> Dict[str, Any]:
             {
                 "run_id": run_dir.name,
                 "mode": ui_status.get("mode") or request.get("mode", ""),
+                "runner_type": ui_status.get("runner_type")
+                or request.get("runner_type", "framework"),
+                "test_id": ui_status.get("test_id") or request.get("test_id", ""),
                 "status": _aggregate_status(run_dir, ui_status),
                 "started_at": ui_status.get("started_at", ""),
                 "ended_at": ui_status.get("ended_at", ""),
@@ -197,7 +239,28 @@ def get_run(run_id: str) -> Dict[str, Any]:
             path.name: path.read_text(encoding="utf-8", errors="replace")[-20000:]
             for path in sorted(run_dir.rglob("*.log"))
         },
+        "events": [
+            read_json_line
+            for path in sorted(run_dir.rglob("events.jsonl"))
+            for read_json_line in _read_json_lines(path)
+        ],
     }
+
+
+def _read_json_lines(path: Path) -> list[Dict[str, Any]]:
+    result = []
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return result
+    for line in lines:
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            result.append(payload)
+    return result
 
 
 def delete_run(run_id: str) -> tuple[Dict[str, Any], HTTPStatus]:
@@ -277,11 +340,14 @@ class UiHandler(BaseHTTPRequestHandler):
                     {
                         "auto_test_ws": str(AUTO_TEST_WS),
                         "config_path": str(CONFIG_PATH),
+                        "setup_defaults": setup_defaults(),
                     }
                 )
                 self._send_json(config)
             elif path == "/api/profiles":
                 self._send_json(list_profiles())
+            elif path == "/api/standalone/tests":
+                self._send_json(list_standalone_tests())
             elif path == "/api/status":
                 offset = int((query.get("offset") or ["0"])[0] or "0")
                 self._send_json(MANAGER.current_snapshot(log_offset=offset))
@@ -305,6 +371,9 @@ class UiHandler(BaseHTTPRequestHandler):
                 self._send_json(save_config(payload))
             elif parsed.path == "/api/run":
                 status, response = MANAGER.start(payload)
+                self._send_json(response, status=status)
+            elif parsed.path == "/api/standalone/run":
+                status, response = MANAGER.start_standalone(payload)
                 self._send_json(response, status=status)
             elif parsed.path == "/api/stop":
                 self._send_json(MANAGER.stop())

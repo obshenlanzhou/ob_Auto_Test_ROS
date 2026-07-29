@@ -4,6 +4,10 @@ const state = {
   polling: null,
   selectedRunId: null,
   selectedRunIds: new Set(),
+  workspace: "framework",
+  standaloneTests: [],
+  standaloneTest: null,
+  setupDefaults: {},
 };
 
 const $ = (id) => document.getElementById(id);
@@ -157,6 +161,303 @@ function formPayload() {
   };
 }
 
+const CAMERA_FIELD_LABELS = {
+  name: "Camera Name",
+  "serial-number": "Serial Number",
+  "usb-port": "USB Port",
+  "device-ip": "Device IP",
+  "device-port": "Device Port",
+  "config-file-path": "Config File Path",
+};
+const CAMERA_FIELDS_BY_KIND = {
+  usb: ["name", "serial-number", "usb-port", "config-file-path"],
+  network: ["name", "device-ip", "device-port", "config-file-path"],
+};
+
+function choiceParts(choice) {
+  if (typeof choice === "object") {
+    return [String(choice.value ?? ""), String(choice.label ?? choice.value ?? "")];
+  }
+  return [String(choice), String(choice)];
+}
+
+function cameraKind(camera = {}) {
+  if (camera["device-ip"] || camera["device-port"]) return "network";
+  if (camera["serial-number"] || camera["usb-port"]) return "usb";
+  const hasNetworkFields =
+    Object.hasOwn(camera, "device-ip") || Object.hasOwn(camera, "device-port");
+  const hasUsbFields =
+    Object.hasOwn(camera, "serial-number") || Object.hasOwn(camera, "usb-port");
+  return hasNetworkFields && !hasUsbFields ? "network" : "usb";
+}
+
+function cameraHasValues(camera = {}) {
+  return Object.values(camera).some((value) => String(value || "").trim());
+}
+
+function addCameraRow(container, kind, camera = {}) {
+  const row = document.createElement("div");
+  row.className = "camera-row";
+  row.dataset.cameraKind = kind;
+  for (const name of CAMERA_FIELDS_BY_KIND[kind]) {
+    const label = document.createElement("label");
+    const title = document.createElement("span");
+    title.textContent = CAMERA_FIELD_LABELS[name];
+    const input = document.createElement("input");
+    input.type = "text";
+    input.dataset.cameraField = name;
+    input.value = camera[name] || "";
+    label.append(title, input);
+    row.appendChild(label);
+  }
+  const remove = document.createElement("button");
+  remove.type = "button";
+  remove.className = "camera-remove";
+  remove.textContent = "移除";
+  remove.addEventListener("click", () => row.remove());
+  row.appendChild(remove);
+  container
+    .querySelector(`.camera-group[data-camera-kind="${kind}"] .camera-rows`)
+    .appendChild(row);
+}
+
+function createCameraGroup(kind, titleText, hintText) {
+  const group = document.createElement("section");
+  group.className = "camera-group";
+  group.dataset.cameraKind = kind;
+  const heading = document.createElement("div");
+  heading.className = "camera-group-title";
+  const title = document.createElement("strong");
+  title.textContent = titleText;
+  const hint = document.createElement("small");
+  hint.textContent = hintText;
+  heading.append(title, hint);
+  const rows = document.createElement("div");
+  rows.className = "camera-rows";
+  rows.dataset.emptyText = `尚未添加${titleText}`;
+  group.append(heading, rows);
+  return group;
+}
+
+function createStandaloneField(field, value) {
+  const wrapper = document.createElement("div");
+  wrapper.className = "standalone-field";
+  wrapper.dataset.fieldName = field.name;
+  wrapper.dataset.fieldType = field.type;
+  if (field.when) wrapper.dataset.when = JSON.stringify(field.when);
+
+  if (field.type === "camera-list") {
+    wrapper.classList.add("grid-span-2");
+    const header = document.createElement("div");
+    header.className = "camera-editor-header";
+    const title = document.createElement("strong");
+    title.textContent = field.label;
+    const actions = document.createElement("div");
+    actions.className = "camera-add-actions";
+    const addUsb = document.createElement("button");
+    addUsb.type = "button";
+    addUsb.className = "ghost";
+    addUsb.textContent = "＋ 添加 USB 相机";
+    const addNetwork = document.createElement("button");
+    addNetwork.type = "button";
+    addNetwork.className = "ghost";
+    addNetwork.textContent = "＋ 添加网络相机";
+    actions.append(addUsb, addNetwork);
+    header.append(title, actions);
+    const editor = document.createElement("div");
+    editor.className = "camera-editor";
+    editor.append(
+      createCameraGroup("usb", "USB 相机", "Serial Number / USB Port"),
+      createCameraGroup("network", "网络相机", "Device IP / Device Port")
+    );
+    wrapper.append(header, editor);
+    const cameras = Array.isArray(value) ? value.filter(cameraHasValues) : [];
+    cameras.forEach((camera) => addCameraRow(editor, cameraKind(camera), camera));
+    addUsb.addEventListener("click", () => addCameraRow(editor, "usb"));
+    addNetwork.addEventListener("click", () => addCameraRow(editor, "network"));
+    return wrapper;
+  }
+
+  const label = document.createElement("label");
+  const title = document.createElement("span");
+  title.textContent = field.label || field.name;
+  let control;
+  if (field.type === "select") {
+    control = document.createElement("select");
+    for (const choice of field.choices || []) {
+      const [choiceValue, choiceLabel] = choiceParts(choice);
+      const option = document.createElement("option");
+      option.value = choiceValue;
+      option.textContent = choiceLabel;
+      control.appendChild(option);
+    }
+    control.value = String(value ?? "");
+  } else if (field.type === "list") {
+    control = document.createElement("textarea");
+    control.rows = 3;
+    control.value = Array.isArray(value) ? value.join("\n") : String(value || "");
+    control.placeholder = "每行填写一个值";
+  } else if (field.type === "flag" || field.type === "boolean") {
+    label.classList.add("checkbox-field", "standalone-checkbox");
+    control = document.createElement("input");
+    control.type = "checkbox";
+    control.checked = Boolean(value);
+  } else {
+    control = document.createElement("input");
+    control.type = field.type === "integer" || field.type === "number" ? "number" : "text";
+    if (field.type === "number") control.step = "any";
+    if (field.type === "integer") control.step = "1";
+    if (field.min !== undefined) control.min = String(field.min);
+    if (field.max !== undefined) control.max = String(field.max);
+    control.value = String(value ?? "");
+    if (field.type === "duration") control.placeholder = "300 / 15m / 2h";
+  }
+  control.dataset.standaloneInput = field.name;
+  if (field.required) control.required = true;
+  label.append(title, control);
+  wrapper.appendChild(label);
+  return wrapper;
+}
+
+function standaloneCurrentValues() {
+  const values = {};
+  if (!state.standaloneTest) return values;
+  for (const field of state.standaloneTest.fields || []) {
+    const wrapper = document.querySelector(`.standalone-field[data-field-name="${field.name}"]`);
+    if (!wrapper || wrapper.classList.contains("is-hidden")) continue;
+    if (field.type === "camera-list") {
+      values[field.name] = [...wrapper.querySelectorAll(".camera-row")].map((row) =>
+        Object.fromEntries(
+          [...row.querySelectorAll("[data-camera-field]")].map((input) => [
+            input.dataset.cameraField,
+            input.value.trim(),
+          ])
+        )
+      );
+      continue;
+    }
+    const control = wrapper.querySelector("[data-standalone-input]");
+    if (field.type === "flag" || field.type === "boolean") {
+      values[field.name] = control.checked;
+    } else if (field.type === "list") {
+      values[field.name] = control.value.split("\n").map((item) => item.trim()).filter(Boolean);
+    } else {
+      values[field.name] = control.value.trim();
+    }
+  }
+  return values;
+}
+
+function updateStandaloneConditions() {
+  const values = {};
+  for (const control of document.querySelectorAll("[data-standalone-input]")) {
+    values[control.dataset.standaloneInput] =
+      control.type === "checkbox" ? control.checked : control.value;
+  }
+  for (const wrapper of document.querySelectorAll(".standalone-field[data-when]")) {
+    const condition = JSON.parse(wrapper.dataset.when);
+    const visible = Object.entries(condition).every(
+      ([name, expected]) => String(values[name] ?? "") === String(expected)
+    );
+    wrapper.classList.toggle("is-hidden", !visible);
+  }
+}
+
+function setupDefaultsForVersion(rosVersion) {
+  const fallback = DEFAULT_SETUPS[rosVersion] || DEFAULT_SETUPS["2"];
+  const configured = state.setupDefaults?.[rosVersion] || {};
+  return {
+    ros: configured.ros_setup || fallback.ros,
+    camera: configured.driver_setup || fallback.camera,
+    cameraPlaceholder: fallback.cameraPlaceholder,
+  };
+}
+
+function launchFileForRosVersion(launchFile, rosVersion) {
+  const value = String(launchFile || "").trim();
+  if (rosVersion === "1" && value.endsWith(".launch.py")) {
+    return value.slice(0, -3);
+  }
+  if (rosVersion === "2" && value.endsWith(".launch")) {
+    return `${value}.py`;
+  }
+  return value;
+}
+
+function updateStandaloneRosVersion(rosVersion) {
+  const defaults = setupDefaultsForVersion(rosVersion);
+  const rosSetup = document.querySelector(
+    '[data-standalone-input="ros_setup"]'
+  );
+  const driverSetup = document.querySelector(
+    '[data-standalone-input="driver_setup"]'
+  );
+  const launchFile = document.querySelector(
+    '[data-standalone-input="launch_file"]'
+  );
+  if (rosSetup) {
+    rosSetup.value = defaults.ros;
+    rosSetup.placeholder = defaults.ros;
+  }
+  if (driverSetup) {
+    driverSetup.value = defaults.camera;
+    driverSetup.placeholder = defaults.cameraPlaceholder || defaults.camera;
+  }
+  if (launchFile) {
+    launchFile.value = launchFileForRosVersion(launchFile.value, rosVersion);
+  }
+}
+
+function renderStandaloneForm(testId = "") {
+  const test =
+    state.standaloneTests.find((item) => item.id === testId) || state.standaloneTests[0];
+  state.standaloneTest = test || null;
+  const basic = $("standaloneBasicFields");
+  const advanced = $("standaloneAdvancedFields");
+  basic.replaceChildren();
+  advanced.replaceChildren();
+  if (!test) {
+    $("standaloneDescription").textContent = "没有找到可用的独立脚本清单。";
+    return;
+  }
+  $("standaloneTest").value = test.id;
+  $("standaloneDescription").textContent = test.description || "";
+  $("standaloneRisk").textContent = test.confirmation || "";
+  $("standaloneRisk").classList.toggle("is-hidden", test.risk !== "high");
+  for (const field of test.fields || []) {
+    const target = field.section === "advanced" ? advanced : basic;
+    target.appendChild(createStandaloneField(field, test.values?.[field.name]));
+  }
+  for (const control of document.querySelectorAll("[data-standalone-input]")) {
+    control.addEventListener("change", () => {
+      if (control.dataset.standaloneInput === "ros_version") {
+        updateStandaloneRosVersion(control.value);
+      }
+      updateStandaloneConditions();
+    });
+  }
+  updateStandaloneConditions();
+}
+
+async function loadStandaloneTests() {
+  const payload = await api("/api/standalone/tests");
+  state.setupDefaults = {
+    ...state.setupDefaults,
+    ...(payload.setup_defaults || {}),
+  };
+  state.standaloneTests = payload.tests || [];
+  const select = $("standaloneTest");
+  select.replaceChildren();
+  for (const test of state.standaloneTests) {
+    const option = document.createElement("option");
+    option.value = test.id;
+    option.textContent = test.title;
+    select.appendChild(option);
+  }
+  renderStandaloneForm(select.value);
+  if (state.workspace === "standalone") switchWorkspace("standalone");
+}
+
 function truthy(value) {
   if (value === true) return true;
   return ["1", "true", "yes", "on"].includes(String(value || "").toLowerCase());
@@ -174,6 +475,32 @@ function setStatus(status) {
   const running = ["starting", "running", "stopping"].includes(status);
   $("startButton").disabled = running;
   $("stopButton").disabled = !running;
+  $("standaloneStartButton").disabled = running;
+  $("standaloneStopButton").disabled = !running;
+}
+
+function switchWorkspace(workspace, updateUrl = true) {
+  state.workspace = workspace === "standalone" ? "standalone" : "framework";
+  $("frameworkWorkspaceButton").classList.toggle("active", state.workspace === "framework");
+  $("standaloneWorkspaceButton").classList.toggle("active", state.workspace === "standalone");
+  for (const panel of document.querySelectorAll("[data-workspace-panel]")) {
+    panel.classList.toggle("is-hidden", panel.dataset.workspacePanel !== state.workspace);
+  }
+  $("launchCount").textContent =
+    state.workspace === "standalone"
+      ? `${state.standaloneTests.length} · TOOLS`
+      : $("launchFile").options.length
+        ? `${$("launchFile").options.length} · ROS ${$("rosVersion").value}`
+        : "—";
+  if (updateUrl) {
+    const url = new URL(window.location.href);
+    if (state.workspace === "standalone") {
+      url.searchParams.set("workspace", "standalone");
+    } else {
+      url.searchParams.delete("workspace");
+    }
+    window.history.replaceState({}, "", url);
+  }
 }
 
 function renderCommands(commands = []) {
@@ -378,6 +705,35 @@ function renderRestart(restart = {}, mode = "") {
   $("restartMessage").textContent = restart.message || "";
 }
 
+function formatStandaloneRound(progress = {}) {
+  if (!progress.supported) return "—";
+  const current = Math.max(0, Number(progress.current) || 0);
+  const total = Number(progress.total);
+  return Number.isFinite(total) && total > 0 ? `${current} / ${total}` : String(current);
+}
+
+function renderMonitor(payload = {}) {
+  const standalone = payload.runner_type === "standalone";
+  $("standaloneMonitor").classList.toggle("is-hidden", !standalone);
+  $("frameworkMonitor").classList.toggle("is-hidden", standalone);
+  $("runMeta").classList.toggle("is-hidden", standalone);
+  $("monitorDescription").textContent = standalone
+    ? "启动指令、运行进度与实时日志"
+    : "进程资源、数据流与实时日志";
+
+  if (standalone) {
+    $("standaloneElapsed").textContent = formatDuration(
+      payload.standalone?.elapsed_seconds
+    );
+    $("standaloneRound").textContent = formatStandaloneRound(
+      payload.standalone?.progress
+    );
+    return;
+  }
+  renderPerformance(payload.performance || {});
+  renderRestart(payload.restart || {}, payload.mode || $("mode").value);
+}
+
 function updateLaunchConfigOptions(preferred = "") {
   const select = $("launchConfig");
   const options = SPECIAL_LAUNCH_CONFIGS[$("launchFile").value] || [];
@@ -409,7 +765,7 @@ function updateSpecialConfigControls() {
 }
 
 function updateRosVersionControls({ fillBlank = false } = {}) {
-  const defaults = DEFAULT_SETUPS[$("rosVersion").value] || DEFAULT_SETUPS["2"];
+  const defaults = setupDefaultsForVersion($("rosVersion").value);
   $("rosSetup").placeholder = defaults.ros;
   $("cameraSetup").placeholder = defaults.cameraPlaceholder || defaults.camera;
   if (fillBlank) {
@@ -441,6 +797,7 @@ function updateModeControls() {
 async function loadConfig() {
   const config = await api("/api/config");
   state.config = config;
+  state.setupDefaults = config.setup_defaults || {};
   $("rosVersion").value = config.ros_version || "2";
   $("rosSetup").value = config.ros_setup || "";
   $("cameraSetup").value = config.camera_setup || "";
@@ -505,8 +862,7 @@ async function pollStatus() {
     if (payload.command_lines) {
       renderCommands(payload.command_lines);
     }
-    renderPerformance(payload.performance || {});
-    renderRestart(payload.restart || {}, payload.mode || $("mode").value);
+    renderMonitor(payload);
     appendLogs(payload.logs || []);
     state.logOffset = payload.log_offset || state.logOffset;
     if (["passed", "failed", "interrupted", "warning"].includes(payload.status)) {
@@ -529,12 +885,44 @@ async function startRun(event) {
     });
     setStatus(payload.status);
     renderCommands(payload.command_lines || []);
-    renderRestart(payload.restart || {}, payload.mode || $("mode").value);
+    renderMonitor(payload);
     appendLogs(payload.logs || []);
     state.logOffset = payload.log_offset || 0;
   } catch (error) {
     setStatus("failed");
     appendLogs([`[UI] start failed: ${error.message}`]);
+  }
+}
+
+async function startStandaloneRun(event) {
+  event.preventDefault();
+  const test = state.standaloneTest;
+  if (!test) return;
+  let confirmedTestId = "";
+  if (test.risk === "high") {
+    if (!window.confirm(test.confirmation || "确认运行高风险脚本？")) return;
+    confirmedTestId = test.id;
+  }
+  $("logOutput").textContent = "";
+  $("reportView").textContent = "独立脚本运行中...";
+  state.logOffset = 0;
+  try {
+    const payload = await api("/api/standalone/run", {
+      method: "POST",
+      body: JSON.stringify({
+        test_id: test.id,
+        confirmed_test_id: confirmedTestId,
+        values: standaloneCurrentValues(),
+      }),
+    });
+    setStatus(payload.status);
+    renderCommands(payload.command_lines || []);
+    renderMonitor(payload);
+    appendLogs(payload.logs || []);
+    state.logOffset = payload.log_offset || 0;
+  } catch (error) {
+    setStatus("failed");
+    appendLogs([`[UI] standalone start failed: ${error.message}`]);
   }
 }
 
@@ -665,7 +1053,9 @@ function runItem(run) {
 
   const subtitle = document.createElement("div");
   subtitle.className = "run-subtitle";
-  subtitle.textContent = `${run.mode || "unknown"} | ${run.started_at || ""} | ${run.results_dir}`;
+  const runnerLabel =
+    run.runner_type === "standalone" ? `独立脚本 · ${run.test_id}` : run.mode || "unknown";
+  subtitle.textContent = `${runnerLabel} | ${run.started_at || ""} | ${run.results_dir}`;
 
   const badge = document.createElement("span");
   badge.className = `badge ${run.status}`;
@@ -722,6 +1112,23 @@ async function loadRuns() {
 function renderJsonSummary(results = {}) {
   const blocks = [];
   for (const [name, result] of Object.entries(results)) {
+    if (result?.schema_version && result?.test_id) {
+      const summaryLines = Object.entries(result.summary || {}).map(
+        ([key, value]) => `${key}: ${typeof value === "object" ? JSON.stringify(value) : value}`
+      );
+      const lines = [
+        `test: ${result.test_id}`,
+        `status: ${result.status || "unknown"}`,
+        `duration: ${formatNumber(result.duration_seconds, 1)} s`,
+        `started: ${result.started_at || ""}`,
+        `ended: ${result.ended_at || ""}`,
+        ...summaryLines,
+      ];
+      if (result.warnings?.length) lines.push(`warnings: ${JSON.stringify(result.warnings)}`);
+      if (result.error) lines.push(`error: ${JSON.stringify(result.error)}`);
+      blocks.push({ title: `${name} · ${result.test_id}`, text: lines.join("\n") });
+      continue;
+    }
     const lines = [
       `${name}: ${result.status || "unknown"}`,
       `profile: ${result.profile_name || ""}`,
@@ -763,6 +1170,17 @@ async function loadRunDetail(runId) {
     view.appendChild(section);
   }
 
+  if (payload.events?.length) {
+    const section = document.createElement("section");
+    section.className = "summary-block";
+    section.innerHTML = `<h3></h3><pre></pre>`;
+    section.querySelector("h3").textContent = "events.jsonl";
+    section.querySelector("pre").textContent = payload.events
+      .map((event) => `${event.time || ""}  ${event.message || event.event || ""}`)
+      .join("\n");
+    view.appendChild(section);
+  }
+
   if (!view.children.length) {
     view.textContent = "这条记录还没有可展示的报告。";
   }
@@ -772,7 +1190,9 @@ async function init() {
   initTheme();
   setStatus("idle");
   $("runForm").addEventListener("submit", startRun);
+  $("standaloneForm").addEventListener("submit", startStandaloneRun);
   $("stopButton").addEventListener("click", stopRun);
+  $("standaloneStopButton").addEventListener("click", stopRun);
   $("refreshLaunches").addEventListener("click", loadLaunchFiles);
   $("refreshRuns").addEventListener("click", loadRuns);
   $("selectAllRuns").addEventListener("change", (event) => {
@@ -789,7 +1209,7 @@ async function init() {
     }
   });
   $("rosVersion").addEventListener("change", () => {
-    const defaults = DEFAULT_SETUPS[$("rosVersion").value] || DEFAULT_SETUPS["2"];
+    const defaults = setupDefaultsForVersion($("rosVersion").value);
     $("rosSetup").value = defaults.ros;
     $("cameraSetup").value = defaults.camera;
     updateRosVersionControls();
@@ -798,9 +1218,21 @@ async function init() {
   $("mode").addEventListener("change", updateModeControls);
   $("launchFile").addEventListener("change", () => updateLaunchConfigOptions());
   $("launchConfig").addEventListener("change", updateSpecialConfigControls);
+  $("standaloneTest").addEventListener("change", () =>
+    renderStandaloneForm($("standaloneTest").value)
+  );
+  for (const button of document.querySelectorAll("[data-workspace]")) {
+    button.addEventListener("click", () => switchWorkspace(button.dataset.workspace));
+  }
 
   await loadConfig();
+  await loadStandaloneTests();
   loadLaunchFiles();
+  const initialWorkspace =
+    new URLSearchParams(window.location.search).get("workspace") === "standalone"
+      ? "standalone"
+      : "framework";
+  switchWorkspace(initialWorkspace, false);
   await loadRuns();
   await pollStatus();
   state.polling = setInterval(pollStatus, 1000);

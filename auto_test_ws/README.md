@@ -25,7 +25,15 @@ cd "$HOME/ORBBEC/ob_Auto_Test_ROS/auto_test_ws"
 ./run_camera_auto_test_ui.sh
 ```
 
-浏览器访问 `http://127.0.0.1:8000`。页面中选择 ROS 版本、单相机 Launch、测试模式和需要覆盖的流开关，然后填写驱动环境路径。
+浏览器访问 `http://127.0.0.1:8000`。顶部提供两个入口：
+
+- **自动化框架**：选择 ROS 版本、单相机 Launch、测试模式和流开关。
+- **独立脚本**：通过脚本旁的 `ui_manifest.json` 生成结构化表单，运行
+  `standalone_test_scripts/` 中的六个工具。直接入口为
+  `http://127.0.0.1:8000/?workspace=standalone`。
+
+两个入口共用运行监控和历史归档，任一时刻只运行一个任务。固件与 Preset 升级会在
+启动前二次确认，停止时等待当前升级操作到达安全点。
 
 ROS2 命令行示例：
 
@@ -234,13 +242,16 @@ Launch 参数优先级为：显式 `--launch-arg` 和专用参数，高于驱动
 
 默认结果写入 `auto_test_ws/results/`；Web UI 写入 `results/ui_runs/`。常见文件：
 
-- `result.json`、`summary.md`
+- `result.json`、`summary.md`、`events.jsonl`
 - `launch_args.json`、`launch.log`
 - `topic.log`、`service.log`
 - `fps.csv`、`system_usage.csv`
 - `driver_frame_timestamp.csv`、`frame_timestamps/*.csv`
 
 `results/` 是运行产物，不应提交到 Git。
+
+独立脚本的 `result.json` 缺失、格式错误或 `test_id` 不匹配时，Web UI 会将该任务
+标记为失败。每个独立脚本的表单值按脚本分别保存在本机 UI 配置中。
 
 ## 目录结构
 

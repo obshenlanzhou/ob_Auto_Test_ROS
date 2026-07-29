@@ -14,6 +14,14 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from .standalone import (
+    build_command as build_standalone_command,
+    last_events,
+    manifest_catalog,
+    validate_request as validate_standalone_request,
+    validate_result_contract,
+)
+
 
 DEFAULT_ROS_SETUP = "/opt/ros/humble/setup.bash"
 DEFAULT_ROS1_SETUP = "/opt/ros/one/setup.bash"
@@ -88,11 +96,69 @@ CORE_PACKAGE_ROOT = AUTO_TEST_WS / "src" / "orbbec_camera_auto_test"
 RESULTS_ROOT = AUTO_TEST_WS / "results"
 UI_RESULTS_ROOT = RESULTS_ROOT / "ui_runs"
 CONFIG_PATH = RESULTS_ROOT / "ui_config.json"
+STANDALONE_ROOT = AUTO_TEST_WS.parent / "standalone_test_scripts"
+
+
+def _discover_sibling_driver_setup(ros_version: str) -> str:
+    repositories_root = AUTO_TEST_WS.parent.parent
+    if not repositories_root.is_dir():
+        return ""
+    if str(ros_version) == "1":
+        marker = Path("src/OrbbecSDK_ROS1")
+        setup = Path("devel/setup.bash")
+    else:
+        marker = Path("src/OrbbecSDK_ROS2")
+        setup = Path("install/setup.bash")
+    candidates = [
+        repository / setup
+        for repository in sorted(repositories_root.iterdir())
+        if repository.is_dir()
+        and (repository / marker).is_dir()
+        and (repository / setup).is_file()
+    ]
+    preferred = [
+        candidate
+        for candidate in candidates
+        if "v2" in candidate.parent.parent.name.lower()
+    ]
+    if len(preferred) == 1:
+        return str(preferred[0])
+    return str(candidates[0]) if len(candidates) == 1 else ""
+
+
+DEFAULT_CAMERA_SETUP = DEFAULT_CAMERA_SETUP or _discover_sibling_driver_setup("2")
+DEFAULT_ROS1_CAMERA_SETUP = DEFAULT_ROS1_CAMERA_SETUP or _discover_sibling_driver_setup("1")
+
+
+def setup_defaults() -> Dict[str, Dict[str, str]]:
+    return {
+        "2": {
+            "ros_setup": DEFAULT_ROS_SETUP,
+            "driver_setup": DEFAULT_CAMERA_SETUP,
+        },
+        "1": {
+            "ros_setup": DEFAULT_ROS1_SETUP,
+            "driver_setup": DEFAULT_ROS1_CAMERA_SETUP,
+        },
+    }
 
 
 def ensure_dir(path: Path) -> Path:
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def create_unique_run_dir(base_run_id: str) -> tuple[str, Path]:
+    ensure_dir(UI_RESULTS_ROOT)
+    for index in range(1, 1000):
+        run_id = base_run_id if index == 1 else f"{base_run_id}_{index:02d}"
+        run_root = UI_RESULTS_ROOT / run_id
+        try:
+            run_root.mkdir()
+        except FileExistsError:
+            continue
+        return run_id, run_root
+    raise RuntimeError(f"unable to allocate results directory for {base_run_id}")
 
 
 def read_json(path: Path, default: Any) -> Any:
@@ -215,6 +281,38 @@ def _wall_elapsed_seconds(started_at: str | None, ended_at: str | None) -> float
         return 0.0
     end = _parse_datetime(ended_at) or datetime.now()
     return max(0.0, (end - start).total_seconds())
+
+
+def _positive_int(value: Any) -> Optional[int]:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
+def _build_standalone_progress(
+    events: List[Dict[str, Any]],
+    *,
+    supported: bool,
+    requested_total: Optional[int],
+) -> Dict[str, Any]:
+    if not supported:
+        return {"supported": False, "current": None, "total": None}
+
+    current = 0
+    total = requested_total
+    for event in reversed(events):
+        if event.get("event") != "progress":
+            continue
+        event_current = _positive_int(event.get("current"))
+        event_total = _positive_int(event.get("total"))
+        if event_current is not None:
+            current = event_current
+        if event_total is not None:
+            total = event_total
+        break
+    return {"supported": True, "current": current, "total": total}
 
 
 def _duration_like_value(value: str) -> float:
@@ -447,6 +545,8 @@ def build_performance_metrics(
 def build_restart_metrics(run_root: Path) -> Dict[str, Any]:
     result_path = _latest_file(run_root, "result.json")
     result = read_json(result_path, {}) if result_path else {}
+    if isinstance(result, dict) and isinstance(result.get("details"), dict):
+        result = result["details"]
     if not isinstance(result, dict) or "successful_restarts" not in result:
         return {"available": False}
 
@@ -494,6 +594,7 @@ def load_config() -> Dict[str, Any]:
         "warmup_sec": config.get("warmup_sec") or "2.0",
         "save_csv": config.get("save_csv") or "true",
         "queue_size": config.get("queue_size") or "10",
+        "standalone_configs": config.get("standalone_configs") or {},
     }
 
 
@@ -522,6 +623,7 @@ def save_config(payload: Dict[str, Any]) -> Dict[str, Any]:
         "warmup_sec",
         "save_csv",
         "queue_size",
+        "standalone_configs",
     ):
         if key in payload:
             config[key] = payload[key]
@@ -841,6 +943,11 @@ class TestJob:
     run_root: Path
     command_lines: List[str]
     shell: str
+    runner_type: str = "framework"
+    test_id: str = ""
+    stop_policy: str = "immediate"
+    standalone_rounds_supported: bool = False
+    standalone_round_total: Optional[int] = None
     process: Optional[subprocess.Popen[str]] = None
     status: str = "starting"
     exit_code: Optional[int] = None
@@ -872,6 +979,21 @@ class TestJob:
         with self.lock:
             logs = list(self.logs)
             command_lines = list(self.command_lines)
+        standalone_events = (
+            last_events(self.run_root / "events.jsonl", limit=1000)
+            if self.runner_type == "standalone"
+            else []
+        )
+        elapsed_seconds = _wall_elapsed_seconds(self.started_at, self.ended_at)
+        performance = (
+            {"elapsed_seconds": elapsed_seconds}
+            if self.runner_type == "standalone"
+            else build_performance_metrics(
+                self.run_root,
+                started_at=self.started_at,
+                ended_at=self.ended_at,
+            )
+        )
         return {
             "run_id": self.run_id,
             "mode": self.mode,
@@ -882,12 +1004,27 @@ class TestJob:
             "results_dir": str(self.run_root),
             "command_lines": command_lines,
             "shell": self.shell,
-            "performance": build_performance_metrics(
-                self.run_root,
-                started_at=self.started_at,
-                ended_at=self.ended_at,
+            "runner_type": self.runner_type,
+            "test_id": self.test_id,
+            "stop_policy": self.stop_policy,
+            "performance": performance,
+            "restart": (
+                {"available": False}
+                if self.runner_type == "standalone"
+                else build_restart_metrics(self.run_root)
             ),
-            "restart": build_restart_metrics(self.run_root),
+            "standalone": {
+                "available": self.runner_type == "standalone",
+                "test_id": self.test_id,
+                "elapsed_seconds": elapsed_seconds,
+                "progress": _build_standalone_progress(
+                    standalone_events,
+                    supported=self.standalone_rounds_supported,
+                    requested_total=self.standalone_round_total,
+                ),
+                "events": standalone_events[-25:],
+                "result": read_json(self.run_root / "result.json", {}),
+            },
             "log_offset": len(logs),
             "logs": logs[log_offset:],
         }
@@ -979,6 +1116,77 @@ class RunManager:
         thread.start()
         return 200, job.snapshot()
 
+    def start_standalone(self, payload: Dict[str, Any]) -> tuple[int, Dict[str, Any]]:
+        with self._lock:
+            if self._current is not None and self._current.status in {
+                "starting",
+                "running",
+                "stopping",
+            }:
+                return 409, {"error": "a test is already running"}
+
+        test_id = _safe_text(payload.get("test_id"))
+        manifest = manifest_catalog(STANDALONE_ROOT).get(test_id)
+        if manifest is None:
+            return 400, {"errors": [f"unsupported standalone test: {test_id}"]}
+        if manifest["risk"] == "high" and payload.get("confirmed_test_id") != test_id:
+            return 400, {"errors": ["high-risk confirmation is required"]}
+
+        values, errors = validate_standalone_request(manifest, payload.get("values"))
+        if errors:
+            return 400, {"errors": errors}
+
+        config = load_config()
+        standalone_configs = dict(config.get("standalone_configs") or {})
+        standalone_configs[test_id] = values
+        save_config({"standalone_configs": standalone_configs})
+
+        base_run_id = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_standalone_{test_id}"
+        run_id, run_root = create_unique_run_dir(base_run_id)
+        args, values = build_standalone_command(manifest, values, run_root)
+        command_line = _quote_command(args)
+        script = "\n".join(
+            [
+                "set -e",
+                f"cd {shlex.quote(str(AUTO_TEST_WS.parent))}",
+                f"echo {shlex.quote(f'[UI] command: {command_line}')}",
+                f"exec {command_line}",
+            ]
+        )
+        write_json(
+            run_root / "ui_request.json",
+            {
+                "run_id": run_id,
+                "mode": f"standalone:{test_id}",
+                "runner_type": "standalone",
+                "test_id": test_id,
+                "request": values,
+                "command_lines": [command_line],
+                "manifest_path": manifest["manifest_path"],
+                "auto_test_ws": str(AUTO_TEST_WS),
+            },
+        )
+
+        job = TestJob(
+            run_id=run_id,
+            mode=f"standalone:{test_id}",
+            run_root=run_root,
+            command_lines=[],
+            shell="bash",
+            runner_type="standalone",
+            test_id=test_id,
+            stop_policy=manifest["stop_policy"],
+            standalone_rounds_supported=any(
+                field.get("name") == "run_count" for field in manifest["fields"]
+            ),
+            standalone_round_total=_positive_int(values.get("run_count")),
+        )
+        with self._lock:
+            self._current = job
+        thread = threading.Thread(target=self._run_job, args=(job, script), daemon=True)
+        thread.start()
+        return 200, job.snapshot()
+
     def stop(self) -> Dict[str, Any]:
         with self._lock:
             job = self._current
@@ -986,9 +1194,15 @@ class RunManager:
             return {"status": "idle"}
 
         job.status = "stopping"
-        job.add_log("[UI] stopping test with SIGINT")
+        if job.stop_policy == "safe-point":
+            job.add_log("[UI] requesting safe-point stop with SIGINT")
+        else:
+            job.add_log("[UI] stopping test with SIGINT")
         try:
-            os.killpg(os.getpgid(job.process.pid), signal.SIGINT)
+            if job.stop_policy == "safe-point":
+                job.process.send_signal(signal.SIGINT)
+            else:
+                os.killpg(os.getpgid(job.process.pid), signal.SIGINT)
         except ProcessLookupError:
             pass
         return job.snapshot()
@@ -1017,7 +1231,22 @@ class RunManager:
                     job.clear_command_line()
                 job.add_log(line)
             job.exit_code = job.process.wait()
-            if job.status == "stopping" or job.exit_code == 130:
+            if job.runner_type == "standalone":
+                result, contract_errors = validate_result_contract(
+                    job.run_root / "result.json",
+                    job.test_id,
+                )
+                if contract_errors:
+                    job.status = "failed"
+                    for error in contract_errors:
+                        job.add_log(f"[UI] result contract error: {error}")
+                elif job.status == "stopping" or job.exit_code == 130:
+                    job.status = "interrupted"
+                elif job.exit_code != 0:
+                    job.status = "failed"
+                else:
+                    job.status = str(result["status"])
+            elif job.status == "stopping" or job.exit_code == 130:
                 job.status = "interrupted"
             elif job.exit_code == 0:
                 job.status = "passed"
@@ -1043,6 +1272,9 @@ class RunManager:
                     "results_dir": str(job.run_root),
                     "command_lines": job.command_lines,
                     "shell": job.shell,
+                    "runner_type": job.runner_type,
+                    "test_id": job.test_id,
+                    "stop_policy": job.stop_policy,
                 },
             )
             job.add_log(f"[UI] finished with status={job.status}, exit_code={job.exit_code}")

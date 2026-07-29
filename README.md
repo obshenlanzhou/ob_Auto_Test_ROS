@@ -64,6 +64,9 @@ cd "$HOME/ORBBEC/ob_Auto_Test_ROS/auto_test_ws"
 http://127.0.0.1:8000
 ```
 
+页面顶部可在“自动化框架”和“独立脚本”之间切换；独立脚本入口也可直接访问
+`http://127.0.0.1:8000/?workspace=standalone`。两类任务共用实时日志和历史结果。
+
 运行独立测试脚本：
 
 ```bash

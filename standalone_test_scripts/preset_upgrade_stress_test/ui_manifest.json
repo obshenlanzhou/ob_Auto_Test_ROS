@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "id": "preset_upgrade_stress_test",
+  "title": "Preset 升级压测",
+  "description": "交替升级两份深度 Preset，并验证相机 Launch 与图像流。",
+  "script": "preset_upgrade_stress_test.py",
+  "risk": "high",
+  "stop_policy": "safe-point",
+  "confirmation": "Preset 升级会写入相机设备。请确认文件与相机型号匹配；停止命令会等待当前升级完成。",
+  "fields": [
+    {"name": "ros_version", "option": "--ros-version", "type": "select", "label": "ROS 版本", "section": "basic", "default": "2", "choices": [{"value": "2", "label": "ROS 2"}, {"value": "1", "label": "ROS 1"}]},
+    {"name": "ros_setup", "option": "--ros-setup", "type": "path", "label": "ROS Setup", "section": "basic", "default": "/opt/ros/humble/setup.bash"},
+    {"name": "driver_setup", "option": "--driver-setup", "type": "path", "label": "Driver Setup", "section": "basic", "default": ""},
+    {"name": "launch_file", "option": "--launch-file", "type": "path", "label": "Launch 文件", "section": "basic", "default": ""},
+    {"name": "cameras", "option": "--camera", "type": "camera-list", "label": "目标相机", "section": "basic", "default": []},
+    {"name": "preset_a_path", "option": "--preset-a-path", "type": "path", "label": "Preset A 文件", "section": "basic", "default": ""},
+    {"name": "preset_a_name", "option": "--preset-a-name", "type": "text", "label": "Preset A 名称", "section": "basic", "default": "K High Confidence"},
+    {"name": "preset_b_path", "option": "--preset-b-path", "type": "path", "label": "Preset B 文件", "section": "basic", "default": ""},
+    {"name": "preset_b_name", "option": "--preset-b-name", "type": "text", "label": "Preset B 名称", "section": "basic", "default": "K High Accuracy"},
+    {"name": "run_count", "option": "--run-count", "type": "integer", "label": "最大升级轮数", "section": "basic", "default": "", "min": 1},
+    {"name": "duration", "option": "--duration", "type": "duration", "label": "最长运行时间", "section": "basic", "default": "300"},
+    {"name": "image_topics", "option": "--image-topic", "type": "list", "label": "图像 Topic 模板", "section": "basic", "default": []},
+    {"name": "save_image_count", "option": "--save-image-count", "type": "integer", "label": "每 Topic 存图数", "section": "basic", "default": "1", "min": 0},
+    {"name": "launch_package", "option": "--launch-package", "type": "text", "label": "Launch Package", "section": "advanced", "default": "orbbec_camera"},
+    {"name": "stream_timeout", "option": "--stream-timeout", "type": "duration", "label": "出流超时", "section": "advanced", "default": "30"},
+    {"name": "preset_log_timeout", "option": "--preset-log-timeout", "type": "duration", "label": "Preset 日志超时", "section": "advanced", "default": "20"},
+    {"name": "jpg_quality", "option": "--jpg-quality", "type": "integer", "label": "JPG 质量", "section": "advanced", "default": "95", "min": 1, "max": 100},
+    {"name": "restart_delay", "option": "--restart-delay", "type": "number", "label": "循环间隔秒数", "section": "advanced", "default": "2", "min": 0},
+    {"name": "sdk_log_level", "option": "--sdk-log-level", "type": "select", "label": "SDK 日志级别", "section": "advanced", "default": "debug", "choices": ["debug", "info", "warn", "error", "fatal", "off", "none"]},
+    {"name": "queue_size", "option": "--queue-size", "type": "integer", "label": "Queue Size", "section": "advanced", "default": "10", "min": 1}
+  ]
+}

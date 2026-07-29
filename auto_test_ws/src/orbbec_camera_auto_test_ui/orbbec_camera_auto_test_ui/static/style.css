@@ -493,6 +493,40 @@ h3 {
   align-items: start;
 }
 
+.workspace-switch {
+  display: inline-grid;
+  grid-template-columns: repeat(2, minmax(150px, 1fr));
+  gap: 4px;
+  margin-bottom: 18px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 4px;
+  background: var(--surface);
+  box-shadow: 0 10px 28px rgba(31, 49, 69, 0.06);
+}
+
+.workspace-switch button {
+  display: grid;
+  min-height: 48px;
+  gap: 2px;
+  border-color: transparent;
+  background: transparent;
+  text-align: left;
+}
+
+.workspace-switch button.active {
+  border-color: var(--primary-line);
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+
+.workspace-switch small {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 500;
+}
+
 .panel {
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -632,6 +666,137 @@ h3 {
 
 .grid-span-2 {
   grid-column: 1 / -1;
+}
+
+.dynamic-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.standalone-field[data-field-type="list"],
+.standalone-field[data-field-type="camera-list"] {
+  grid-column: 1 / -1;
+}
+
+.manifest-badge {
+  border: 1px solid var(--primary-line);
+  border-radius: 999px;
+  padding: 5px 8px;
+  background: var(--primary-soft);
+  color: var(--primary);
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.field-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.risk-banner {
+  border: 1px solid var(--warn-line);
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: var(--warn-soft);
+  color: var(--warn);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.selector-priority {
+  border-left: 3px solid var(--primary);
+  padding: 8px 11px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.selector-priority code {
+  color: var(--text-soft);
+  font-family: var(--mono);
+}
+
+.camera-editor-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+  color: var(--text-soft);
+  font-size: 12px;
+}
+
+.camera-add-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 7px;
+}
+
+.camera-editor {
+  display: grid;
+  gap: 10px;
+}
+
+.camera-group {
+  display: grid;
+  gap: 8px;
+}
+
+.camera-group-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  color: var(--text-soft);
+}
+
+.camera-group-title small {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 9px;
+}
+
+.camera-rows {
+  display: grid;
+  gap: 9px;
+}
+
+.camera-rows:empty::before {
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+  padding: 10px 12px;
+  color: var(--muted);
+  content: attr(data-empty-text);
+  font-size: 11px;
+}
+
+.camera-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  padding: 10px;
+  background: var(--surface-soft);
+}
+
+.camera-row .camera-remove {
+  grid-column: 1 / -1;
+  justify-self: end;
+  min-height: 32px;
+  color: var(--danger);
+}
+
+.standalone-checkbox {
+  min-height: 39px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 8px 10px;
+  background: var(--input-bg);
 }
 
 .is-hidden {
@@ -898,6 +1063,14 @@ button.danger {
 .performance-panel {
   display: grid;
   gap: 15px;
+}
+
+.standalone-monitor {
+  margin-bottom: 15px;
+}
+
+.perf-metrics.standalone-metrics {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .perf-metrics {
@@ -1404,8 +1577,26 @@ button.ghost {
     grid-template-columns: 1fr;
   }
 
+  .dynamic-fields,
+  .camera-row {
+    grid-template-columns: 1fr;
+  }
+
+  .camera-editor-header {
+    align-items: flex-start;
+    display: grid;
+  }
+
+  .camera-add-actions {
+    justify-content: flex-start;
+  }
+
   .perf-metrics {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .perf-metrics.standalone-metrics {
+    grid-template-columns: 1fr;
   }
 
   .controls,

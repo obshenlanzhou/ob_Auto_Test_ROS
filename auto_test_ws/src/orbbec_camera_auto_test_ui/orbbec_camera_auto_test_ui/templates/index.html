@@ -48,6 +48,15 @@
         </div>
       </header>
 
+      <nav class="workspace-switch" aria-label="测试入口">
+        <button type="button" class="active" id="frameworkWorkspaceButton" data-workspace="framework">
+          <span>自动化框架</span><small>Profiles & runners</small>
+        </button>
+        <button type="button" id="standaloneWorkspaceButton" data-workspace="standalone">
+          <span>独立脚本</span><small>Standalone tools</small>
+        </button>
+      </nav>
+
       <section class="summary-strip" aria-label="运行概览">
         <div class="metric metric-run">
           <span class="metric-icon" aria-hidden="true">01</span>
@@ -64,7 +73,7 @@
       </section>
 
       <section class="layout">
-        <form id="runForm" class="panel controls">
+        <form id="runForm" class="panel controls workspace-form" data-workspace-panel="framework">
           <div class="panel-header controls-header">
             <div>
               <span class="panel-kicker">CONTROL DECK</span>
@@ -208,19 +217,69 @@
           </div>
         </form>
 
+        <form id="standaloneForm" class="panel controls workspace-form is-hidden" data-workspace-panel="standalone">
+          <div class="panel-header controls-header">
+            <div>
+              <span class="panel-kicker">STANDALONE TOOLS</span>
+              <h2>独立脚本</h2>
+              <p>由脚本清单生成参数表单，单次只运行一个工具</p>
+            </div>
+            <span class="manifest-badge">MANIFEST</span>
+          </div>
+
+          <section class="form-section">
+            <div class="section-title"><span>01</span><div>选择脚本<small>Standalone runner</small></div></div>
+            <label>
+              <span>测试工具</span>
+              <select id="standaloneTest"></select>
+            </label>
+            <p id="standaloneDescription" class="field-note"></p>
+            <div id="standaloneRisk" class="risk-banner is-hidden" role="alert"></div>
+          </section>
+
+          <section class="form-section">
+            <div class="section-title"><span>02</span><div>基础参数<small>Required and common options</small></div></div>
+            <div id="standaloneBasicFields" class="dynamic-fields"></div>
+          </section>
+
+          <details class="form-section compact-section">
+            <summary class="section-title"><span>03</span><div>高级参数<small>Timeouts, logging and tuning</small></div><i aria-hidden="true">⌄</i></summary>
+            <div class="section-content">
+              <div id="standaloneAdvancedFields" class="dynamic-fields"></div>
+            </div>
+          </details>
+
+          <div class="selector-priority">
+            USB 相机可使用 <code>serial-number / usb-port</code> 定位，网络相机使用
+            <code>device-ip / device-port</code>；Camera Name 和 Config File Path 为两类相机的通用参数。
+          </div>
+
+          <div class="actions">
+            <button type="submit" class="primary" id="standaloneStartButton"><span class="button-icon" aria-hidden="true">▶</span>运行独立脚本</button>
+            <button type="button" class="danger" id="standaloneStopButton"><span class="button-icon" aria-hidden="true">■</span>停止</button>
+          </div>
+        </form>
+
         <section class="panel monitor">
           <div class="panel-header monitor-header">
             <div>
               <span class="panel-kicker">LIVE TELEMETRY</span>
               <h2>运行监控</h2>
-              <p>进程资源、数据流与实时日志</p>
+              <p id="monitorDescription">进程资源、数据流与实时日志</p>
             </div>
             <span id="runMeta" class="run-meta"></span>
           </div>
 
           <details class="command-box" id="commandBox"></details>
 
-          <section class="performance-panel">
+          <section id="standaloneMonitor" class="standalone-monitor is-hidden">
+            <div class="perf-metrics standalone-metrics">
+              <div class="perf-metric accent"><span>运行时间</span><strong id="standaloneElapsed">00:00:00</strong></div>
+              <div class="perf-metric"><span>当前轮次</span><strong id="standaloneRound">—</strong></div>
+            </div>
+          </section>
+
+          <section class="performance-panel" id="frameworkMonitor">
             <div class="perf-metrics">
               <div class="perf-metric accent"><span>运行时间</span><strong id="perfElapsed">00:00:00</strong></div>
               <div class="perf-metric"><span>CPU 负载</span><strong id="perfCpu">—</strong></div>

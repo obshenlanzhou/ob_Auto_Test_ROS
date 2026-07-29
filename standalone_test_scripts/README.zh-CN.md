@@ -78,6 +78,18 @@ standalone_test_scripts/
 `0`、`1`、`130`；命令行参数错误返回 `2`。脚本特有的日志、图片、CSV 和导出文件
 统一在 `result.json` 的 `artifacts` 中列出。
 
+## 本地 Web UI 集成
+
+每个脚本目录包含一份由开发者维护的 `ui_manifest.json`。本地 Web UI 会发现这些清单，
+自动生成基础/高级结构化表单，不提供原始参数输入框：
+
+```text
+http://127.0.0.1:8000/?workspace=standalone
+```
+
+清单声明字段类型、默认值、风险等级和停止策略。脚本仍须保持独立：清单可以描述脚本的
+CLI，但脚本本身不能导入 Web UI 包。
+
 ## 脚本索引
 
 | 脚本目录 | 用途 | 说明 |
@@ -96,6 +108,7 @@ standalone_test_scripts/
 ```text
 每个测试脚本放在独立目录中
 脚本目录内放置 README.md 和 README.zh-CN.md
+需要出现在本地 Web UI 时提供 ui_manifest.json
 脚本名清晰表达测试场景
 不要依赖 orbbec_camera_auto_test 框架模块
 需要 ROS 时支持 --ros-version、--ros-setup、--driver-setup

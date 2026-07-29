@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "id": "launch_restart_stream_check",
+  "title": "Launch 重启出流检查",
+  "description": "重复启动相机 Launch，检查图像流是否稳定恢复。",
+  "script": "launch_restart_stream_check.py",
+  "risk": "normal",
+  "stop_policy": "immediate",
+  "fields": [
+    {"name": "ros_version", "option": "--ros-version", "type": "select", "label": "ROS 版本", "section": "basic", "default": "2", "choices": [{"value": "2", "label": "ROS 2"}, {"value": "1", "label": "ROS 1"}]},
+    {"name": "ros_setup", "option": "--ros-setup", "type": "path", "label": "ROS Setup", "section": "basic", "default": "/opt/ros/humble/setup.bash"},
+    {"name": "driver_setup", "option": "--driver-setup", "type": "path", "label": "Driver Setup", "section": "basic", "default": ""},
+    {"name": "launch_file", "option": "--launch-file", "type": "path", "label": "Launch 文件", "section": "basic", "default": ""},
+    {"name": "cameras", "option": "--camera", "type": "camera-list", "label": "相机", "section": "basic", "default": [], "max_items": 1},
+    {"name": "duration", "option": "--duration", "type": "duration", "label": "最长运行时间", "section": "basic", "default": "300"},
+    {"name": "run_count", "option": "--run-count", "type": "integer", "label": "最大循环次数", "section": "basic", "default": "", "min": 1},
+    {"name": "image_topics", "option": "--image-topic", "type": "list", "label": "图像 Topic", "section": "basic", "default": []},
+    {"name": "launch_package", "option": "--launch-package", "type": "text", "label": "Launch Package", "section": "advanced", "default": "orbbec_camera"},
+    {"name": "sdk_log_level", "option": "--sdk-log-level", "type": "select", "label": "SDK 日志级别", "section": "advanced", "default": "debug", "choices": ["debug", "info", "warn", "error", "fatal", "none"]},
+    {"name": "topic_discovery_timeout", "option": "--topic-discovery-timeout", "type": "duration", "label": "Topic 发现超时", "section": "advanced", "default": "15"},
+    {"name": "stable_seconds", "option": "--stable-seconds", "type": "duration", "label": "稳定出流时间", "section": "advanced", "default": "5"},
+    {"name": "stream_timeout", "option": "--stream-timeout", "type": "duration", "label": "出流超时", "section": "advanced", "default": "20"},
+    {"name": "max_gap_seconds", "option": "--max-gap-seconds", "type": "duration", "label": "最大帧间隔", "section": "advanced", "default": "1.5"},
+    {"name": "restart_delay", "option": "--restart-delay", "type": "number", "label": "重启间隔秒数", "section": "advanced", "default": "2", "min": 0},
+    {"name": "queue_size", "option": "--queue-size", "type": "integer", "label": "Queue Size", "section": "advanced", "default": "10", "min": 1}
+  ]
+}
