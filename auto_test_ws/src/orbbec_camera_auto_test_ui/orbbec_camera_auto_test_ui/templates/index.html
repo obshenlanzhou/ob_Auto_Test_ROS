@@ -34,6 +34,16 @@
             <p id="workspacePath">正在连接测试工作区...</p>
           </div>
         </div>
+
+        <nav class="workspace-switch" aria-label="测试入口">
+          <button type="button" class="active" id="frameworkWorkspaceButton" data-workspace="framework">
+            <span>自动化框架</span><small>Profiles &amp; runners</small>
+          </button>
+          <button type="button" id="standaloneWorkspaceButton" data-workspace="standalone">
+            <span>独立脚本</span><small>Standalone tools</small>
+          </button>
+        </nav>
+
         <div class="header-tools">
           <div class="theme-switch" role="group" aria-label="页面主题">
             <button type="button" data-theme-value="light" aria-pressed="true"><span aria-hidden="true">☀</span> 浅色</button>
@@ -48,15 +58,6 @@
         </div>
       </header>
 
-      <nav class="workspace-switch" aria-label="测试入口">
-        <button type="button" class="active" id="frameworkWorkspaceButton" data-workspace="framework">
-          <span>自动化框架</span><small>Profiles & runners</small>
-        </button>
-        <button type="button" id="standaloneWorkspaceButton" data-workspace="standalone">
-          <span>独立脚本</span><small>Standalone tools</small>
-        </button>
-      </nav>
-
       <section class="summary-strip" aria-label="运行概览">
         <div class="metric metric-run">
           <span class="metric-icon" aria-hidden="true">01</span>
@@ -64,11 +65,11 @@
         </div>
         <div class="metric">
           <span class="metric-icon" aria-hidden="true">02</span>
-          <div><small>测试模式</small><strong id="currentMode">—</strong></div>
+          <div><small id="currentModeLabel">测试模式</small><strong id="currentMode">—</strong></div>
         </div>
         <div class="metric">
           <span class="metric-icon" aria-hidden="true">03</span>
-          <div><small>Launch</small><strong id="launchCount">—</strong></div>
+          <div><small id="resourceCountLabel">可用 Launch</small><strong id="launchCount">—</strong></div>
         </div>
       </section>
 
@@ -213,7 +214,7 @@
 
           <div class="actions">
             <button type="submit" class="primary" id="startButton"><span class="button-icon" aria-hidden="true">▶</span>开始测试</button>
-            <button type="button" class="danger" id="stopButton"><span class="button-icon" aria-hidden="true">■</span>停止</button>
+            <button type="button" class="danger is-hidden" id="stopButton"><span class="button-icon" aria-hidden="true">■</span>停止</button>
           </div>
         </form>
 
@@ -256,7 +257,7 @@
 
           <div class="actions">
             <button type="submit" class="primary" id="standaloneStartButton"><span class="button-icon" aria-hidden="true">▶</span>运行独立脚本</button>
-            <button type="button" class="danger" id="standaloneStopButton"><span class="button-icon" aria-hidden="true">■</span>停止</button>
+            <button type="button" class="danger is-hidden" id="standaloneStopButton"><span class="button-icon" aria-hidden="true">■</span>停止</button>
           </div>
         </form>
 
@@ -270,63 +271,77 @@
             <span id="runMeta" class="run-meta"></span>
           </div>
 
-          <details class="command-box" id="commandBox"></details>
-
-          <section id="standaloneMonitor" class="standalone-monitor is-hidden">
-            <div class="perf-metrics standalone-metrics">
-              <div class="perf-metric accent"><span>运行时间</span><strong id="standaloneElapsed">00:00:00</strong></div>
-              <div class="perf-metric"><span>当前轮次</span><strong id="standaloneRound">—</strong></div>
+          <section class="monitor-empty" id="monitorEmpty" aria-live="polite">
+            <div class="monitor-empty-mark" aria-hidden="true"><i></i><i></i><i></i></div>
+            <span class="panel-kicker">READY TO RUN</span>
+            <h3 id="monitorEmptyTitle">等待测试任务</h3>
+            <p id="monitorEmptyDescription">在左侧完成配置并开始测试，运行指标与实时日志会显示在这里。</p>
+            <div class="monitor-empty-hints" aria-label="运行步骤">
+              <span><b>1</b> 选择测试</span>
+              <span><b>2</b> 检查参数</span>
+              <span><b>3</b> 开始运行</span>
             </div>
           </section>
 
-          <section class="performance-panel" id="frameworkMonitor">
-            <div class="perf-metrics">
-              <div class="perf-metric accent"><span>运行时间</span><strong id="perfElapsed">00:00:00</strong></div>
-              <div class="perf-metric"><span>CPU 负载</span><strong id="perfCpu">—</strong></div>
-              <div class="perf-metric"><span>内存占用</span><strong id="perfRam">—</strong></div>
-              <div class="perf-metric"><span>进程数</span><strong id="perfPidCount">—</strong></div>
-            </div>
+          <div class="monitor-content is-hidden" id="monitorContent">
+            <details class="command-box" id="commandBox"></details>
 
-            <div class="perf-metrics restart-metrics is-hidden" id="restartMetrics">
-              <div class="perf-metric"><span>成功重启</span><strong id="restartSuccessCount">—</strong></div>
-              <div class="perf-metric"><span>启动轮次</span><strong id="restartAttemptCount">—</strong></div>
-              <div class="perf-metric"><span>当前轮状态</span><strong id="restartAttemptStatus">—</strong></div>
-              <div class="perf-metric"><span>Restart 状态</span><strong id="restartOverallStatus">—</strong></div>
-            </div>
-            <div class="restart-message is-hidden" id="restartMessage"></div>
-
-            <div class="data-section">
-              <div class="data-title"><span>系统资源</span></div>
-              <div class="system-table-wrap">
-                <table class="system-table">
-                  <thead><tr><th>资源范围</th><th>CPU</th><th>RAM</th><th>进程数</th></tr></thead>
-                  <tbody id="systemTableBody"><tr><td colspan="4">等待资源采样…</td></tr></tbody>
-                </table>
+            <section id="standaloneMonitor" class="standalone-monitor is-hidden">
+              <div class="perf-metrics standalone-metrics">
+                <div class="perf-metric accent"><span>运行时间</span><strong id="standaloneElapsed">00:00:00</strong></div>
+                <div class="perf-metric"><span>当前轮次</span><strong id="standaloneRound">—</strong></div>
               </div>
-            </div>
+            </section>
 
-            <div class="data-section">
-              <div class="data-title"><span>数据流性能</span></div>
-              <div class="fps-table-wrap">
-                <table class="fps-table">
-                  <thead><tr><th>Topic</th><th>分辨率</th><th>格式</th><th>当前 FPS</th><th>平均 FPS</th><th>目标 FPS</th><th>丢帧</th><th>丢帧率</th></tr></thead>
-                  <tbody id="fpsTableBody"><tr><td colspan="8">等待性能压测数据…</td></tr></tbody>
-                </table>
+            <section class="performance-panel" id="frameworkMonitor">
+              <div class="perf-metrics">
+                <div class="perf-metric accent"><span>运行时间</span><strong id="perfElapsed">00:00:00</strong></div>
+                <div class="perf-metric"><span>CPU 负载</span><strong id="perfCpu">—</strong></div>
+                <div class="perf-metric"><span>内存占用</span><strong id="perfRam">—</strong></div>
+                <div class="perf-metric"><span>进程数</span><strong id="perfPidCount">—</strong></div>
               </div>
-            </div>
-          </section>
 
-          <section class="log-panel">
-            <div class="log-toolbar">
-              <div class="data-title"><span>实时日志</span></div>
-              <div class="toolbar-actions">
-                <label class="follow-toggle"><input id="followLogs" type="checkbox" checked /><span>自动跟随</span></label>
-                <button type="button" class="text-button" id="copyLogs">复制</button>
-                <button type="button" class="text-button" id="clearLogs">清空</button>
+              <div class="perf-metrics restart-metrics is-hidden" id="restartMetrics">
+                <div class="perf-metric"><span>成功重启</span><strong id="restartSuccessCount">—</strong></div>
+                <div class="perf-metric"><span>启动轮次</span><strong id="restartAttemptCount">—</strong></div>
+                <div class="perf-metric"><span>当前轮状态</span><strong id="restartAttemptStatus">—</strong></div>
+                <div class="perf-metric"><span>Restart 状态</span><strong id="restartOverallStatus">—</strong></div>
               </div>
-            </div>
-            <pre id="logOutput" class="log" aria-live="polite"></pre>
-          </section>
+              <div class="restart-message is-hidden" id="restartMessage"></div>
+
+              <div class="data-section">
+                <div class="data-title"><span>系统资源</span></div>
+                <div class="system-table-wrap">
+                  <table class="system-table">
+                    <thead><tr><th>资源范围</th><th>CPU</th><th>RAM</th><th>进程数</th></tr></thead>
+                    <tbody id="systemTableBody"><tr><td colspan="4">等待资源采样…</td></tr></tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div class="data-section">
+                <div class="data-title"><span>数据流性能</span></div>
+                <div class="fps-table-wrap">
+                  <table class="fps-table">
+                    <thead><tr><th>Topic</th><th>分辨率</th><th>格式</th><th>当前 FPS</th><th>平均 FPS</th><th>目标 FPS</th><th>丢帧</th><th>丢帧率</th></tr></thead>
+                    <tbody id="fpsTableBody"><tr><td colspan="8">等待性能压测数据…</td></tr></tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
+
+            <section class="log-panel">
+              <div class="log-toolbar">
+                <div class="data-title"><span>实时日志</span></div>
+                <div class="toolbar-actions">
+                  <label class="follow-toggle"><input id="followLogs" type="checkbox" checked /><span>自动跟随</span></label>
+                  <button type="button" class="text-button" id="copyLogs">复制</button>
+                  <button type="button" class="text-button" id="clearLogs">清空</button>
+                </div>
+              </div>
+              <pre id="logOutput" class="log" aria-live="polite"></pre>
+            </section>
+          </div>
         </section>
       </section>
 

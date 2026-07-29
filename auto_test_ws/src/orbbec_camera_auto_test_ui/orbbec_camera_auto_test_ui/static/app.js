@@ -18,6 +18,16 @@ const THEME_COLORS = {
   dark: "#07101d",
 };
 const ACTIVE_RUN_STATUSES = new Set(["starting", "running", "stopping"]);
+const STATUS_LABELS = {
+  idle: "空闲",
+  starting: "启动中",
+  running: "运行中",
+  stopping: "停止中",
+  passed: "已通过",
+  failed: "失败",
+  interrupted: "已中断",
+  warning: "警告",
+};
 const DEFAULT_SETUPS = {
   "2": {
     ros: "/opt/ros/humble/setup.bash",
@@ -469,29 +479,57 @@ function setStatus(status) {
   const dot = document.createElement("i");
   dot.setAttribute("aria-hidden", "true");
   const label = document.createElement("span");
-  label.textContent = value;
+  label.textContent = STATUS_LABELS[value] || value;
   node.replaceChildren(dot, label);
   node.className = `status-pill ${value}`;
-  const running = ["starting", "running", "stopping"].includes(status);
+  const running = ACTIVE_RUN_STATUSES.has(value);
   $("startButton").disabled = running;
   $("stopButton").disabled = !running;
+  $("stopButton").classList.toggle("is-hidden", !running);
   $("standaloneStartButton").disabled = running;
   $("standaloneStopButton").disabled = !running;
+  $("standaloneStopButton").classList.toggle("is-hidden", !running);
+
+  const showMonitor = value !== "idle";
+  $("monitorEmpty").classList.toggle("is-hidden", showMonitor);
+  $("monitorContent").classList.toggle("is-hidden", !showMonitor);
+  $("monitorEmpty").closest(".monitor").dataset.state = value;
+}
+
+function updateMonitorEmptyCopy() {
+  const standalone = state.workspace === "standalone";
+  $("monitorEmptyTitle").textContent = standalone ? "等待独立脚本" : "等待测试任务";
+  $("monitorEmptyDescription").textContent = standalone
+    ? "选择一个独立工具并检查必要参数，启动指令、运行进度与日志会显示在这里。"
+    : "在左侧完成环境与测试策略配置，运行指标、数据流与实时日志会显示在这里。";
 }
 
 function switchWorkspace(workspace, updateUrl = true) {
   state.workspace = workspace === "standalone" ? "standalone" : "framework";
   $("frameworkWorkspaceButton").classList.toggle("active", state.workspace === "framework");
   $("standaloneWorkspaceButton").classList.toggle("active", state.workspace === "standalone");
+  $("frameworkWorkspaceButton").setAttribute(
+    "aria-pressed",
+    String(state.workspace === "framework")
+  );
+  $("standaloneWorkspaceButton").setAttribute(
+    "aria-pressed",
+    String(state.workspace === "standalone")
+  );
   for (const panel of document.querySelectorAll("[data-workspace-panel]")) {
     panel.classList.toggle("is-hidden", panel.dataset.workspacePanel !== state.workspace);
   }
   $("launchCount").textContent =
     state.workspace === "standalone"
-      ? `${state.standaloneTests.length} · TOOLS`
+      ? `${state.standaloneTests.length} 个脚本`
       : $("launchFile").options.length
-        ? `${$("launchFile").options.length} · ROS ${$("rosVersion").value}`
+        ? `${$("launchFile").options.length} 个 · ROS ${$("rosVersion").value}`
         : "—";
+  $("resourceCountLabel").textContent =
+    state.workspace === "standalone" ? "可用脚本" : "可用 Launch";
+  $("currentModeLabel").textContent =
+    state.workspace === "standalone" ? "任务类型" : "测试模式";
+  updateMonitorEmptyCopy();
   if (updateUrl) {
     const url = new URL(window.location.href);
     if (state.workspace === "standalone") {
@@ -717,9 +755,10 @@ function renderMonitor(payload = {}) {
   $("standaloneMonitor").classList.toggle("is-hidden", !standalone);
   $("frameworkMonitor").classList.toggle("is-hidden", standalone);
   $("runMeta").classList.toggle("is-hidden", standalone);
+  const statusLabel = STATUS_LABELS[payload.status] || payload.status || "";
   $("monitorDescription").textContent = standalone
-    ? "启动指令、运行进度与实时日志"
-    : "进程资源、数据流与实时日志";
+    ? `独立脚本进度与实时日志${statusLabel ? ` · ${statusLabel}` : ""}`
+    : `进程资源、数据流与实时日志${statusLabel ? ` · ${statusLabel}` : ""}`;
 
   if (standalone) {
     $("standaloneElapsed").textContent = formatDuration(
@@ -819,6 +858,7 @@ async function loadConfig() {
     $(id).value = config.stream_options?.[name] || "";
   }
   $("workspacePath").textContent = `工作区: ${config.auto_test_ws}`;
+  $("workspacePath").title = config.auto_test_ws || "";
   updateRosVersionControls({ fillBlank: true });
 }
 
@@ -842,7 +882,9 @@ function loadLaunchFiles() {
   const configured = state.config.ros_version === rosVersion ? state.config.launch_file : "";
   renderLaunchFileOptions(files, configured);
   $("launchFile").title = `内置 ${files.length} 个 ROS${rosVersion} 单相机 Launch`;
-  $("launchCount").textContent = `${files.length} · ROS ${rosVersion}`;
+  if (state.workspace === "framework") {
+    $("launchCount").textContent = `${files.length} 个 · ROS ${rosVersion}`;
+  }
   updateLaunchConfigOptions(configured ? state.config.launch_config : "");
 }
 
@@ -853,7 +895,10 @@ async function pollStatus() {
     if (payload.run_id) {
       $("runMeta").textContent = `${payload.run_id} ${payload.exit_code === null ? "" : `exit=${payload.exit_code}`}`;
       $("currentRunId").textContent = payload.run_id;
-      $("currentMode").textContent = payload.mode || "-";
+      $("currentMode").textContent =
+        payload.runner_type === "standalone"
+          ? state.standaloneTest?.title || "独立脚本"
+          : payload.mode || "-";
     } else {
       $("runMeta").textContent = "";
       $("currentRunId").textContent = "未运行";
@@ -1189,6 +1234,11 @@ async function loadRunDetail(runId) {
 async function init() {
   initTheme();
   setStatus("idle");
+  const initialWorkspace =
+    new URLSearchParams(window.location.search).get("workspace") === "standalone"
+      ? "standalone"
+      : "framework";
+  switchWorkspace(initialWorkspace, false);
   $("runForm").addEventListener("submit", startRun);
   $("standaloneForm").addEventListener("submit", startStandaloneRun);
   $("stopButton").addEventListener("click", stopRun);
@@ -1228,11 +1278,6 @@ async function init() {
   await loadConfig();
   await loadStandaloneTests();
   loadLaunchFiles();
-  const initialWorkspace =
-    new URLSearchParams(window.location.search).get("workspace") === "standalone"
-      ? "standalone"
-      : "framework";
-  switchWorkspace(initialWorkspace, false);
   await loadRuns();
   await pollStatus();
   state.polling = setInterval(pollStatus, 1000);
