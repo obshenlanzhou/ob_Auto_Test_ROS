@@ -12,6 +12,7 @@ from typing import Any, Dict
 from urllib.parse import parse_qs, unquote, urlparse
 
 from orbbec_camera_auto_test.profile.merger import load_merged_profile_data
+from .device_info import DeviceQueryError, query_camera_devices
 from .run_manager import (
     AUTO_TEST_WS,
     CONFIG_PATH,
@@ -375,12 +376,19 @@ class UiHandler(BaseHTTPRequestHandler):
             elif parsed.path == "/api/standalone/run":
                 status, response = MANAGER.start_standalone(payload)
                 self._send_json(response, status=status)
+            elif parsed.path == "/api/devices":
+                self._send_json(query_camera_devices(payload))
             elif parsed.path == "/api/stop":
                 self._send_json(MANAGER.stop())
             else:
                 self._send_json({"error": "not found"}, status=HTTPStatus.NOT_FOUND)
         except json.JSONDecodeError as exc:
             self._send_json({"error": f"invalid json: {exc}"}, status=HTTPStatus.BAD_REQUEST)
+        except DeviceQueryError as exc:
+            response = {"error": str(exc)}
+            if exc.output:
+                response["output"] = exc.output
+            self._send_json(response, status=exc.status)
         except Exception as exc:  # noqa: BLE001
             self._send_json({"error": str(exc)}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
 

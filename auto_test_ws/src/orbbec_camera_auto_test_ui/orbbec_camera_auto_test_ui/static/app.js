@@ -10,6 +10,7 @@ const state = {
   setupDefaults: {},
   resultSummaryRunId: null,
   currentSnapshot: null,
+  deviceQueryPending: false,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -152,9 +153,156 @@ async function api(path, options = {}) {
     const error = new Error(message);
     error.details = payload.errors || [payload.error || response.statusText];
     error.payload = payload;
+    error.output = payload.output || "";
     throw error;
   }
   return payload;
+}
+
+function deviceQueryPayload() {
+  if (state.workspace === "standalone") {
+    const values = standaloneCurrentValues();
+    const rosVersion = String(values.ros_version || "2");
+    const defaults = state.setupDefaults[rosVersion] || {};
+    return {
+      ros_version: rosVersion,
+      ros_setup: values.ros_setup || defaults.ros_setup || "",
+      camera_setup: values.driver_setup || defaults.driver_setup || "",
+    };
+  }
+  return {
+    ros_version: $("rosVersion").value,
+    ros_setup: $("rosSetup").value.trim(),
+    camera_setup: $("cameraSetup").value.trim(),
+  };
+}
+
+function deviceFact(label, value) {
+  const fact = document.createElement("div");
+  const name = document.createElement("span");
+  const content = document.createElement("strong");
+  name.textContent = label;
+  content.textContent = value || "—";
+  fact.append(name, content);
+  return fact;
+}
+
+function devicePresetGroup(label, presets = []) {
+  const group = document.createElement("div");
+  group.className = "device-presets";
+  const title = document.createElement("span");
+  title.textContent = `${label} (${presets.length})`;
+  const values = document.createElement("div");
+  values.className = "device-preset-values";
+  if (presets.length) {
+    for (const preset of presets) {
+      const chip = document.createElement("code");
+      chip.textContent = preset;
+      values.appendChild(chip);
+    }
+  } else {
+    values.textContent = "—";
+  }
+  group.append(title, values);
+  return group;
+}
+
+function renderDevices(payload) {
+  const devices = payload.devices || [];
+  const content = $("deviceInfoContent");
+  content.replaceChildren();
+  $("deviceInfoSummary").textContent = devices.length
+    ? `检测到 ${devices.length} 台相机 · 查询耗时 ${payload.elapsed_seconds ?? "—"} 秒`
+    : "未检测到相机，请检查连接、权限和 Camera ROS Setup。";
+
+  if (!devices.length) {
+    const empty = document.createElement("div");
+    empty.className = "device-info-state";
+    empty.innerHTML = "<span>◎</span><strong>未发现设备</strong><p>可点击刷新重新查询。</p>";
+    content.appendChild(empty);
+  }
+  devices.forEach((device, index) => {
+    const card = document.createElement("article");
+    card.className = "device-card";
+    const header = document.createElement("header");
+    const order = document.createElement("span");
+    const title = document.createElement("div");
+    order.textContent = String(index + 1).padStart(2, "0");
+    title.innerHTML = "<small>ORBBEC CAMERA</small><h3></h3>";
+    title.querySelector("h3").textContent = device.name || `相机 ${index + 1}`;
+    header.append(order, title);
+
+    const facts = document.createElement("div");
+    facts.className = "device-facts";
+    facts.append(
+      deviceFact("PID", device.pid),
+      deviceFact("Serial", device.serial),
+      deviceFact("Connection", device.connection),
+      deviceFact("Firmware", device.firmware_version),
+      deviceFact("USB Port", device.usb_port),
+      deviceFact("Preset Version", device.preset_version)
+    );
+    card.append(
+      header,
+      facts,
+      devicePresetGroup("Device Presets", device.device_presets),
+      devicePresetGroup("Color Presets", device.color_presets)
+    );
+    content.appendChild(card);
+  });
+
+  const raw = $("deviceRawOutput");
+  raw.classList.toggle("is-hidden", !payload.output);
+  raw.querySelector("pre").textContent = payload.output || "";
+}
+
+async function refreshDevices() {
+  if (state.deviceQueryPending) return;
+  state.deviceQueryPending = true;
+  const button = $("refreshDevices");
+  const content = $("deviceInfoContent");
+  button.disabled = true;
+  button.textContent = "查询中…";
+  $("deviceInfoSummary").textContent = "正在运行 list_devices_node，请稍候…";
+  content.innerHTML = '<div class="device-info-state loading"><span>◌</span><strong>正在查询相机</strong></div>';
+  $("deviceRawOutput").classList.add("is-hidden");
+  try {
+    const payload = await api("/api/devices", {
+      method: "POST",
+      body: JSON.stringify(deviceQueryPayload()),
+    });
+    renderDevices(payload);
+  } catch (error) {
+    $("deviceInfoSummary").textContent = "相机信息查询失败";
+    content.replaceChildren();
+    const failure = document.createElement("div");
+    failure.className = "device-info-state error";
+    const mark = document.createElement("span");
+    const title = document.createElement("strong");
+    const detail = document.createElement("p");
+    mark.textContent = "×";
+    title.textContent = "无法获取设备信息";
+    detail.textContent = error.message;
+    failure.append(mark, title, detail);
+    content.appendChild(failure);
+    const raw = $("deviceRawOutput");
+    raw.classList.toggle("is-hidden", !error.output);
+    raw.querySelector("pre").textContent = error.output || "";
+  } finally {
+    state.deviceQueryPending = false;
+    button.disabled = false;
+    button.innerHTML = '<span aria-hidden="true">↻</span> 刷新';
+  }
+}
+
+function showDeviceInfo() {
+  const dialog = $("deviceInfoDialog");
+  if (typeof dialog.showModal === "function") {
+    dialog.showModal();
+  } else {
+    dialog.setAttribute("open", "");
+  }
+  refreshDevices();
 }
 
 function formPayload() {
@@ -762,6 +910,8 @@ function setStatus(status) {
   $("standaloneStartButton").disabled = running;
   $("standaloneStopButton").disabled = !running;
   $("standaloneStopButton").classList.toggle("is-hidden", !running);
+  $("showDevices").disabled = running;
+  $("showDevices").title = running ? "测试运行期间暂停设备枚举" : "查看已连接的 ROS 2 相机";
 
   const showMonitor = value !== "idle";
   $("monitorEmpty").classList.toggle("is-hidden", showMonitor);
@@ -1712,6 +1862,8 @@ async function init() {
   });
   $("stopButton").addEventListener("click", stopRun);
   $("standaloneStopButton").addEventListener("click", stopRun);
+  $("showDevices").addEventListener("click", showDeviceInfo);
+  $("refreshDevices").addEventListener("click", refreshDevices);
   $("refreshLaunches").addEventListener("click", loadLaunchFiles);
   $("refreshRuns").addEventListener("click", loadRuns);
   $("selectAllRuns").addEventListener("change", (event) => {

@@ -45,6 +45,9 @@
         </nav>
 
         <div class="header-tools">
+          <button type="button" class="device-info-button" id="showDevices">
+            <span aria-hidden="true">◉</span> 相机信息
+          </button>
           <div class="theme-switch" role="group" aria-label="页面主题">
             <button type="button" data-theme-value="light" aria-pressed="true"><span aria-hidden="true">☀</span> 浅色</button>
             <button type="button" data-theme-value="dark" aria-pressed="false"><span aria-hidden="true">☾</span> 深色</button>
@@ -388,6 +391,27 @@
         </div>
       </section>
     </main>
+
+    <dialog class="exit-code-dialog device-info-dialog" id="deviceInfoDialog" aria-labelledby="deviceInfoDialogTitle">
+      <form method="dialog">
+        <div class="exit-code-dialog-header">
+          <div>
+            <span class="panel-kicker">CONNECTED DEVICES</span>
+            <h2 id="deviceInfoDialogTitle">相机信息</h2>
+          </div>
+          <button type="submit" class="exit-code-dialog-close" aria-label="关闭相机信息">×</button>
+        </div>
+        <div class="device-info-toolbar">
+          <p id="deviceInfoSummary">使用当前页面的 ROS 2 与 Camera ROS Setup 查询设备。</p>
+          <button type="button" class="ghost" id="refreshDevices"><span aria-hidden="true">↻</span> 刷新</button>
+        </div>
+        <div class="device-info-content" id="deviceInfoContent" aria-live="polite"></div>
+        <details class="device-raw-output is-hidden" id="deviceRawOutput">
+          <summary>查看原始输出</summary>
+          <pre></pre>
+        </details>
+      </form>
+    </dialog>
 
     <dialog class="exit-code-dialog" id="exitCodeDialog" aria-labelledby="exitCodeDialogTitle">
       <form method="dialog">

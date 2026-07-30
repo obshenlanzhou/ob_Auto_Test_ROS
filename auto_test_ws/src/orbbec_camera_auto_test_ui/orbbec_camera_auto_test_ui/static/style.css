@@ -239,6 +239,14 @@ textarea:disabled {
   gap: 14px;
 }
 
+.device-info-button {
+  min-height: 34px;
+  border-color: var(--primary-line);
+  background: var(--primary-soft);
+  color: var(--primary-dark);
+  white-space: nowrap;
+}
+
 .theme-switch {
   display: flex;
   gap: 3px;
@@ -1465,6 +1473,177 @@ button.danger {
   min-width: 100px;
 }
 
+.device-info-dialog {
+  width: min(880px, calc(100vw - 32px));
+}
+
+.device-info-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 5px 0 15px;
+}
+
+.device-info-toolbar p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.device-info-toolbar button {
+  min-height: 32px;
+  flex: 0 0 auto;
+}
+
+.device-info-content {
+  display: grid;
+  gap: 12px;
+}
+
+.device-card {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--section-bg);
+}
+
+.device-card > header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border-bottom: 1px solid var(--table-border);
+  padding: 13px 15px;
+  background: var(--primary-wash);
+}
+
+.device-card > header > span {
+  color: var(--primary);
+  font-family: var(--mono);
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.device-card header small {
+  display: block;
+  margin-bottom: 2px;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 8px;
+  letter-spacing: 0.13em;
+}
+
+.device-card h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.device-facts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border-bottom: 1px solid var(--table-border);
+  background: var(--table-bg);
+}
+
+.device-facts > div {
+  min-width: 0;
+  border-right: 1px solid var(--table-border);
+  border-bottom: 1px solid var(--table-border);
+  padding: 10px 12px;
+}
+
+.device-facts > div:nth-child(3n) { border-right: 0; }
+.device-facts > div:nth-last-child(-n + 3) { border-bottom: 0; }
+
+.device-facts span,
+.device-presets > span {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.device-facts strong {
+  display: block;
+  overflow-wrap: anywhere;
+  color: var(--text-soft);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.device-presets {
+  padding: 10px 12px;
+}
+
+.device-presets + .device-presets {
+  border-top: 1px solid var(--table-border);
+}
+
+.device-preset-values {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.device-preset-values code {
+  border: 1px solid var(--primary-line);
+  border-radius: 999px;
+  padding: 3px 7px;
+  background: var(--primary-soft);
+  color: var(--primary-dark);
+  font-family: var(--mono);
+  font-size: 9px;
+}
+
+.device-info-state {
+  display: grid;
+  min-height: 190px;
+  place-items: center;
+  align-content: center;
+  gap: 6px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 12px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.device-info-state > span {
+  color: var(--primary);
+  font-size: 28px;
+}
+
+.device-info-state strong { color: var(--text-soft); }
+.device-info-state p { margin: 0; font-size: 11px; }
+.device-info-state.error > span { color: var(--danger); }
+
+.device-raw-output {
+  margin-top: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 9px 11px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.device-raw-output pre {
+  max-height: 240px;
+  margin: 10px 0 0;
+  overflow: auto;
+  border-radius: 8px;
+  padding: 10px;
+  background: var(--code-bg);
+  color: var(--code-text);
+  font-family: var(--mono);
+  font-size: 9px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
 .run-meta {
   max-width: 45%;
   overflow-wrap: anywhere;
@@ -2046,6 +2225,7 @@ button.ghost {
 
   .header-tools {
     justify-content: space-between;
+    flex-wrap: wrap;
   }
 
   .brand-mark {
@@ -2175,6 +2355,19 @@ button.ghost {
   .run-result-highlights {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
+  .device-facts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .device-facts > div,
+  .device-facts > div:nth-child(3n) {
+    border-right: 1px solid var(--table-border);
+    border-bottom: 1px solid var(--table-border);
+  }
+
+  .device-facts > div:nth-child(2n) { border-right: 0; }
+  .device-facts > div:nth-last-child(-n + 2) { border-bottom: 0; }
 }
 
 @media (max-width: 430px) {

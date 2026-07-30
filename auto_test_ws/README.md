@@ -35,6 +35,19 @@ cd "$HOME/ORBBEC/ob_Auto_Test_ROS/auto_test_ws"
 两个入口共用运行监控和历史归档，任一时刻只运行一个任务。固件与 Preset 升级会在
 启动前二次确认，停止时等待当前升级操作到达安全点。
 
+顶部的“相机信息”会使用当前页面填写的 ROS 2 与 Camera ROS Setup 执行
+`ros2 run orbbec_camera list_devices_node`，展示所有已连接相机的型号、PID、序列号、
+连接方式、固件、USB 端口和 Preset。也可以直接调用同一接口：
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/devices \
+  -H 'Content-Type: application/json' \
+  -d '{"ros_version":"2","ros_setup":"/opt/ros/humble/setup.bash","camera_setup":"/path/to/driver/install/setup.bash"}'
+```
+
+响应中的 `devices` 是结构化相机列表，`output` 保留节点原始输出；该查询接口仅支持
+ROS 2。
+
 ROS2 命令行示例：
 
 ```bash
