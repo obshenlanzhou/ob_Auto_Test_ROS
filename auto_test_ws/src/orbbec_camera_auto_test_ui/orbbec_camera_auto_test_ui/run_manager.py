@@ -566,13 +566,42 @@ def build_restart_metrics(run_root: Path) -> Dict[str, Any]:
     }
 
 
+def normalize_ros_domain_id(value: Any) -> str:
+    text = "" if value is None else str(value).strip()
+    if not text:
+        return ""
+    if not re.fullmatch(r"\d+", text):
+        raise ValueError("ROS Domain ID must be an integer between 0 and 232")
+    domain_id = int(text)
+    if domain_id > 232:
+        raise ValueError("ROS Domain ID must be an integer between 0 and 232")
+    return str(domain_id)
+
+
+def _ros_domain_environment_command(ros_version: Any, value: Any) -> str:
+    if str(ros_version or "2").strip() != "2":
+        return ""
+    domain_id = normalize_ros_domain_id(value)
+    return (
+        f"export ROS_DOMAIN_ID={shlex.quote(domain_id)}"
+        if domain_id
+        else "unset ROS_DOMAIN_ID"
+    )
+
+
 def load_config() -> Dict[str, Any]:
     config = read_json(CONFIG_PATH, {})
     ros_version = str(config.get("ros_version") or "2")
     if ros_version not in {"1", "2"}:
         ros_version = "2"
+    domain_value = config.get("ros_domain_id", "")
+    try:
+        ros_domain_id = normalize_ros_domain_id(domain_value)
+    except ValueError:
+        ros_domain_id = ""
     return {
         "ros_version": ros_version,
+        "ros_domain_id": ros_domain_id,
         "ros_setup": config.get("ros_setup") or _default_ros_setup_for_version(ros_version),
         "camera_setup": config.get("camera_setup") or _default_camera_setup_for_version(ros_version),
         "host": config.get("host") or "127.0.0.1",
@@ -603,6 +632,7 @@ def save_config(payload: Dict[str, Any]) -> Dict[str, Any]:
     for key in (
         "ros_setup",
         "ros_version",
+        "ros_domain_id",
         "camera_setup",
         "host",
         "port",
@@ -626,7 +656,11 @@ def save_config(payload: Dict[str, Any]) -> Dict[str, Any]:
         "standalone_configs",
     ):
         if key in payload:
-            config[key] = payload[key]
+            config[key] = (
+                normalize_ros_domain_id(payload[key])
+                if key == "ros_domain_id"
+                else payload[key]
+            )
     write_json(CONFIG_PATH, config)
     return config
 
@@ -818,6 +852,16 @@ def _build_shell_script(payload: Dict[str, Any], run_root: Path) -> tuple[str, L
     commands.append(f"source {shlex.quote(ros_setup)}")
     if camera_setup:
         commands.append(f"source {shlex.quote(camera_setup)}")
+    domain_id = normalize_ros_domain_id(payload.get("ros_domain_id"))
+    domain_command = _ros_domain_environment_command(ros_version, domain_id)
+    if domain_command:
+        commands.append(domain_command)
+        domain_message = (
+            f"[UI] ROS_DOMAIN_ID={domain_id}"
+            if domain_id
+            else "[UI] ROS_DOMAIN_ID is not set"
+        )
+        commands.append(f"echo {shlex.quote(domain_message)}")
     commands.append(f"export ORBBEC_ROS_VERSION={shlex.quote(ros_version)}")
     commands.append(f"export ORBBEC_ROS_SETUP={shlex.quote(ros_setup)}")
     commands.append(f"export PYTHONPATH={shlex.quote(str(CORE_PACKAGE_ROOT))}:\"${{PYTHONPATH:-}}\"")
@@ -861,6 +905,10 @@ def validate_run_payload(payload: Dict[str, Any]) -> List[str]:
     ros_version = _safe_text(payload.get("ros_version")) or "2"
     if ros_version not in {"1", "2"}:
         errors.append(f"unsupported ROS version: {ros_version}")
+    try:
+        normalize_ros_domain_id(payload.get("ros_domain_id"))
+    except ValueError as exc:
+        errors.append(str(exc))
 
     launch_file = _safe_text(payload.get("launch_file"))
     if not launch_file:
@@ -1063,6 +1111,7 @@ class RunManager:
         config = save_config(
             {
                 "ros_version": payload.get("ros_version") or "2",
+                "ros_domain_id": normalize_ros_domain_id(payload.get("ros_domain_id")),
                 "ros_setup": payload.get("ros_setup")
                 or _default_ros_setup_for_version(payload.get("ros_version") or "2"),
                 "camera_setup": payload.get("camera_setup")
@@ -1133,26 +1182,44 @@ class RunManager:
             return 400, {"errors": ["high-risk confirmation is required"]}
 
         values, errors = validate_standalone_request(manifest, payload.get("values"))
+        try:
+            ros_domain_id = normalize_ros_domain_id(payload.get("ros_domain_id"))
+        except ValueError as exc:
+            errors.append(str(exc))
         if errors:
             return 400, {"errors": errors}
 
         config = load_config()
         standalone_configs = dict(config.get("standalone_configs") or {})
         standalone_configs[test_id] = values
-        save_config({"standalone_configs": standalone_configs})
+        save_config(
+            {
+                "ros_domain_id": ros_domain_id,
+                "standalone_configs": standalone_configs,
+            }
+        )
 
         base_run_id = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_standalone_{test_id}"
         run_id, run_root = create_unique_run_dir(base_run_id)
         args, values = build_standalone_command(manifest, values, run_root)
         command_line = _quote_command(args)
-        script = "\n".join(
-            [
-                "set -e",
-                f"cd {shlex.quote(str(AUTO_TEST_WS.parent))}",
-                f"echo {shlex.quote(f'[UI] command: {command_line}')}",
-                f"exec {command_line}",
-            ]
+        domain_command = _ros_domain_environment_command(
+            values.get("ros_version"), ros_domain_id
         )
+        displayed_command = (
+            f"ROS_DOMAIN_ID={shlex.quote(ros_domain_id)} {command_line}"
+            if domain_command and ros_domain_id
+            else command_line
+        )
+        script_lines = [
+            "set -e",
+            f"cd {shlex.quote(str(AUTO_TEST_WS.parent))}",
+            f"echo {shlex.quote(f'[UI] command: {displayed_command}')}",
+        ]
+        if domain_command:
+            script_lines.append(domain_command)
+        script_lines.append(f"exec {command_line}")
+        script = "\n".join(script_lines)
         write_json(
             run_root / "ui_request.json",
             {
@@ -1160,8 +1227,8 @@ class RunManager:
                 "mode": f"standalone:{test_id}",
                 "runner_type": "standalone",
                 "test_id": test_id,
-                "request": values,
-                "command_lines": [command_line],
+                "request": {**values, "ros_domain_id": ros_domain_id},
+                "command_lines": [displayed_command],
                 "manifest_path": manifest["manifest_path"],
                 "auto_test_ws": str(AUTO_TEST_WS),
             },

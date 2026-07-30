@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List
 
-from .run_manager import setup_defaults
+from .run_manager import normalize_ros_domain_id, setup_defaults
 
 
 DEVICE_COMMAND = ["ros2", "run", "orbbec_camera", "list_devices_node"]
@@ -131,6 +131,14 @@ def query_camera_devices(payload: Dict[str, Any]) -> Dict[str, Any]:
     commands.append(f"source {shlex.quote(ros_setup)}")
     if camera_setup:
         commands.append(f"source {shlex.quote(camera_setup)}")
+    try:
+        ros_domain_id = normalize_ros_domain_id(payload.get("ros_domain_id"))
+    except ValueError as exc:
+        raise DeviceQueryError(str(exc), status=400) from exc
+    if ros_domain_id:
+        commands.append(f"export ROS_DOMAIN_ID={shlex.quote(ros_domain_id)}")
+    else:
+        commands.append("unset ROS_DOMAIN_ID")
     commands.append(" ".join(shlex.quote(item) for item in DEVICE_COMMAND))
     script = "\n".join(commands)
     env = {**os.environ, "RCUTILS_COLORIZED_OUTPUT": "0"}

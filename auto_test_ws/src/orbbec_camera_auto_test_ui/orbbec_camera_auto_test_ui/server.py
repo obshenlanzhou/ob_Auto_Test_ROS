@@ -336,9 +336,11 @@ class UiHandler(BaseHTTPRequestHandler):
                 content_type = mimetypes.guess_type(asset_path)[0] or "application/octet-stream"
                 self._send_bytes(_read_asset(asset_path), content_type=content_type)
             elif path == "/api/config":
-                config = dict(RUNTIME_CONFIG)
+                config = load_config()
                 config.update(
                     {
+                        "host": RUNTIME_CONFIG.get("host", config.get("host")),
+                        "port": RUNTIME_CONFIG.get("port", config.get("port")),
                         "auto_test_ws": str(AUTO_TEST_WS),
                         "config_path": str(CONFIG_PATH),
                         "setup_defaults": setup_defaults(),
@@ -389,6 +391,8 @@ class UiHandler(BaseHTTPRequestHandler):
             if exc.output:
                 response["output"] = exc.output
             self._send_json(response, status=exc.status)
+        except ValueError as exc:
+            self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
         except Exception as exc:  # noqa: BLE001
             self._send_json({"error": str(exc)}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
 

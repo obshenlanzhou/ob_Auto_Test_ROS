@@ -100,14 +100,18 @@
                 </select>
               </label>
               <label>
+                <span>ROS Domain ID</span>
+                <input id="rosDomainId" name="ros_domain_id" type="number" min="0" max="232" step="1" placeholder="留空（不设置）" />
+              </label>
+              <label>
                 <span>ROS Setup</span>
                 <input id="rosSetup" name="ros_setup" autocomplete="off" />
               </label>
+              <label>
+                <span>Camera ROS Setup</span>
+                <input id="cameraSetup" name="camera_setup" autocomplete="off" placeholder="/path/to/orbbecsdk_ros2/install/setup.bash" />
+              </label>
             </div>
-            <label>
-              <span>Camera ROS Setup</span>
-              <input id="cameraSetup" name="camera_setup" autocomplete="off" placeholder="/path/to/orbbecsdk_ros2/install/setup.bash" />
-            </label>
           </section>
 
           <section class="form-section">
@@ -245,6 +249,12 @@
 
           <section class="form-section">
             <div class="section-title"><span>02</span><div>基础参数<small>Required and common options</small></div></div>
+            <div class="grid two standalone-global-fields">
+              <label>
+                <span>ROS Domain ID</span>
+                <input id="standaloneRosDomainId" name="ros_domain_id" type="number" min="0" max="232" step="1" placeholder="留空（不设置）" />
+              </label>
+            </div>
             <div id="standaloneBasicFields" class="dynamic-fields"></div>
           </section>
 

@@ -1,15 +1,21 @@
 from pathlib import Path
+import os
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PACKAGE_ROOT))
 
+import orbbec_camera_auto_test_ui.run_manager as run_manager  # noqa: E402
 from orbbec_camera_auto_test_ui.run_manager import (  # noqa: E402
+    _build_shell_script,
+    _ros_domain_environment_command,
     _build_runner_args,
     build_performance_metrics,
+    normalize_ros_domain_id,
     validate_run_payload,
 )
 
@@ -47,6 +53,45 @@ class RunConfigurationTest(unittest.TestCase):
         payload["launch_file"] = "gemini2L.launch.py"
         payload["launch_config"] = "dual_color"
         self.assertTrue(any("not supported" in item for item in validate_run_payload(payload)))
+
+    def test_ros2_domain_id_is_validated_and_exported(self):
+        self.assertEqual(normalize_ros_domain_id("007"), "7")
+        self.assertEqual(
+            _ros_domain_environment_command("2", "7"), "export ROS_DOMAIN_ID=7"
+        )
+        self.assertEqual(
+            _ros_domain_environment_command("2", ""), "unset ROS_DOMAIN_ID"
+        )
+        self.assertEqual(_ros_domain_environment_command("1", "7"), "")
+
+        payload = self.base_payload()
+        payload["ros_domain_id"] = "42"
+        script, _commands, _shell = _build_shell_script(
+            payload, Path("/tmp/domain-results")
+        )
+        self.assertIn("export ROS_DOMAIN_ID=42", script)
+        self.assertIn("[UI] ROS_DOMAIN_ID=42", script)
+
+    def test_ros_domain_id_rejects_out_of_range_and_non_integer_values(self):
+        for value in ("-1", "1.5", "233", "domain"):
+            payload = self.base_payload()
+            payload["ros_domain_id"] = value
+            self.assertTrue(
+                any("Domain ID" in item for item in validate_run_payload(payload)),
+                value,
+            )
+
+    def test_ros_domain_id_config_does_not_inherit_environment_and_persists_override(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "ui_config.json"
+            with patch.object(run_manager, "CONFIG_PATH", config_path), patch.dict(
+                os.environ, {"ROS_DOMAIN_ID": "19"}
+            ):
+                self.assertEqual(run_manager.load_config()["ros_domain_id"], "")
+                run_manager.save_config({"ros_domain_id": "21"})
+                self.assertEqual(run_manager.load_config()["ros_domain_id"], "21")
+                run_manager.save_config({"ros_domain_id": ""})
+                self.assertEqual(run_manager.load_config()["ros_domain_id"], "")
 
     def test_point_cloud_does_not_reuse_depth_image_metadata(self):
         with tempfile.TemporaryDirectory() as temp_dir:

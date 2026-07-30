@@ -166,12 +166,14 @@ function deviceQueryPayload() {
     const defaults = state.setupDefaults[rosVersion] || {};
     return {
       ros_version: rosVersion,
+      ros_domain_id: $("standaloneRosDomainId").value.trim(),
       ros_setup: values.ros_setup || defaults.ros_setup || "",
       camera_setup: values.driver_setup || defaults.driver_setup || "",
     };
   }
   return {
     ros_version: $("rosVersion").value,
+    ros_domain_id: $("rosDomainId").value.trim(),
     ros_setup: $("rosSetup").value.trim(),
     camera_setup: $("cameraSetup").value.trim(),
   };
@@ -308,6 +310,7 @@ function showDeviceInfo() {
 function formPayload() {
   return {
     ros_version: $("rosVersion").value,
+    ros_domain_id: $("rosDomainId").value.trim(),
     ros_setup: $("rosSetup").value.trim(),
     camera_setup: $("cameraSetup").value.trim(),
     mode: $("mode").value,
@@ -594,6 +597,16 @@ function updateStandaloneRosVersion(rosVersion) {
   if (launchFile) {
     launchFile.value = launchFileForRosVersion(launchFile.value, rosVersion);
   }
+  updateStandaloneDomainControl(rosVersion);
+}
+
+function updateStandaloneDomainControl(rosVersion) {
+  const control = $("standaloneRosDomainId");
+  const enabled = String(rosVersion) === "2";
+  control.disabled = !enabled;
+  control.title = enabled
+    ? "ROS 2 Domain ID，留空表示不设置"
+    : "ROS 1 不使用 Domain ID";
 }
 
 function renderStandaloneForm(testId = "") {
@@ -624,6 +637,9 @@ function renderStandaloneForm(testId = "") {
       updateStandaloneConditions();
     });
   }
+  updateStandaloneDomainControl(
+    document.querySelector('[data-standalone-input="ros_version"]')?.value || "2"
+  );
   updateStandaloneConditions();
   clearValidation("standaloneForm", "standaloneValidation");
 }
@@ -654,6 +670,7 @@ function truthy(value) {
 
 const DURATION_PATTERN = /^\d+(?:\.\d+)?[smh]?$/i;
 const FRAMEWORK_ERROR_FIELDS = [
+  ["domain id", "rosDomainId"],
   ["camera ros setup", "cameraSetup"],
   ["ros setup", "rosSetup"],
   ["launch_file", "launchFile"],
@@ -685,7 +702,10 @@ function validateDurationControl(control, { required = false } = {}) {
   return null;
 }
 
-function validateNumberControl(control, { integer = false, min = null, strictMin = false } = {}) {
+function validateNumberControl(
+  control,
+  { integer = false, min = null, max = null, strictMin = false } = {}
+) {
   const value = control.value.trim();
   if (!value) return null;
   const number = Number(value);
@@ -695,6 +715,9 @@ function validateNumberControl(control, { integer = false, min = null, strictMin
   }
   if (min !== null && (strictMin ? number <= min : number < min)) {
     return validationIssue(control, `${label}必须${strictMin ? "大于" : "大于或等于"} ${min}`);
+  }
+  if (max !== null && number > max) {
+    return validationIssue(control, `${label}必须小于或等于 ${max}`);
   }
   return null;
 }
@@ -707,6 +730,12 @@ function validateFrameworkForm() {
   if (!$("launchFile").value.trim()) {
     errors.push(validationIssue($("launchFile"), "请选择 Launch 文件"));
   }
+  const domainError = validateNumberControl($("rosDomainId"), {
+    integer: true,
+    min: 0,
+    max: 232,
+  });
+  if (domainError) errors.push(domainError);
   const runCountError = validateNumberControl($("runCount"), { integer: true, min: 0, strictMin: true });
   if (runCountError) errors.push(runCountError);
 
@@ -753,6 +782,12 @@ function validateStandaloneForm() {
   if (!state.standaloneTest) {
     return [validationIssue($("standaloneTest"), "请选择一个独立脚本")];
   }
+  const domainError = validateNumberControl($("standaloneRosDomainId"), {
+    integer: true,
+    min: 0,
+    max: 232,
+  });
+  if (domainError) errors.push(domainError);
   for (const field of state.standaloneTest.fields || []) {
     const wrapper = document.querySelector(`.standalone-field[data-field-name="${field.name}"]`);
     if (!wrapper || wrapper.classList.contains("is-hidden")) continue;
@@ -863,6 +898,9 @@ function serverValidationIssues(error, standalone = false) {
     const normalized = String(message).toLowerCase();
     let target = null;
     if (standalone) {
+      if (normalized.includes("domain id")) {
+        target = $("standaloneRosDomainId");
+      }
       const field = (state.standaloneTest?.fields || []).find((item) =>
         normalized.includes(String(item.label || item.name).toLowerCase()) ||
         normalized.includes(String(item.name).toLowerCase())
@@ -870,7 +908,7 @@ function serverValidationIssues(error, standalone = false) {
       const wrapper = field
         ? document.querySelector(`.standalone-field[data-field-name="${field.name}"]`)
         : null;
-      target = wrapper?.querySelector("input, select, textarea") || wrapper;
+      target = target || wrapper?.querySelector("input, select, textarea") || wrapper;
     } else {
       const match = FRAMEWORK_ERROR_FIELDS.find(([hint]) => normalized.includes(hint));
       target = match ? $(match[1]) : null;
@@ -1385,6 +1423,11 @@ function updateRosVersionControls({ fillBlank = false } = {}) {
   const defaults = setupDefaultsForVersion($("rosVersion").value);
   $("rosSetup").placeholder = defaults.ros;
   $("cameraSetup").placeholder = defaults.cameraPlaceholder || defaults.camera;
+  const domainEnabled = $("rosVersion").value === "2";
+  $("rosDomainId").disabled = !domainEnabled;
+  $("rosDomainId").title = domainEnabled
+    ? "ROS 2 Domain ID，留空表示不设置"
+    : "ROS 1 不使用 Domain ID";
   if (fillBlank) {
     if (!$("rosSetup").value.trim()) {
       $("rosSetup").value = defaults.ros;
@@ -1416,6 +1459,8 @@ async function loadConfig() {
   state.config = config;
   state.setupDefaults = config.setup_defaults || {};
   $("rosVersion").value = config.ros_version || "2";
+  $("rosDomainId").value = config.ros_domain_id || "";
+  $("standaloneRosDomainId").value = config.ros_domain_id || "";
   $("rosSetup").value = config.ros_setup || "";
   $("cameraSetup").value = config.camera_setup || "";
   $("mode").value = config.mode || "functional";
@@ -1559,6 +1604,7 @@ async function startStandaloneRun(event) {
       body: JSON.stringify({
         test_id: test.id,
         confirmed_test_id: confirmedTestId,
+        ros_domain_id: $("standaloneRosDomainId").value.trim(),
         values: standaloneCurrentValues(),
       }),
     });

@@ -42,7 +42,7 @@ cd "$HOME/ORBBEC/ob_Auto_Test_ROS/auto_test_ws"
 ```bash
 curl -X POST http://127.0.0.1:8000/api/devices \
   -H 'Content-Type: application/json' \
-  -d '{"ros_version":"2","ros_setup":"/opt/ros/humble/setup.bash","camera_setup":"/path/to/driver/install/setup.bash"}'
+  -d '{"ros_version":"2","ros_domain_id":"0","ros_setup":"/opt/ros/humble/setup.bash","camera_setup":"/path/to/driver/install/setup.bash"}'
 ```
 
 响应中的 `devices` 是结构化相机列表，`output` 保留节点原始输出；该查询接口仅支持
@@ -90,6 +90,10 @@ export ORBBEC_ROS2_CAMERA_SETUP=/path/to/ros2_driver/install/setup.bash
 export ORBBEC_ROS1_CAMERA_SETUP=/path/to/ros1_driver/devel/setup.bash
 ./run_camera_auto_test_ui.sh
 ```
+
+ROS 2 的 Domain ID 可在自动化框架和独立脚本页面配置，允许范围为 `0-232`。
+配置后，测试进程以及顶部“相机信息”查询都会使用对应的 `ROS_DOMAIN_ID`；留空表示
+不设置，执行前会清除从 Web UI 服务进程继承的 `ROS_DOMAIN_ID`。ROS 1 运行时不注入该变量。
 
 依赖包括 `PyYAML`、`psutil` 以及对应 ROS 版本的 `rclpy` 或 `rospy`。运行 `stress` 场景还需要安装 `stress-ng`。
 

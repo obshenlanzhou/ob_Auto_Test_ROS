@@ -78,6 +78,7 @@ def test_query_camera_devices_sources_setups_and_returns_parsed_data(tmp_path):
         payload = query_camera_devices(
             {
                 "ros_version": "2",
+                "ros_domain_id": "18",
                 "ros_setup": str(ros_setup),
                 "camera_setup": str(camera_setup),
             }
@@ -89,6 +90,7 @@ def test_query_camera_devices_sources_setups_and_returns_parsed_data(tmp_path):
     assert command[:2] == ["bash", "-lc"]
     assert f"source '{ros_setup}'" in command[2]
     assert f"source '{camera_setup}'" in command[2]
+    assert "export ROS_DOMAIN_ID=18" in command[2]
     assert "ros2 run orbbec_camera list_devices_node" in command[2]
 
 
@@ -99,6 +101,22 @@ def test_query_camera_devices_rejects_ros1_before_running_command():
 
     assert error.value.status == 400
     run.assert_not_called()
+
+
+def test_query_camera_devices_unsets_inherited_domain_when_value_is_empty(tmp_path):
+    ros_setup = tmp_path / "setup.bash"
+    ros_setup.touch()
+    completed = SimpleNamespace(returncode=0, stdout="")
+
+    with patch(
+        "orbbec_camera_auto_test_ui.device_info.subprocess.run",
+        return_value=completed,
+    ) as run:
+        query_camera_devices(
+            {"ros_version": "2", "ros_domain_id": "", "ros_setup": str(ros_setup)}
+        )
+
+    assert "unset ROS_DOMAIN_ID" in run.call_args.args[0][2]
 
 
 def test_query_camera_devices_exposes_command_failure_output(tmp_path):
