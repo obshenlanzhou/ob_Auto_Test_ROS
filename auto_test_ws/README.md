@@ -35,6 +35,10 @@ cd "$HOME/ORBBEC/ob_Auto_Test_ROS/auto_test_ws"
 两个入口共用运行监控和历史归档，任一时刻只运行一个任务。固件与 Preset 升级会在
 启动前二次确认，停止时等待当前升级操作到达安全点。
 
+关闭 Web UI 时，`Ctrl+C` 或 `SIGTERM` 会先停止当前测试并等待结果状态落盘，再关闭
+HTTP 服务。普通测试超时未退出时会依次发送 `SIGTERM`、`SIGKILL` 清理进程组；固件与
+Preset 升级等 safe-point 任务会持续等待当前操作到达安全点，再次按 `Ctrl+C` 才强制终止。
+
 顶部的“相机信息”会使用当前页面填写的 ROS 2 与 Camera ROS Setup 执行
 `ros2 run orbbec_camera list_devices_node`，展示所有已连接相机的型号、PID、序列号、
 连接方式、固件、USB 端口和 Preset。也可以直接调用同一接口：

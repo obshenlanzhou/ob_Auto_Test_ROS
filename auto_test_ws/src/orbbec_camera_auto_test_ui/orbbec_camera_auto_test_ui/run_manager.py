@@ -1003,6 +1003,9 @@ class TestJob:
     ended_at: Optional[str] = None
     logs: List[str] = field(default_factory=list)
     lock: threading.Lock = field(default_factory=threading.Lock)
+    stop_requested: bool = False
+    stop_signal_sent: bool = False
+    done_event: threading.Event = field(default_factory=threading.Event)
 
     def add_command_line(self, command_line: str) -> None:
         with self.lock:
@@ -1257,31 +1260,81 @@ class RunManager:
     def stop(self) -> Dict[str, Any]:
         with self._lock:
             job = self._current
-        if job is None or job.process is None or job.status not in {"starting", "running"}:
+        if job is None or job.status not in {"starting", "running", "stopping"}:
             return {"status": "idle"}
 
+        first_request = not job.stop_requested
+        job.stop_requested = True
         job.status = "stopping"
-        if job.stop_policy == "safe-point":
-            job.add_log("[UI] requesting safe-point stop with SIGINT")
-        else:
-            job.add_log("[UI] stopping test with SIGINT")
-        try:
+        if first_request:
             if job.stop_policy == "safe-point":
-                job.process.send_signal(signal.SIGINT)
+                job.add_log("[UI] requesting safe-point stop with SIGINT")
             else:
-                os.killpg(os.getpgid(job.process.pid), signal.SIGINT)
-        except ProcessLookupError:
-            pass
+                job.add_log("[UI] stopping test with SIGINT")
+        self._send_requested_stop(job)
         return job.snapshot()
 
+    @staticmethod
+    def _signal_process(job: TestJob, sig: signal.Signals, *, process_group: bool) -> None:
+        process = job.process
+        if process is None or process.poll() is not None:
+            return
+        try:
+            if process_group:
+                os.killpg(os.getpgid(process.pid), sig)
+            else:
+                process.send_signal(sig)
+        except OSError:
+            pass
+
+    def _send_requested_stop(self, job: TestJob) -> None:
+        with job.lock:
+            if job.process is None or job.stop_signal_sent:
+                return
+            job.stop_signal_sent = True
+        self._signal_process(
+            job,
+            signal.SIGINT,
+            process_group=job.stop_policy != "safe-point",
+        )
+
+    def shutdown(self, timeout: float = 10.0, *, force: bool = False) -> bool:
+        """Stop the active job and wait until its status/results are finalized."""
+        with self._lock:
+            job = self._current
+        if job is None or job.status not in {"starting", "running", "stopping"}:
+            return True
+
+        self.stop()
+        if force:
+            job.add_log("[UI] forcing shutdown with SIGTERM")
+            self._signal_process(job, signal.SIGTERM, process_group=True)
+        elif job.stop_policy == "safe-point":
+            job.add_log("[UI] waiting for the current operation to reach a safe point")
+            job.done_event.wait()
+            return True
+
+        if job.done_event.wait(timeout=max(0.0, timeout)):
+            return True
+
+        job.add_log("[UI] test did not stop in time; sending SIGTERM")
+        self._signal_process(job, signal.SIGTERM, process_group=True)
+        if job.done_event.wait(timeout=5.0):
+            return True
+
+        job.add_log("[UI] test did not terminate; sending SIGKILL")
+        self._signal_process(job, signal.SIGKILL, process_group=True)
+        return job.done_event.wait(timeout=5.0)
+
     def _run_job(self, job: TestJob, script: str) -> None:
-        job.status = "running"
+        if not job.stop_requested:
+            job.status = "running"
         job.add_log(f"[UI] run id: {job.run_id}")
         job.add_log(f"[UI] results dir: {job.run_root}")
         job.add_log(f"[UI] shell: {job.shell}")
 
         try:
-            job.process = subprocess.Popen(
+            process = subprocess.Popen(
                 [job.shell, "-lc", script],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
@@ -1289,15 +1342,19 @@ class RunManager:
                 bufsize=1,
                 start_new_session=True,
             )
-            assert job.process.stdout is not None
-            for line in job.process.stdout:
+            with job.lock:
+                job.process = process
+            if job.stop_requested:
+                self._send_requested_stop(job)
+            assert process.stdout is not None
+            for line in process.stdout:
                 text = line.rstrip("\n")
                 if text.startswith("[UI] command: "):
                     job.add_command_line(text.removeprefix("[UI] command: ").strip())
                 elif text == "[UI] command done":
                     job.clear_command_line()
                 job.add_log(line)
-            job.exit_code = job.process.wait()
+            job.exit_code = process.wait()
             if job.runner_type == "standalone":
                 result, contract_errors = validate_result_contract(
                     job.run_root / "result.json",
@@ -1327,21 +1384,26 @@ class RunManager:
             job.add_log(f"[UI] failed to run test: {exc}")
         finally:
             job.ended_at = datetime.now().isoformat(timespec="seconds")
-            write_json(
-                job.run_root / "ui_status.json",
-                {
-                    "run_id": job.run_id,
-                    "mode": job.mode,
-                    "status": job.status,
-                    "exit_code": job.exit_code,
-                    "started_at": job.started_at,
-                    "ended_at": job.ended_at,
-                    "results_dir": str(job.run_root),
-                    "command_lines": job.command_lines,
-                    "shell": job.shell,
-                    "runner_type": job.runner_type,
-                    "test_id": job.test_id,
-                    "stop_policy": job.stop_policy,
-                },
-            )
-            job.add_log(f"[UI] finished with status={job.status}, exit_code={job.exit_code}")
+            try:
+                write_json(
+                    job.run_root / "ui_status.json",
+                    {
+                        "run_id": job.run_id,
+                        "mode": job.mode,
+                        "status": job.status,
+                        "exit_code": job.exit_code,
+                        "started_at": job.started_at,
+                        "ended_at": job.ended_at,
+                        "results_dir": str(job.run_root),
+                        "command_lines": job.command_lines,
+                        "shell": job.shell,
+                        "runner_type": job.runner_type,
+                        "test_id": job.test_id,
+                        "stop_policy": job.stop_policy,
+                    },
+                )
+                job.add_log(
+                    f"[UI] finished with status={job.status}, exit_code={job.exit_code}"
+                )
+            finally:
+                job.done_event.set()

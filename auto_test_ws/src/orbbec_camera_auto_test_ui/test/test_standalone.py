@@ -1,6 +1,8 @@
 from pathlib import Path
 import json
+import os
 import re
+import signal
 import subprocess
 import sys
 
@@ -169,6 +171,7 @@ def test_run_manager_requires_valid_standalone_result(tmp_path):
     )
     manager._run_job(job, "true")
     assert job.status == "failed"
+    assert job.done_event.is_set()
     assert any("result.json is missing" in line for line in job.logs)
 
 
@@ -201,6 +204,103 @@ def test_run_manager_accepts_valid_standalone_result(tmp_path):
     manager._run_job(job, "true")
     assert job.status == "passed"
     assert job.exit_code == 0
+
+
+class _FakeProcess:
+    def __init__(self, pid=1234):
+        self.pid = pid
+        self.signals = []
+
+    def poll(self):
+        return None
+
+    def send_signal(self, value):
+        self.signals.append(value)
+
+
+class _ImmediateEvent:
+    def __init__(self, result=False):
+        self.result = result
+        self.waits = []
+
+    def wait(self, timeout=None):
+        self.waits.append(timeout)
+        return self.result
+
+    def set(self):
+        self.result = True
+
+
+def test_stop_requested_during_start_is_delivered_after_process_is_created(tmp_path):
+    manager = RunManager()
+    job = _TestJob(
+        run_id="run-starting",
+        mode="functional",
+        run_root=tmp_path,
+        command_lines=[],
+        shell="bash",
+    )
+    manager._current = job
+
+    snapshot = manager.stop()
+    assert snapshot["status"] == "stopping"
+    assert job.stop_requested is True
+    assert job.stop_signal_sent is False
+
+    process = _FakeProcess()
+    job.process = process
+    manager._send_requested_stop(job)
+    assert job.stop_signal_sent is True
+
+
+def test_safe_point_stop_signals_only_the_script_process(tmp_path, monkeypatch):
+    manager = RunManager()
+    process = _FakeProcess()
+    job = _TestJob(
+        run_id="safe-run",
+        mode="standalone:upgrade",
+        run_root=tmp_path,
+        command_lines=[],
+        shell="bash",
+        process=process,
+        status="running",
+        stop_policy="safe-point",
+    )
+    manager._current = job
+    group_signals = []
+    monkeypatch.setattr(os, "killpg", lambda pid, sig: group_signals.append((pid, sig)))
+
+    manager.stop()
+
+    assert process.signals == [signal.SIGINT]
+    assert group_signals == []
+
+
+def test_shutdown_escalates_an_unresponsive_immediate_process_group(tmp_path, monkeypatch):
+    manager = RunManager()
+    process = _FakeProcess()
+    event = _ImmediateEvent(result=False)
+    job = _TestJob(
+        run_id="hung-run",
+        mode="functional",
+        run_root=tmp_path,
+        command_lines=[],
+        shell="bash",
+        process=process,
+        status="running",
+        done_event=event,
+    )
+    manager._current = job
+    signals = []
+    monkeypatch.setattr(os, "getpgid", lambda pid: pid)
+    monkeypatch.setattr(os, "killpg", lambda pid, sig: signals.append((pid, sig)))
+
+    assert manager.shutdown(timeout=0) is False
+    assert [item[1] for item in signals] == [
+        signal.SIGINT,
+        signal.SIGTERM,
+        signal.SIGKILL,
+    ]
 
 
 def test_standalone_snapshot_reports_initial_and_current_round(tmp_path):

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import mimetypes
+import signal
 import shutil
 import sys
 from http import HTTPStatus
@@ -429,12 +430,25 @@ def main() -> None:
     server = ThreadingHTTPServer((host, port), UiHandler)
     print(f"Orbbec camera auto test UI: http://{host}:{port}", flush=True)
     print(f"Results root: {UI_RESULTS_ROOT}", flush=True)
+
+    def request_shutdown(_signum: int, _frame: Any) -> None:
+        raise KeyboardInterrupt
+
+    previous_sigterm = signal.getsignal(signal.SIGTERM)
+    signal.signal(signal.SIGTERM, request_shutdown)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        print("\nUI server stopped", flush=True)
+        print("\nStopping UI server and active test...", flush=True)
+        try:
+            MANAGER.shutdown()
+        except KeyboardInterrupt:
+            print("Second interrupt received; forcing active test to stop...", flush=True)
+            MANAGER.shutdown(timeout=3.0, force=True)
     finally:
         server.server_close()
+        signal.signal(signal.SIGTERM, previous_sigterm)
+    print("UI server stopped", flush=True)
 
 
 if __name__ == "__main__":
