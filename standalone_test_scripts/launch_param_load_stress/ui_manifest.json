@@ -9,8 +9,8 @@
   "fields": [
     {"name": "ros_version", "option": "--ros-version", "type": "select", "label": "ROS 版本", "section": "basic", "default": "2", "choices": [{"value": "2", "label": "ROS 2"}, {"value": "1", "label": "ROS 1"}]},
     {"name": "ros_setup", "option": "--ros-setup", "type": "path", "label": "ROS Setup", "section": "basic", "default": "/opt/ros/humble/setup.bash"},
-    {"name": "driver_setup", "option": "--driver-setup", "type": "path", "label": "Driver Setup", "section": "basic", "default": ""},
-    {"name": "launch_file", "option": "--launch-file", "type": "path", "label": "Launch 文件", "section": "basic", "default": "", "required": true},
+    {"name": "driver_setup", "option": "--driver-setup", "type": "path", "label": "Driver Setup", "section": "basic", "default": "", "placeholder": "/path/to/orbbec_camera/install/setup.bash"},
+    {"name": "launch_file", "option": "--launch-file", "type": "path", "label": "Launch 文件", "section": "basic", "default": "", "required": true, "placeholder": "gemini_330_series.launch.py"},
     {"name": "cameras", "option": "--camera", "type": "camera-list", "label": "相机", "section": "basic", "default": [], "required": true, "config_file_required": true},
     {"name": "run_count", "option": "--run-count", "type": "integer", "label": "最大循环次数", "section": "basic", "default": "1", "min": 1},
     {"name": "duration", "option": "--duration", "type": "duration", "label": "最长运行时间", "section": "basic", "default": ""},

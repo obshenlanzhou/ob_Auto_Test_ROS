@@ -101,11 +101,11 @@
               </label>
               <label>
                 <span>ROS Domain ID</span>
-                <input id="rosDomainId" name="ros_domain_id" type="number" min="0" max="232" step="1" placeholder="留空（不设置）" />
+                <input id="rosDomainId" name="ros_domain_id" type="number" min="0" max="232" step="1" placeholder="0（留空表示不设置）" />
               </label>
               <label>
                 <span>ROS Setup</span>
-                <input id="rosSetup" name="ros_setup" autocomplete="off" />
+                <input id="rosSetup" name="ros_setup" autocomplete="off" placeholder="/opt/ros/humble/setup.bash" />
               </label>
               <label>
                 <span>Camera ROS Setup</span>
@@ -172,7 +172,7 @@
             </div>
 
             <div id="streamTopicFields">
-              <label><span>Image Topics</span><textarea id="imageTopics" name="image_topics" rows="3" placeholder="/{camera}/color/image_raw"></textarea></label>
+              <label><span>Image Topics</span><textarea id="imageTopics" name="image_topics" rows="3" placeholder="/{camera}/color/image_raw&#10;/{camera}/depth/image_raw"></textarea></label>
             </div>
           </section>
 
@@ -205,9 +205,9 @@
             <div class="section-content">
               <div class="grid two">
                 <label><span>Camera Name</span><input id="cameraName" name="camera_name" placeholder="camera" /></label>
-                <label><span>Serial Number</span><input id="serialNumber" name="serial_number" /></label>
-                <label><span>USB Port</span><input id="usbPort" name="usb_port" /></label>
-                <label><span>Config File Path</span><input id="configFilePath" name="config_file_path" /></label>
+                <label><span>Serial Number</span><input id="serialNumber" name="serial_number" placeholder="CV2R1610002F" /></label>
+                <label><span>USB Port</span><input id="usbPort" name="usb_port" placeholder="2-1" /></label>
+                <label><span>Config File Path</span><input id="configFilePath" name="config_file_path" placeholder="/path/to/camera_config.yaml" /></label>
               </div>
             </div>
           </details>
@@ -215,7 +215,7 @@
           <details class="form-section compact-section">
             <summary class="section-title"><span>05</span><div>Launch 参数<small>Advanced launch options</small></div><i aria-hidden="true">⌄</i></summary>
             <div class="section-content">
-              <label><span>Extra Launch Args</span><textarea id="launchArgs" name="launch_args" rows="4" placeholder="enable_point_cloud=true"></textarea></label>
+              <label><span>Extra Launch Args</span><textarea id="launchArgs" name="launch_args" rows="4" placeholder="enable_point_cloud=true&#10;enable_colored_point_cloud=true"></textarea></label>
             </div>
           </details>
 
@@ -252,7 +252,7 @@
             <div class="grid two standalone-global-fields">
               <label>
                 <span>ROS Domain ID</span>
-                <input id="standaloneRosDomainId" name="ros_domain_id" type="number" min="0" max="232" step="1" placeholder="留空（不设置）" />
+                <input id="standaloneRosDomainId" name="ros_domain_id" type="number" min="0" max="232" step="1" placeholder="0（留空表示不设置）" />
               </label>
             </div>
             <div id="standaloneBasicFields" class="dynamic-fields"></div>

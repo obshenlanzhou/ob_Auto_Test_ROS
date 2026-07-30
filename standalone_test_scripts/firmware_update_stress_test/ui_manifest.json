@@ -10,8 +10,8 @@
   "fields": [
     {"name": "ros_version", "option": "--ros-version", "type": "select", "label": "ROS 版本", "section": "basic", "default": "2", "choices": [{"value": "2", "label": "ROS 2"}, {"value": "1", "label": "ROS 1"}]},
     {"name": "ros_setup", "option": "--ros-setup", "type": "path", "label": "ROS Setup", "section": "basic", "default": "/opt/ros/humble/setup.bash"},
-    {"name": "driver_setup", "option": "--driver-setup", "type": "path", "label": "Driver Setup", "section": "basic", "default": ""},
-    {"name": "firmwares", "option": "--firmware", "type": "list", "label": "固件文件（每行一个）", "section": "basic", "default": [], "required": true},
+    {"name": "driver_setup", "option": "--driver-setup", "type": "path", "label": "Driver Setup", "section": "basic", "default": "", "placeholder": "/path/to/orbbec_camera/install/setup.bash"},
+    {"name": "firmwares", "option": "--firmware", "type": "list", "label": "固件文件（每行一个）", "section": "basic", "default": [], "required": true, "placeholder": "/path/to/firmware_a.bin\n/path/to/firmware_b.bin"},
     {"name": "cameras", "option": "--camera", "type": "camera-list", "label": "目标相机", "section": "basic", "default": []},
     {"name": "run_count", "option": "--run-count", "type": "integer", "label": "最大升级次数", "section": "basic", "default": "10", "min": 1},
     {"name": "duration", "option": "--duration", "type": "duration", "label": "最长运行时间", "section": "basic", "default": ""},

@@ -431,6 +431,7 @@ def test_standalone_ros_change_handler_updates_version_dependent_fields():
     assert "function updateStandaloneRosVersion(rosVersion)" in script
     assert "updateStandaloneRosVersion(control.value)" in script
     assert "launchFileForRosVersion(launchFile.value, rosVersion)" in script
+    assert "launchFileForRosVersion(launchFile.placeholder, rosVersion)" in script
 
 
 def test_camera_editor_separates_usb_and_network_fields():
@@ -450,3 +451,39 @@ def test_camera_editor_separates_usb_and_network_fields():
     assert 'createCameraGroup("network", "网络相机"' in script
     assert "＋ 添加 USB 相机" in script
     assert "＋ 添加网络相机" in script
+
+
+def test_multi_value_fields_show_at_least_two_examples():
+    for manifest in load_manifests(STANDALONE_ROOT):
+        for field in manifest["fields"]:
+            if field["type"] != "list":
+                continue
+            examples = [
+                line.strip()
+                for line in str(field.get("placeholder") or "").splitlines()
+                if line.strip()
+            ]
+            assert len(examples) >= 2, (manifest["id"], field["name"])
+
+    template = (
+        PACKAGE_ROOT
+        / "orbbec_camera_auto_test_ui"
+        / "templates"
+        / "index.html"
+    ).read_text(encoding="utf-8")
+    assert 'placeholder="enable_point_cloud=true&#10;enable_colored_point_cloud=true"' in template
+    assert 'placeholder="/{camera}/color/image_raw&#10;/{camera}/depth/image_raw"' in template
+
+
+def test_dynamic_fields_use_direct_placeholders_without_example_prefix():
+    script = (
+        PACKAGE_ROOT
+        / "orbbec_camera_auto_test_ui"
+        / "static"
+        / "app.js"
+    ).read_text(encoding="utf-8")
+
+    assert 'control.placeholder = field.placeholder || "示例值 1\\n示例值 2"' in script
+    assert '"serial-number": "CV2R1610002F"' in script
+    assert '"device-ip": "192.168.1.10"' in script
+    assert "例如：" not in script

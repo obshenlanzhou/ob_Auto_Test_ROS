@@ -9,8 +9,8 @@
   "fields": [
     {"name": "ros_version", "option": "--ros-version", "type": "select", "label": "ROS 版本", "section": "basic", "default": "2", "choices": [{"value": "2", "label": "ROS 2"}, {"value": "1", "label": "ROS 1"}]},
     {"name": "ros_setup", "option": "--ros-setup", "type": "path", "label": "ROS Setup", "section": "basic", "default": "/opt/ros/humble/setup.bash"},
-    {"name": "driver_setup", "option": "--driver-setup", "type": "path", "label": "Driver Setup", "section": "basic", "default": ""},
-    {"name": "image_topics", "option": "--image-topic", "type": "list", "label": "图像 Topic（每行一个）", "section": "basic", "default": [], "required": true},
+    {"name": "driver_setup", "option": "--driver-setup", "type": "path", "label": "Driver Setup", "section": "basic", "default": "", "placeholder": "/path/to/orbbec_camera/install/setup.bash"},
+    {"name": "image_topics", "option": "--image-topic", "type": "list", "label": "图像 Topic（每行一个）", "section": "basic", "default": [], "required": true, "placeholder": "/camera/color/image_raw\n/camera/depth/image_raw"},
     {"name": "duration", "option": "--duration", "type": "duration", "label": "最长运行时间", "section": "basic", "default": ""},
     {"name": "warning_interval_sec", "option": "--warning-interval-sec", "type": "number", "label": "告警间隔秒数", "section": "basic", "default": "1.0", "min": 0.001},
     {"name": "warmup_sec", "option": "--warmup-sec", "type": "number", "label": "预热秒数", "section": "basic", "default": "2.0", "min": 0},

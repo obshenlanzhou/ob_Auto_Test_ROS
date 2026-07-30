@@ -348,6 +348,14 @@ const CAMERA_FIELD_LABELS = {
   "device-port": "Device Port",
   "config-file-path": "Config File Path",
 };
+const CAMERA_FIELD_PLACEHOLDERS = {
+  name: "camera_01",
+  "serial-number": "CV2R1610002F",
+  "usb-port": "2-1",
+  "device-ip": "192.168.1.10",
+  "device-port": "8090",
+  "config-file-path": "/path/to/camera_config.yaml",
+};
 const CAMERA_FIELDS_BY_KIND = {
   usb: ["name", "serial-number", "usb-port", "config-file-path"],
   network: ["name", "device-ip", "device-port", "config-file-path"],
@@ -386,6 +394,7 @@ function addCameraRow(container, kind, camera = {}) {
     input.type = "text";
     input.dataset.cameraField = name;
     input.value = camera[name] || "";
+    input.placeholder = CAMERA_FIELD_PLACEHOLDERS[name] || "";
     label.append(title, input);
     row.appendChild(label);
   }
@@ -453,7 +462,12 @@ function createStandaloneField(field, value) {
       createCameraGroup("usb", "USB 相机", "Serial Number / USB Port"),
       createCameraGroup("network", "网络相机", "Device IP / Device Port")
     );
-    wrapper.append(header, editor);
+    const examples = document.createElement("p");
+    examples.className = "field-note camera-examples";
+    examples.textContent = field.max_items === 1
+      ? "示例：name=camera_01,serial-number=CV2R1610002F,usb-port=2-1"
+      : "示例 1：name=camera_01,usb-port=2-1；示例 2：name=camera_02,device-ip=192.168.1.10,device-port=8090";
+    wrapper.append(header, examples, editor);
     const cameras = Array.isArray(value) ? value.filter(cameraHasValues) : [];
     cameras.forEach((camera) => addCameraRow(editor, cameraKind(camera), camera));
     addUsb.addEventListener("click", () => {
@@ -486,7 +500,7 @@ function createStandaloneField(field, value) {
     control = document.createElement("textarea");
     control.rows = 3;
     control.value = Array.isArray(value) ? value.join("\n") : String(value || "");
-    control.placeholder = "每行填写一个值";
+    control.placeholder = field.placeholder || "示例值 1\n示例值 2";
   } else if (field.type === "flag" || field.type === "boolean") {
     label.classList.add("checkbox-field", "standalone-checkbox");
     control = document.createElement("input");
@@ -500,7 +514,11 @@ function createStandaloneField(field, value) {
     if (field.min !== undefined) control.min = String(field.min);
     if (field.max !== undefined) control.max = String(field.max);
     control.value = String(value ?? "");
-    if (field.type === "duration") control.placeholder = "300 / 15m / 2h";
+    if (field.placeholder) {
+      control.placeholder = field.placeholder;
+    } else if (field.type === "duration") {
+      control.placeholder = "300 / 15m / 2h";
+    }
   }
   control.dataset.standaloneInput = field.name;
   if (field.required) control.required = true;
@@ -596,6 +614,7 @@ function updateStandaloneRosVersion(rosVersion) {
   }
   if (launchFile) {
     launchFile.value = launchFileForRosVersion(launchFile.value, rosVersion);
+    launchFile.placeholder = launchFileForRosVersion(launchFile.placeholder, rosVersion);
   }
   updateStandaloneDomainControl(rosVersion);
 }

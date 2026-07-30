@@ -763,6 +763,12 @@ h3 {
   gap: 7px;
 }
 
+.camera-examples {
+  margin: 0 0 8px;
+  font-family: var(--mono);
+  font-size: 9px;
+}
+
 .camera-editor {
   display: grid;
   gap: 10px;
