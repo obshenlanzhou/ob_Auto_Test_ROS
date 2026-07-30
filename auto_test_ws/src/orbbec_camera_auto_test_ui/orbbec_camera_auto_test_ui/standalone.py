@@ -316,6 +316,7 @@ def validate_result_contract(
         errors.append(f"result.json has an invalid status: {payload.get('status')}")
     for key, expected_type in (
         ("request", dict),
+        ("environment", dict),
         ("summary", dict),
         ("warnings", list),
         ("details", dict),

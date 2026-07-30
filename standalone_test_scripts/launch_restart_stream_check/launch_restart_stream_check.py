@@ -17,10 +17,12 @@ from _test_protocol import (
     EventWriter,
     artifact_list,
     atomic_write_json,
+    collect_test_environment,
     contract_result,
     iso_now,
     namespace_request,
     parse_camera,
+    test_environment_markdown,
 )
 
 DEFAULT_CAMERA_LAUNCH = {
@@ -545,6 +547,7 @@ def build_summary(result: Dict[str, Any]) -> str:
     lines = [
         "# Launch Restart Stream Check",
         "",
+        *test_environment_markdown(result.get("environment", {})),
         "## Command",
         "",
         "```bash",
@@ -595,6 +598,7 @@ def run(args) -> int:
     signal.signal(signal.SIGINT, handle_sigint)
     runtime_env = prepare_runtime_env(args)
     apply_python_paths(runtime_env)
+    environment = collect_test_environment(args)
 
     run_id = datetime.now().strftime("%Y%m%d_%H%M%S_restart_stream")
     run_started_at = iso_now()
@@ -655,6 +659,7 @@ def run(args) -> int:
     result: Dict[str, Any] = {
         "status": "passed",
         "tool_version": TOOL_VERSION,
+        "environment": environment,
         "ros_version": args.ros_version,
         "command": command,
         "launch_file": launch_file,

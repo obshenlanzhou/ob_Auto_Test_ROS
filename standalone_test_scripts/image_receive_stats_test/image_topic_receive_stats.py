@@ -26,9 +26,11 @@ from _test_protocol import (
     EventWriter,
     artifact_list,
     atomic_write_json,
+    collect_test_environment,
     contract_result,
     iso_now,
     namespace_request,
+    test_environment_markdown,
 )
 
 DEFAULT_WARNING_INTERVAL_SEC = 1.0
@@ -691,6 +693,7 @@ class ReceiveStatsCore:
         self.include_header_seq = include_header_seq
         self.metadata = metadata
         self.request = request
+        self.environment = collect_test_environment(request)
         self.run_id = os.path.basename(os.path.normpath(output_dir))
         self.started_at = iso_now()
         self.started_monotonic = time.monotonic()
@@ -895,6 +898,7 @@ class ReceiveStatsCore:
             details = {
                 "status": self.status,
                 "tool_version": TOOL_VERSION,
+                "environment": self.environment,
                 "topics": self.topics,
                 "elapsed_seconds": elapsed_seconds,
                 "topic_summaries": summary_rows,
@@ -911,6 +915,7 @@ class ReceiveStatsCore:
             summary_lines = [
                 "# Image Receive Statistics",
                 "",
+                *test_environment_markdown(self.environment),
                 "## Result",
                 "",
                 "- Status: {}".format(self.status),

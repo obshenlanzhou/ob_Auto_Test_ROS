@@ -18,10 +18,12 @@ from _test_protocol import (
     EventWriter,
     artifact_list,
     atomic_write_json,
+    collect_test_environment,
     contract_result,
     iso_now,
     namespace_request,
     parse_camera,
+    test_environment_markdown,
 )
 
 ENV_READY_VAR = "FIRMWARE_UPDATE_STRESS_TEST_ENV_READY"
@@ -259,6 +261,7 @@ def build_summary(result: Dict[str, Any]) -> str:
         f"- Elapsed seconds: `{result.get('elapsed_seconds', 0.0):.1f}`",
         f"- Results dir: `{result.get('results_dir', '')}`",
         "",
+        *test_environment_markdown(result.get("environment", {})),
         "## Targets",
         "",
     ]
@@ -308,6 +311,7 @@ def run(args) -> int:
     previous_sigint_handler = signal.getsignal(signal.SIGINT)
     signal.signal(signal.SIGINT, handle_sigint)
     runtime_env = prepare_runtime_env(args)
+    environment = collect_test_environment(args)
 
     firmwares = normalize_firmware_paths(args.firmware)
     cameras = [parse_camera(raw) for raw in args.camera] or [parse_camera("name=camera")]
@@ -345,6 +349,7 @@ def run(args) -> int:
     result: Dict[str, Any] = {
         "status": "passed",
         "tool_version": TOOL_VERSION,
+        "environment": environment,
         "ros_version": args.ros_version,
         "firmwares": [str(path) for path in firmwares],
         "cameras": cameras,

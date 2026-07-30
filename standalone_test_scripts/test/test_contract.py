@@ -39,6 +39,7 @@ RESULT_KEYS = {
     "ended_at",
     "duration_seconds",
     "request",
+    "environment",
     "summary",
     "warnings",
     "details",
@@ -144,6 +145,7 @@ def test_result_envelope_and_atomic_artifacts(tmp_path):
     assert set(persisted) == RESULT_KEYS
     assert persisted["status"] == "passed"
     assert persisted["duration_seconds"] == 2.0
+    assert persisted["environment"]["host"]["os"]
     assert event["event"] == "run_started"
     assert event["run_index"] == 1
     assert not (tmp_path / ".result.json.tmp").exists()
@@ -163,6 +165,69 @@ def test_result_envelope_normalizes_unknown_status_to_failed():
         details={"status": "unknown"},
     )
     assert payload["status"] == "failed"
+
+
+def test_environment_contains_host_ros_and_driver_details(tmp_path, monkeypatch):
+    protocol = load_protocol(PROTOCOLS[0])
+    prefix = tmp_path / "driver"
+    package_file = prefix / "share" / "orbbec_camera" / "package.xml"
+    package_file.parent.mkdir(parents=True)
+    package_file.write_text(
+        "<package><name>orbbec_camera</name><version>2.9.3</version></package>",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AMENT_PREFIX_PATH", str(prefix))
+    monkeypatch.setenv("ROS_DISTRO", "humble")
+    monkeypatch.setenv("ROS_VERSION", "2")
+    monkeypatch.setattr(
+        protocol.subprocess,
+        "run",
+        lambda *args, **kwargs: protocol.subprocess.CompletedProcess(
+            args[0],
+            0,
+            stdout=(
+                "Name: Orbbec Gemini 305\n"
+                "Serial: CV2R1610002F\n"
+                "Firmware version: 1.0.85\n"
+                "Connection: USB\n"
+                "USB port: 2-1\n"
+            ),
+        ),
+    )
+
+    environment = protocol.collect_test_environment(
+        {"ros_version": "2", "ros_setup": "/opt/ros/humble/setup.bash"}
+    )
+    host = environment["host"]
+    assert host["os"]
+    assert host["kernel"]
+    assert host["architecture"]
+    assert host["logical_cpus"] > 0
+    assert host["total_memory_gb"] > 0
+    assert host["ros_distro"] == "humble"
+    assert host["ros_version"] == "2"
+    assert host["camera_driver_version"] == "2.9.3"
+    assert environment["cameras"] == [
+        {
+            "camera_model": "Orbbec Gemini 305",
+            "serial_number": "CV2R1610002F",
+            "firmware_version": "1.0.85",
+            "connection": "USB",
+            "usb_port": "2-1",
+        }
+    ]
+
+    markdown = "\n".join(protocol.test_environment_markdown(environment))
+    assert "## Test Environment" in markdown
+    assert "Camera driver version: `2.9.3`" in markdown
+    assert "Orbbec Gemini 305" in markdown
+    assert "1.0.85" in markdown
+
+
+def test_all_summaries_include_test_environment_section():
+    for script in SCRIPTS.values():
+        source = script.read_text(encoding="utf-8")
+        assert "test_environment_markdown" in source, script
 
 
 def test_all_scripts_expose_kebab_case_common_options_without_ros_startup():

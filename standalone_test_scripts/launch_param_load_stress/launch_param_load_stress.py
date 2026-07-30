@@ -19,10 +19,12 @@ from _test_protocol import (
     EventWriter,
     artifact_list,
     atomic_write_json,
+    collect_test_environment,
     contract_result,
     iso_now,
     namespace_request,
     parse_camera,
+    test_environment_markdown,
 )
 
 try:
@@ -1091,6 +1093,7 @@ def build_summary(result: Dict[str, Any]) -> str:
     lines = [
         "# Launch Param Load Stress",
         "",
+        *test_environment_markdown(result.get("environment", {})),
         "## Command",
         "",
         "```bash",
@@ -1221,6 +1224,7 @@ def run(args) -> int:
     previous_sigint_handler = signal.getsignal(signal.SIGINT)
     signal.signal(signal.SIGINT, handle_sigint)
     runtime_env = prepare_runtime_env(args)
+    environment = collect_test_environment(args)
 
     cameras = [parse_camera_spec(raw) for raw in args.camera]
     shared_config_path = None
@@ -1271,6 +1275,7 @@ def run(args) -> int:
     result: Dict[str, Any] = {
         "status": "failed",
         "tool_version": TOOL_VERSION,
+        "environment": environment,
         "ros_version": args.ros_version,
         "cameras": [asdict(c) for c in cameras],
         "launch_package": args.launch_package,

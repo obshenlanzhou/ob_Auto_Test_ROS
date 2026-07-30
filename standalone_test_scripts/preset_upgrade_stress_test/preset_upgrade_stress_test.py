@@ -20,10 +20,12 @@ from _test_protocol import (
     EventWriter,
     artifact_list,
     atomic_write_json,
+    collect_test_environment,
     contract_result,
     iso_now,
     namespace_request,
     parse_camera,
+    test_environment_markdown,
 )
 
 ENV_READY_VAR = "PRESET_UPGRADE_STRESS_TEST_ENV_READY"
@@ -670,6 +672,7 @@ def build_summary(result: Dict[str, Any]) -> str:
     lines = [
         "# Preset Upgrade Stress Test",
         "",
+        *test_environment_markdown(result.get("environment", {})),
         "## Result",
         "",
         f"- Status: {result.get('status', '')}",
@@ -816,6 +819,7 @@ def run(args) -> int:
     signal.signal(signal.SIGINT, handle_sigint)
     runtime_env = prepare_runtime_env(args)
     apply_python_paths(runtime_env)
+    environment = collect_test_environment(args)
 
     cameras = [parse_camera_spec(raw) for raw in args.camera] or [
         parse_camera_spec("name=camera")
@@ -866,6 +870,7 @@ def run(args) -> int:
     result: Dict[str, Any] = {
         "status": "passed",
         "tool_version": TOOL_VERSION,
+        "environment": environment,
         "ros_version": args.ros_version,
         "launch_file": launch_file,
         "launch_package": args.launch_package,
