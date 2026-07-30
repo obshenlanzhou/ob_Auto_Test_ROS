@@ -8,6 +8,8 @@ const state = {
   standaloneTests: [],
   standaloneTest: null,
   setupDefaults: {},
+  resultSummaryRunId: null,
+  currentSnapshot: null,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -18,6 +20,7 @@ const THEME_COLORS = {
   dark: "#07101d",
 };
 const ACTIVE_RUN_STATUSES = new Set(["starting", "running", "stopping"]);
+const TERMINAL_RUN_STATUSES = new Set(["passed", "failed", "interrupted", "warning"]);
 const STATUS_LABELS = {
   idle: "空闲",
   starting: "启动中",
@@ -27,6 +30,18 @@ const STATUS_LABELS = {
   failed: "失败",
   interrupted: "已中断",
   warning: "警告",
+};
+const RESULT_SUMMARY_LABELS = {
+  rounds: "运行轮次",
+  successes: "成功次数",
+  successful_restarts: "成功重启",
+  launch_attempts: "启动轮次",
+  passed_runs: "通过轮次",
+  completed_runs: "完成轮次",
+  passed_tests: "通过测试",
+  completed_tests: "完成测试",
+  topic_count: "Topic 数量",
+  warning_count: "警告数量",
 };
 const DEFAULT_SETUPS = {
   "2": {
@@ -134,7 +149,10 @@ async function api(path, options = {}) {
   const payload = await response.json();
   if (!response.ok) {
     const message = payload.errors ? payload.errors.join("\n") : payload.error || response.statusText;
-    throw new Error(message);
+    const error = new Error(message);
+    error.details = payload.errors || [payload.error || response.statusText];
+    error.payload = payload;
+    throw error;
   }
   return payload;
 }
@@ -224,7 +242,10 @@ function addCameraRow(container, kind, camera = {}) {
   remove.type = "button";
   remove.className = "camera-remove";
   remove.textContent = "移除";
-  remove.addEventListener("click", () => row.remove());
+  remove.addEventListener("click", () => {
+    row.remove();
+    updateFormReadiness();
+  });
   row.appendChild(remove);
   container
     .querySelector(`.camera-group[data-camera-kind="${kind}"] .camera-rows`)
@@ -262,6 +283,7 @@ function createStandaloneField(field, value) {
     header.className = "camera-editor-header";
     const title = document.createElement("strong");
     title.textContent = field.label;
+    if (field.required) title.classList.add("required-label");
     const actions = document.createElement("div");
     actions.className = "camera-add-actions";
     const addUsb = document.createElement("button");
@@ -283,14 +305,21 @@ function createStandaloneField(field, value) {
     wrapper.append(header, editor);
     const cameras = Array.isArray(value) ? value.filter(cameraHasValues) : [];
     cameras.forEach((camera) => addCameraRow(editor, cameraKind(camera), camera));
-    addUsb.addEventListener("click", () => addCameraRow(editor, "usb"));
-    addNetwork.addEventListener("click", () => addCameraRow(editor, "network"));
+    addUsb.addEventListener("click", () => {
+      addCameraRow(editor, "usb");
+      updateFormReadiness();
+    });
+    addNetwork.addEventListener("click", () => {
+      addCameraRow(editor, "network");
+      updateFormReadiness();
+    });
     return wrapper;
   }
 
   const label = document.createElement("label");
   const title = document.createElement("span");
   title.textContent = field.label || field.name;
+  if (field.required) title.classList.add("required-label");
   let control;
   if (field.type === "select") {
     control = document.createElement("select");
@@ -371,6 +400,7 @@ function updateStandaloneConditions() {
     );
     wrapper.classList.toggle("is-hidden", !visible);
   }
+  updateFormReadiness();
 }
 
 function setupDefaultsForVersion(rosVersion) {
@@ -447,6 +477,7 @@ function renderStandaloneForm(testId = "") {
     });
   }
   updateStandaloneConditions();
+  clearValidation("standaloneForm", "standaloneValidation");
 }
 
 async function loadStandaloneTests() {
@@ -473,6 +504,248 @@ function truthy(value) {
   return ["1", "true", "yes", "on"].includes(String(value || "").toLowerCase());
 }
 
+const DURATION_PATTERN = /^\d+(?:\.\d+)?[smh]?$/i;
+const FRAMEWORK_ERROR_FIELDS = [
+  ["camera ros setup", "cameraSetup"],
+  ["ros setup", "rosSetup"],
+  ["launch_file", "launchFile"],
+  ["launch config", "launchConfig"],
+  ["launch arg", "launchArgs"],
+  ["run_count", "runCount"],
+  ["stable_seconds", "stableSeconds"],
+  ["stream_timeout", "streamTimeout"],
+  ["max_gap_seconds", "maxGapSeconds"],
+  ["restart_delay", "restartDelay"],
+  ["warning_interval_sec", "warningIntervalSec"],
+  ["warmup_sec", "warmupSec"],
+  ["queue_size", "queueSize"],
+  ["duration", "duration"],
+];
+
+function validationIssue(target, message) {
+  return { target, message };
+}
+
+function validateDurationControl(control, { required = false } = {}) {
+  const value = control.value.trim();
+  if (!value) {
+    return required ? validationIssue(control, `${control.closest("label")?.querySelector("span")?.textContent || "运行时长"}为必填项`) : null;
+  }
+  if (!DURATION_PATTERN.test(value)) {
+    return validationIssue(control, "请输入秒数，或使用 s / m / h 后缀，例如 300、15m");
+  }
+  return null;
+}
+
+function validateNumberControl(control, { integer = false, min = null, strictMin = false } = {}) {
+  const value = control.value.trim();
+  if (!value) return null;
+  const number = Number(value);
+  const label = control.closest("label")?.querySelector("span")?.textContent || "数值";
+  if (!Number.isFinite(number) || (integer && !Number.isInteger(number))) {
+    return validationIssue(control, `${label}必须是${integer ? "整数" : "数字"}`);
+  }
+  if (min !== null && (strictMin ? number <= min : number < min)) {
+    return validationIssue(control, `${label}必须${strictMin ? "大于" : "大于或等于"} ${min}`);
+  }
+  return null;
+}
+
+function validateFrameworkForm() {
+  const errors = [];
+  if (!$("rosSetup").value.trim()) {
+    errors.push(validationIssue($("rosSetup"), "ROS Setup 为必填项"));
+  }
+  if (!$("launchFile").value.trim()) {
+    errors.push(validationIssue($("launchFile"), "请选择 Launch 文件"));
+  }
+  const runCountError = validateNumberControl($("runCount"), { integer: true, min: 0, strictMin: true });
+  if (runCountError) errors.push(runCountError);
+
+  const mode = $("mode").value;
+  const durationError = validateDurationControl($("duration"), {
+    required: mode === "restart" || mode === "stream_stall",
+  });
+  if (durationError) errors.push(durationError);
+  for (const id of ["stableSeconds", "streamTimeout", "maxGapSeconds", "warmupSec"]) {
+    if (!$(id).closest(".is-hidden")) {
+      const error = validateDurationControl($(id));
+      if (error) errors.push(error);
+    }
+  }
+  for (const [id, options] of [
+    ["restartDelay", { min: 0 }],
+    ["warningIntervalSec", { min: 0, strictMin: true }],
+    ["queueSize", { integer: true, min: 0, strictMin: true }],
+  ]) {
+    if (!$(id).closest(".is-hidden")) {
+      const error = validateNumberControl($(id), options);
+      if (error) errors.push(error);
+    }
+  }
+
+  const invalidLaunchArg = $("launchArgs").value
+    .split("\n")
+    .map((item) => item.trim())
+    .find((item) => item && (!item.includes("=") || !item.split("=", 1)[0].trim()));
+  if (invalidLaunchArg) {
+    errors.push(validationIssue($("launchArgs"), `Launch 参数必须使用 KEY=VALUE：${invalidLaunchArg}`));
+  }
+  return errors;
+}
+
+function meaningfulCameraRows(wrapper) {
+  return [...wrapper.querySelectorAll(".camera-row")].filter((row) =>
+    [...row.querySelectorAll("[data-camera-field]")].some((input) => input.value.trim())
+  );
+}
+
+function validateStandaloneForm() {
+  const errors = [];
+  if (!state.standaloneTest) {
+    return [validationIssue($("standaloneTest"), "请选择一个独立脚本")];
+  }
+  for (const field of state.standaloneTest.fields || []) {
+    const wrapper = document.querySelector(`.standalone-field[data-field-name="${field.name}"]`);
+    if (!wrapper || wrapper.classList.contains("is-hidden")) continue;
+    if (field.type === "camera-list") {
+      const rows = meaningfulCameraRows(wrapper);
+      if (field.required && !rows.length) {
+        errors.push(validationIssue(wrapper, `${field.label || field.name}至少需要添加一台相机`));
+      }
+      if (field.max_items !== undefined && rows.length > Number(field.max_items)) {
+        errors.push(validationIssue(wrapper, `${field.label || field.name}最多允许 ${field.max_items} 台相机`));
+      }
+      if (field.config_file_required) {
+        rows.forEach((row, index) => {
+          const configInput = row.querySelector('[data-camera-field="config-file-path"]');
+          if (configInput && !configInput.value.trim()) {
+            errors.push(validationIssue(configInput, `相机 ${index + 1} 必须填写 Config File Path`));
+          }
+        });
+      }
+      continue;
+    }
+
+    const control = wrapper.querySelector("[data-standalone-input]");
+    const label = field.label || field.name;
+    const value = field.type === "list"
+      ? control.value.split("\n").map((item) => item.trim()).filter(Boolean)
+      : field.type === "flag" || field.type === "boolean"
+        ? control.checked
+        : control.value.trim();
+    const empty = value === "" || value === false || (Array.isArray(value) && !value.length);
+    if (field.required && empty) {
+      errors.push(validationIssue(control, `${label}为必填项`));
+      continue;
+    }
+    if (empty) continue;
+    if (field.type === "duration") {
+      const error = validateDurationControl(control);
+      if (error) errors.push(error);
+    } else if (field.type === "integer" || field.type === "number") {
+      const error = validateNumberControl(control, {
+        integer: field.type === "integer",
+        min: field.min ?? null,
+      });
+      if (error) errors.push(error);
+      const number = Number(control.value);
+      if (field.max !== undefined && Number.isFinite(number) && number > Number(field.max)) {
+        errors.push(validationIssue(control, `${label}必须小于或等于 ${field.max}`));
+      }
+    }
+  }
+  return errors;
+}
+
+function clearValidation(formId, summaryId) {
+  const form = $(formId);
+  form.querySelectorAll("[aria-invalid='true']").forEach((node) => node.removeAttribute("aria-invalid"));
+  form.querySelectorAll(".field-invalid").forEach((node) => node.classList.remove("field-invalid"));
+  form.querySelectorAll(".field-error").forEach((node) => node.remove());
+  const summary = $(summaryId);
+  summary.replaceChildren();
+  summary.classList.add("is-hidden");
+}
+
+function presentValidationErrors(formId, summaryId, errors, { focus = true } = {}) {
+  clearValidation(formId, summaryId);
+  if (!errors.length) return true;
+  const unique = errors.filter(
+    (error, index) => errors.findIndex((item) => item.message === error.message) === index
+  );
+  const summary = $(summaryId);
+  const title = document.createElement("strong");
+  title.textContent = `还有 ${unique.length} 项需要检查`;
+  const list = document.createElement("ul");
+  for (const error of unique) {
+    const item = document.createElement("li");
+    item.textContent = error.message;
+    list.appendChild(item);
+    const target = error.target;
+    if (!target) continue;
+    target.closest("details")?.setAttribute("open", "");
+    const control = target.matches?.("input, select, textarea")
+      ? target
+      : target.querySelector?.("input, select, textarea");
+    const host = control?.closest("label") || target;
+    host.classList.add("field-invalid");
+    if (control) control.setAttribute("aria-invalid", "true");
+    const note = document.createElement("small");
+    note.className = "field-error";
+    note.textContent = error.message;
+    host.appendChild(note);
+  }
+  summary.append(title, list);
+  summary.classList.remove("is-hidden");
+  if (focus) {
+    const target = unique[0]?.target;
+    const control = target?.matches?.("input, select, textarea")
+      ? target
+      : target?.querySelector?.("input, select, textarea");
+    (control || target)?.scrollIntoView?.({ behavior: "smooth", block: "center" });
+    control?.focus({ preventScroll: true });
+  }
+  return false;
+}
+
+function serverValidationIssues(error, standalone = false) {
+  const messages = Array.isArray(error.details) ? error.details : [error.message];
+  return messages.filter(Boolean).map((message) => {
+    const normalized = String(message).toLowerCase();
+    let target = null;
+    if (standalone) {
+      const field = (state.standaloneTest?.fields || []).find((item) =>
+        normalized.includes(String(item.label || item.name).toLowerCase()) ||
+        normalized.includes(String(item.name).toLowerCase())
+      );
+      const wrapper = field
+        ? document.querySelector(`.standalone-field[data-field-name="${field.name}"]`)
+        : null;
+      target = wrapper?.querySelector("input, select, textarea") || wrapper;
+    } else {
+      const match = FRAMEWORK_ERROR_FIELDS.find(([hint]) => normalized.includes(hint));
+      target = match ? $(match[1]) : null;
+    }
+    return validationIssue(target, String(message));
+  });
+}
+
+function updateFormReadiness() {
+  for (const [workspace, errors, node] of [
+    ["framework", validateFrameworkForm(), $("frameworkReadiness")],
+    ["standalone", validateStandaloneForm(), $("standaloneReadiness")],
+  ]) {
+    const ready = errors.length === 0;
+    node.classList.toggle("ready", ready);
+    node.classList.toggle("needs-attention", !ready);
+    node.querySelector("span").textContent = ready
+      ? "必填项已完整"
+      : `还需完善 ${errors.length} 项`;
+    node.title = workspace === "framework" ? "测试框架配置检查" : "独立脚本配置检查";
+  }
+}
+
 function setStatus(status) {
   const node = $("runStatus");
   const value = status || "idle";
@@ -493,7 +766,12 @@ function setStatus(status) {
   const showMonitor = value !== "idle";
   $("monitorEmpty").classList.toggle("is-hidden", showMonitor);
   $("monitorContent").classList.toggle("is-hidden", !showMonitor);
-  $("monitorEmpty").closest(".monitor").dataset.state = value;
+  const monitor = $("monitorEmpty").closest(".monitor");
+  monitor.dataset.state = value;
+  monitor.dataset.terminal = String(TERMINAL_RUN_STATUSES.has(value));
+  if (!TERMINAL_RUN_STATUSES.has(value)) {
+    $("runResultSummary").classList.add("is-hidden");
+  }
 }
 
 function updateMonitorEmptyCopy() {
@@ -626,6 +904,156 @@ function formatNumber(value, digits = 1) {
   const number = Number(value);
   if (!Number.isFinite(number)) return "--";
   return number.toFixed(digits);
+}
+
+function displayResultValue(value) {
+  if (value === null || value === undefined || value === "") return "—";
+  if (typeof value === "object") return JSON.stringify(value);
+  return String(value);
+}
+
+function resultSummaryLabel(key) {
+  return RESULT_SUMMARY_LABELS[key] || String(key).replaceAll("_", " ");
+}
+
+function resultStatusPresentation(status) {
+  return {
+    passed: { mark: "✓", kicker: "RUN COMPLETE", title: "测试已通过", message: "所有已报告的检查均已完成。" },
+    warning: { mark: "!", kicker: "COMPLETED WITH WARNINGS", title: "测试完成，有警告", message: "任务已完成，请检查警告信息和报告。" },
+    failed: { mark: "×", kicker: "RUN FAILED", title: "测试未通过", message: "任务执行失败，请检查摘要和实时日志。" },
+    interrupted: { mark: "■", kicker: "RUN INTERRUPTED", title: "测试已中断", message: "任务已停止，已生成的数据仍可在报告中查看。" },
+  }[status] || { mark: "·", kicker: "RUN COMPLETE", title: "测试已完成", message: "查看本次任务的运行结果。" };
+}
+
+function showExitCodeHelp() {
+  const dialog = $("exitCodeDialog");
+  if (typeof dialog.showModal === "function") {
+    dialog.showModal();
+  } else {
+    dialog.setAttribute("open", "");
+  }
+}
+
+function resultPayloadFrom(snapshot, detail = {}) {
+  const results = Object.values(detail.results || {}).filter(
+    (item) => item && typeof item === "object"
+  );
+  if (snapshot.runner_type === "standalone") {
+    return results[0] || snapshot.standalone?.result || {};
+  }
+  return results.find((item) => item.status === "failed") || results[0] || {};
+}
+
+function renderResultSummary(snapshot, detail = {}) {
+  const panel = $("runResultSummary");
+  if (!TERMINAL_RUN_STATUSES.has(snapshot.status) || !snapshot.run_id) {
+    panel.classList.add("is-hidden");
+    return;
+  }
+
+  const presentation = resultStatusPresentation(snapshot.status);
+  const result = resultPayloadFrom(snapshot, detail);
+  const results = Object.values(detail.results || {}).filter(
+    (item) => item && typeof item === "object"
+  );
+  const elapsed = snapshot.standalone?.elapsed_seconds ?? snapshot.performance?.elapsed_seconds;
+  const warnings = Array.isArray(result.warnings) ? result.warnings : [];
+  const errorValue = result.error?.message || result.error;
+
+  panel.dataset.status = snapshot.status;
+  $("runResultMark").textContent = presentation.mark;
+  panel.querySelector(".panel-kicker").textContent = presentation.kicker;
+  $("runResultTitle").textContent = presentation.title;
+  $("runResultMessage").textContent = errorValue
+    ? displayResultValue(errorValue)
+    : warnings.length
+      ? displayResultValue(warnings[0])
+      : presentation.message;
+
+  const facts = [
+    ["运行时长", formatDuration(elapsed)],
+    ["退出码", snapshot.exit_code ?? "—"],
+    ["结果文件", results.length || (Object.keys(result).length ? 1 : "—")],
+    ["结束时间", snapshot.ended_at ? snapshot.ended_at.replace("T", " ") : "—"],
+  ];
+  const factContainer = $("runResultFacts");
+  factContainer.replaceChildren();
+  for (const [labelText, value] of facts) {
+    const fact = document.createElement("div");
+    const label = document.createElement("span");
+    const strong = document.createElement("strong");
+    label.textContent = labelText;
+    if (labelText === "退出码") {
+      const help = document.createElement("button");
+      help.type = "button";
+      help.className = "exit-code-help";
+      help.textContent = "?";
+      help.title = "查看所有退出码的含义";
+      help.setAttribute("aria-label", "查看所有退出码的含义");
+      help.addEventListener("click", showExitCodeHelp);
+      label.appendChild(help);
+    }
+    strong.textContent = displayResultValue(value);
+    fact.append(label, strong);
+    factContainer.appendChild(fact);
+  }
+
+  const highlights = [];
+  for (const [key, value] of Object.entries(result.summary || {})) {
+    highlights.push([resultSummaryLabel(key), displayResultValue(value)]);
+  }
+  if (!highlights.length && snapshot.runner_type !== "standalone") {
+    const statuses = results.map((item) => item.status).filter(Boolean);
+    if (statuses.length) {
+      highlights.push(
+        ["通过结果", statuses.filter((status) => status === "passed").length],
+        ["失败结果", statuses.filter((status) => status === "failed").length]
+      );
+    }
+    const topics = snapshot.performance?.fps_topics || [];
+    if (topics.length) highlights.push(["数据流", `${topics.length} 个 Topic`]);
+  }
+  if (warnings.length) highlights.push(["警告", `${warnings.length} 条`]);
+
+  const highlightContainer = $("runResultHighlights");
+  highlightContainer.replaceChildren();
+  for (const [labelText, value] of highlights.slice(0, 6)) {
+    const item = document.createElement("div");
+    const label = document.createElement("span");
+    const strong = document.createElement("strong");
+    label.textContent = labelText;
+    strong.textContent = displayResultValue(value);
+    strong.title = displayResultValue(value);
+    item.append(label, strong);
+    highlightContainer.appendChild(item);
+  }
+  highlightContainer.classList.toggle("is-hidden", !highlightContainer.children.length);
+  panel.classList.remove("is-hidden");
+}
+
+async function updateResultSummary(snapshot) {
+  state.currentSnapshot = snapshot;
+  if (!TERMINAL_RUN_STATUSES.has(snapshot.status) || !snapshot.run_id) {
+    $("runResultSummary").classList.add("is-hidden");
+    state.resultSummaryRunId = null;
+    return;
+  }
+  renderResultSummary(snapshot);
+  if (state.resultSummaryRunId === snapshot.run_id) return;
+  try {
+    const detail = await api(`/api/runs/${encodeURIComponent(snapshot.run_id)}`);
+    if (state.currentSnapshot?.run_id === snapshot.run_id) {
+      renderResultSummary(snapshot, detail);
+    }
+    if (
+      TERMINAL_RUN_STATUSES.has(detail.ui_status?.status) ||
+      Object.keys(detail.results || {}).length
+    ) {
+      state.resultSummaryRunId = snapshot.run_id;
+    }
+  } catch (error) {
+    appendLogs([`[UI] result summary load failed: ${error.message}`]);
+  }
 }
 
 function renderPerformance(performance = {}) {
@@ -830,7 +1258,7 @@ function updateModeControls() {
   $("restartFields").classList.toggle("is-hidden", !needsRestart);
   $("streamStallFields").classList.toggle("is-hidden", !needsStreamStall);
   $("streamTopicFields").classList.toggle("is-hidden", !needsStreamTopics);
-
+  updateFormReadiness();
 }
 
 async function loadConfig() {
@@ -910,7 +1338,8 @@ async function pollStatus() {
     renderMonitor(payload);
     appendLogs(payload.logs || []);
     state.logOffset = payload.log_offset || state.logOffset;
-    if (["passed", "failed", "interrupted", "warning"].includes(payload.status)) {
+    await updateResultSummary(payload);
+    if (TERMINAL_RUN_STATUSES.has(payload.status)) {
       await loadRuns();
     }
   } catch (error) {
@@ -920,9 +1349,16 @@ async function pollStatus() {
 
 async function startRun(event) {
   event.preventDefault();
+  const validationErrors = validateFrameworkForm();
+  if (!presentValidationErrors("runForm", "frameworkValidation", validationErrors)) {
+    updateFormReadiness();
+    return;
+  }
   $("logOutput").textContent = "";
   $("reportView").textContent = "测试运行中...";
   state.logOffset = 0;
+  state.resultSummaryRunId = null;
+  $("runResultSummary").classList.add("is-hidden");
   try {
     const payload = await api("/api/run", {
       method: "POST",
@@ -934,8 +1370,17 @@ async function startRun(event) {
     appendLogs(payload.logs || []);
     state.logOffset = payload.log_offset || 0;
   } catch (error) {
-    setStatus("failed");
-    appendLogs([`[UI] start failed: ${error.message}`]);
+    if (Array.isArray(error.payload?.errors)) {
+      setStatus("idle");
+      presentValidationErrors(
+        "runForm",
+        "frameworkValidation",
+        serverValidationIssues(error)
+      );
+    } else {
+      setStatus("failed");
+      appendLogs([`[UI] start failed: ${error.message}`]);
+    }
   }
 }
 
@@ -943,6 +1388,11 @@ async function startStandaloneRun(event) {
   event.preventDefault();
   const test = state.standaloneTest;
   if (!test) return;
+  const validationErrors = validateStandaloneForm();
+  if (!presentValidationErrors("standaloneForm", "standaloneValidation", validationErrors)) {
+    updateFormReadiness();
+    return;
+  }
   let confirmedTestId = "";
   if (test.risk === "high") {
     if (!window.confirm(test.confirmation || "确认运行高风险脚本？")) return;
@@ -951,6 +1401,8 @@ async function startStandaloneRun(event) {
   $("logOutput").textContent = "";
   $("reportView").textContent = "独立脚本运行中...";
   state.logOffset = 0;
+  state.resultSummaryRunId = null;
+  $("runResultSummary").classList.add("is-hidden");
   try {
     const payload = await api("/api/standalone/run", {
       method: "POST",
@@ -966,8 +1418,17 @@ async function startStandaloneRun(event) {
     appendLogs(payload.logs || []);
     state.logOffset = payload.log_offset || 0;
   } catch (error) {
-    setStatus("failed");
-    appendLogs([`[UI] standalone start failed: ${error.message}`]);
+    if (Array.isArray(error.payload?.errors)) {
+      setStatus("idle");
+      presentValidationErrors(
+        "standaloneForm",
+        "standaloneValidation",
+        serverValidationIssues(error, true)
+      );
+    } else {
+      setStatus("failed");
+      appendLogs([`[UI] standalone start failed: ${error.message}`]);
+    }
   }
 }
 
@@ -1104,7 +1565,7 @@ function runItem(run) {
 
   const badge = document.createElement("span");
   badge.className = `badge ${run.status}`;
-  badge.textContent = run.status || "unknown";
+  badge.textContent = STATUS_LABELS[run.status] || run.status || "unknown";
   title.append(" ");
   title.appendChild(badge);
 
@@ -1241,6 +1702,14 @@ async function init() {
   switchWorkspace(initialWorkspace, false);
   $("runForm").addEventListener("submit", startRun);
   $("standaloneForm").addEventListener("submit", startStandaloneRun);
+  $("runForm").addEventListener("input", () => {
+    clearValidation("runForm", "frameworkValidation");
+    updateFormReadiness();
+  });
+  $("standaloneForm").addEventListener("input", () => {
+    clearValidation("standaloneForm", "standaloneValidation");
+    updateFormReadiness();
+  });
   $("stopButton").addEventListener("click", stopRun);
   $("standaloneStopButton").addEventListener("click", stopRun);
   $("refreshLaunches").addEventListener("click", loadLaunchFiles);
@@ -1252,6 +1721,12 @@ async function init() {
   $("copyLogs").addEventListener("click", copyLogs);
   $("clearLogs").addEventListener("click", () => {
     $("logOutput").textContent = "";
+  });
+  $("viewCurrentReport").addEventListener("click", async () => {
+    const runId = state.currentSnapshot?.run_id;
+    if (!runId) return;
+    await loadRunDetail(runId);
+    document.querySelector(".history-section")?.scrollIntoView({ behavior: "smooth" });
   });
   $("followLogs").addEventListener("change", () => {
     if ($("followLogs").checked) {
@@ -1278,6 +1753,7 @@ async function init() {
   await loadConfig();
   await loadStandaloneTests();
   loadLaunchFiles();
+  updateFormReadiness();
   await loadRuns();
   await pollStatus();
   state.polling = setInterval(pollStatus, 1000);
