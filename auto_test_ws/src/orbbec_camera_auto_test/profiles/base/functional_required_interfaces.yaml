@@ -1,0 +1,642 @@
+# Required ROS interfaces for supported single-camera launch files.
+#
+# A launch profile supplies the launch defaults that affect interface creation.
+# CLI/UI launch arguments override these defaults. Rules whose `when` mapping
+# matches the effective arguments become mandatory: an absent interface fails
+# the functional test instead of being silently removed by graph discovery.
+schema_version: 1
+
+launch_profiles:
+  # ROS2: single-IR camera families with identical interface-affecting defaults.
+  - name: ros2_single_ir_hw_align
+    ros_versions: ["2"]
+    launch_files:
+      - astra2.launch.py
+      - femto.launch.py
+      - femto_mega.launch.py
+    camera_models:
+      - Astra 2
+      - Femto
+    defaults:
+      device_type: camera
+      enable_color: true
+      enable_depth: true
+      enable_ir: true
+      enable_point_cloud: true
+      enable_colored_point_cloud: false
+      enable_accel: false
+      enable_gyro: false
+      enable_sync_output_accel_gyro: true
+      depth_registration: false
+      align_mode: HW
+      enable_publish_extrinsic: false
+      enable_enhanced_depth: false
+      enable_d2c_viewer: false
+      publish_tf: true
+
+  - name: ros2_single_ir_no_imu
+    ros_versions: ["2"]
+    launch_files:
+      - dabai_dcw2.launch.py
+      - dabai_max_pro.launch.py
+    camera_models:
+      - DaBai
+    defaults:
+      device_type: camera
+      enable_color: true
+      enable_depth: true
+      enable_ir: true
+      enable_point_cloud: true
+      enable_colored_point_cloud: false
+      depth_registration: false
+      align_mode: HW
+      enable_publish_extrinsic: false
+      enable_enhanced_depth: false
+      enable_d2c_viewer: false
+      publish_tf: true
+
+  - name: ros2_gemini2
+    ros_versions: ["2"]
+    launch_files:
+      - gemini2.launch.py
+      - gemini210.launch.py
+    camera_models:
+      - Gemini 2
+    defaults:
+      device_type: camera
+      enable_color: true
+      enable_depth: true
+      enable_ir: true
+      enable_point_cloud: true
+      enable_colored_point_cloud: false
+      enable_accel: false
+      enable_gyro: false
+      enable_sync_output_accel_gyro: true
+      depth_registration: true
+      align_mode: HW
+      enable_publish_extrinsic: false
+      enable_enhanced_depth: false
+      enable_d2c_viewer: false
+      publish_tf: true
+
+  - name: ros2_gemini2l
+    ros_versions: ["2"]
+    launch_files:
+      - gemini2L.launch.py
+    camera_models:
+      - Gemini 2L
+    config_overrides:
+      gemini2L_dual_ir.yaml:
+        enable_ir: false
+        enable_left_ir: true
+        enable_right_ir: true
+    defaults:
+      device_type: camera
+      enable_color: true
+      enable_depth: true
+      enable_ir: true
+      enable_point_cloud: true
+      enable_colored_point_cloud: false
+      enable_accel: false
+      enable_gyro: false
+      enable_sync_output_accel_gyro: false
+      depth_registration: false
+      align_mode: HW
+      enable_publish_extrinsic: false
+      enable_enhanced_depth: false
+      enable_d2c_viewer: false
+      publish_tf: true
+
+  - name: ros2_femto_bolt
+    ros_versions: ["2"]
+    launch_files:
+      - femto_bolt.launch.py
+    camera_models:
+      - Femto Bolt
+    defaults:
+      device_type: camera
+      enable_color: true
+      enable_depth: true
+      enable_ir: true
+      enable_point_cloud: false
+      enable_colored_point_cloud: false
+      enable_accel: false
+      enable_gyro: false
+      enable_sync_output_accel_gyro: true
+      depth_registration: false
+      align_mode: SW
+      enable_publish_extrinsic: false
+      enable_enhanced_depth: false
+      enable_d2c_viewer: false
+      publish_tf: true
+
+  - name: ros2_astra
+    ros_versions: ["2"]
+    launch_files:
+      - astra.launch.py
+    camera_models:
+      - Astra
+    defaults:
+      device_type: camera
+      enable_color: true
+      enable_depth: true
+      enable_ir: false
+      enable_point_cloud: true
+      enable_colored_point_cloud: false
+      depth_registration: false
+      align_mode: HW
+      enable_publish_extrinsic: false
+      enable_d2c_viewer: false
+      publish_tf: true
+
+  - name: ros2_dual_ir_hw_align
+    ros_versions: ["2"]
+    launch_files:
+      - dabai_a.launch.py
+      - dabai_al.launch.py
+      - gemini345.launch.py
+      - gemini345_lg.launch.py
+      - gemini435_le.launch.py
+    camera_models:
+      - DaBai
+      - Gemini 3
+      - Gemini 435Le
+    defaults:
+      device_type: camera
+      enable_color: true
+      enable_depth: true
+      enable_left_ir: false
+      enable_right_ir: false
+      enable_point_cloud: true
+      enable_colored_point_cloud: false
+      enable_accel: false
+      enable_gyro: false
+      enable_sync_output_accel_gyro: false
+      depth_registration: true
+      align_mode: HW
+      enable_publish_extrinsic: false
+      enable_enhanced_depth: false
+      enable_d2c_viewer: false
+      publish_tf: true
+
+  - name: ros2_dual_ir_sw_align
+    ros_versions: ["2"]
+    launch_files:
+      - gemini_301_series.launch.py
+      - gemini_330_series.launch.py
+      - gemini_330_series_low_cpu.launch.py
+    camera_models:
+      - DaBai
+      - Gemini 3
+      - Gemini 435Le
+    config_overrides:
+      gemini305_dual_color.yaml:
+        enable_left_color: true
+        enable_right_color: true
+    defaults:
+      device_type: camera
+      enable_color: true
+      enable_depth: true
+      enable_left_ir: false
+      enable_right_ir: false
+      enable_point_cloud: true
+      enable_colored_point_cloud: false
+      enable_accel: false
+      enable_gyro: false
+      enable_sync_output_accel_gyro: false
+      depth_registration: false
+      align_mode: SW
+      enable_publish_extrinsic: false
+      enable_enhanced_depth: false
+      enable_d2c_viewer: false
+      publish_tf: true
+
+  # Stream defaults are supplied by the external SDK JSON/YAML file. Core
+  # interfaces remain mandatory; explicit CLI stream overrides still activate
+  # the conditional rules below.
+  - name: ros2_sdk_json_camera
+    ros_versions: ["2"]
+    launch_files:
+      - gemini_330_series_sdk_json.launch.py
+    camera_models:
+      - Gemini 3
+    defaults:
+      device_type: camera
+      publish_tf: true
+
+  # ROS1 profiles.
+  - name: ros1_single_ir_no_imu
+    ros_versions: ["1"]
+    launch_files:
+      - dabai_dcw2.launch
+      - dabai_max_pro.launch
+    camera_models:
+      - DaBai
+    defaults:
+      device_type: camera
+      enable_color: true
+      enable_depth: true
+      enable_ir: true
+      enable_point_cloud: true
+      enable_colored_point_cloud: false
+      depth_registration: false
+      enable_d2c_viewer: false
+      publish_tf: true
+
+  - name: ros1_single_ir_imu
+    ros_versions: ["1"]
+    launch_files:
+      - femto.launch
+      - femto_mega.launch
+      - gemini2.launch
+      - gemini210.launch
+      - gemini2L.launch
+    camera_models:
+      - Femto
+      - Gemini 2
+    config_overrides:
+      gemini2L_dual_ir.yaml:
+        enable_ir: false
+        enable_left_ir: true
+        enable_right_ir: true
+    defaults:
+      device_type: camera
+      enable_color: true
+      enable_depth: true
+      enable_ir: true
+      enable_point_cloud: true
+      enable_colored_point_cloud: false
+      enable_accel: true
+      enable_gyro: true
+      enable_sync_output_accel_gyro: true
+      depth_registration: false
+      align_mode: HW
+      enable_d2c_viewer: false
+      publish_tf: true
+
+  - name: ros1_femto_bolt
+    ros_versions: ["1"]
+    launch_files:
+      - femto_bolt.launch
+    camera_models:
+      - Femto Bolt
+    defaults:
+      device_type: camera
+      enable_color: true
+      enable_depth: true
+      enable_ir: true
+      enable_point_cloud: true
+      enable_colored_point_cloud: false
+      enable_accel: true
+      enable_gyro: true
+      enable_sync_output_accel_gyro: true
+      depth_registration: false
+      align_mode: SW
+      enable_d2c_viewer: false
+      publish_tf: true
+
+  - name: ros1_astra
+    ros_versions: ["1"]
+    launch_files:
+      - astra.launch
+    camera_models:
+      - Astra
+    defaults:
+      device_type: camera
+      enable_color: true
+      enable_depth: true
+      enable_ir: false
+      enable_point_cloud: true
+      enable_colored_point_cloud: true
+      depth_registration: false
+      align_mode: SW
+      enable_d2c_viewer: false
+      publish_tf: true
+
+  - name: ros1_astra2
+    ros_versions: ["1"]
+    launch_files:
+      - astra2.launch
+    camera_models:
+      - Astra 2
+    defaults:
+      device_type: camera
+      enable_color: true
+      enable_depth: true
+      enable_ir: false
+      enable_point_cloud: true
+      enable_colored_point_cloud: false
+      enable_accel: true
+      enable_gyro: true
+      enable_sync_output_accel_gyro: true
+      depth_registration: false
+      align_mode: HW
+      enable_d2c_viewer: false
+      publish_tf: true
+
+  - name: ros1_dual_ir_hw_align
+    ros_versions: ["1"]
+    launch_files:
+      - dabai_a.launch
+      - dabai_al.launch
+      - gemini345.launch
+      - gemini345_lg.launch
+      - gemini435_le.launch
+    camera_models:
+      - DaBai
+      - Gemini 3
+      - Gemini 435Le
+    defaults:
+      device_type: camera
+      enable_color: true
+      enable_depth: true
+      enable_left_ir: false
+      enable_right_ir: false
+      enable_point_cloud: true
+      enable_colored_point_cloud: false
+      enable_accel: false
+      enable_gyro: false
+      enable_sync_output_accel_gyro: false
+      depth_registration: true
+      align_mode: HW
+      enable_d2c_viewer: false
+      publish_tf: true
+
+  - name: ros1_dual_ir_sw_align
+    ros_versions: ["1"]
+    launch_files:
+      - gemini_301_series.launch
+      - gemini_330_series.launch
+      - gemini_330_series_low_cpu.launch
+      - gemini_330_series_nodelet.launch
+      - gemini_330_series_nodelet_low_cpu.launch
+      - ob_camera.launch
+      - ob_camera_gdb.launch
+    camera_models:
+      - DaBai
+      - Gemini 3
+      - Gemini 435Le
+    config_overrides:
+      gemini305_dual_color.yaml:
+        enable_left_color: true
+        enable_right_color: true
+    defaults:
+      device_type: camera
+      enable_color: true
+      enable_depth: true
+      enable_left_ir: false
+      enable_right_ir: false
+      enable_point_cloud: true
+      enable_colored_point_cloud: false
+      enable_accel: false
+      enable_gyro: false
+      enable_sync_output_accel_gyro: false
+      depth_registration: false
+      align_mode: SW
+      enable_d2c_viewer: false
+      publish_tf: true
+
+  - name: ros1_sdk_json_camera
+    ros_versions: ["1"]
+    launch_files:
+      - gemini_330_series_sdk_json.launch
+    camera_models:
+      - Gemini 3
+    defaults:
+      device_type: camera
+      publish_tf: true
+
+rules:
+  - name: camera_core
+    required_topics:
+      - /{camera}/device_status
+      - /{camera}/depth_filters/status
+    required_services:
+      - /{camera}/get_device_info
+      - /{camera}/get_device_config
+      - /{camera}/get_sdk_version
+      - /{camera}/get_point_cloud_decimation
+      - /{camera}/set_point_cloud_decimation
+      - /{camera}/save_images
+      - /{camera}/save_point_cloud
+      - /{camera}/set_bag_recording
+      - /{camera}/reboot_device
+
+  - name: ros1_sdk_version_topic
+    ros_versions: ["1"]
+    required_topics:
+      - /{camera}/sdk_version
+
+  - name: static_tf
+    when:
+      publish_tf: true
+    required_topics:
+      - /tf_static
+
+  - name: color_stream
+    when:
+      enable_color: true
+    required_topics:
+      - /{camera}/color/image_raw
+      - /{camera}/color/camera_info
+    required_services:
+      - /{camera}/get_color_exposure
+      - /{camera}/set_color_exposure
+      - /{camera}/get_color_gain
+      - /{camera}/set_color_gain
+      - /{camera}/get_auto_white_balance
+      - /{camera}/set_auto_white_balance
+      - /{camera}/get_white_balance
+      - /{camera}/set_white_balance
+      - /{camera}/set_color_auto_exposure
+      - /{camera}/set_color_ae_roi
+      - /{camera}/set_color_flip
+      - /{camera}/set_color_mirror
+      - /{camera}/set_color_rotation
+      - /{camera}/toggle_color
+
+  - name: depth_stream
+    when:
+      enable_depth: true
+    required_topics:
+      - /{camera}/depth/image_raw
+      - /{camera}/depth/camera_info
+    required_services:
+      - /{camera}/get_depth_exposure
+      - /{camera}/set_depth_exposure
+      - /{camera}/get_depth_gain
+      - /{camera}/set_depth_gain
+      - /{camera}/set_depth_auto_exposure
+      - /{camera}/set_depth_ae_roi
+      - /{camera}/set_depth_flip
+      - /{camera}/set_depth_mirror
+      - /{camera}/set_depth_rotation
+      - /{camera}/toggle_depth
+
+  - name: ir_stream
+    when:
+      enable_ir: true
+    required_topics:
+      - /{camera}/ir/image_raw
+      - /{camera}/ir/camera_info
+    required_services:
+      - /{camera}/get_ir_exposure
+      - /{camera}/set_ir_exposure
+      - /{camera}/get_ir_gain
+      - /{camera}/set_ir_gain
+      - /{camera}/set_ir_auto_exposure
+      - /{camera}/set_ir_ae_roi
+      - /{camera}/set_ir_flip
+      - /{camera}/set_ir_mirror
+      - /{camera}/set_ir_rotation
+      - /{camera}/toggle_ir
+
+  - name: left_ir_stream
+    when:
+      enable_left_ir: true
+    required_topics:
+      - /{camera}/left_ir/image_raw
+      - /{camera}/left_ir/camera_info
+    required_services:
+      - /{camera}/get_left_ir_exposure
+      - /{camera}/set_left_ir_exposure
+      - /{camera}/get_left_ir_gain
+      - /{camera}/set_left_ir_gain
+      - /{camera}/set_left_ir_auto_exposure
+      - /{camera}/set_left_ir_ae_roi
+      - /{camera}/set_left_ir_flip
+      - /{camera}/set_left_ir_mirror
+      - /{camera}/set_left_ir_rotation
+      - /{camera}/toggle_left_ir
+
+  - name: right_ir_stream
+    when:
+      enable_right_ir: true
+    required_topics:
+      - /{camera}/right_ir/image_raw
+      - /{camera}/right_ir/camera_info
+    required_services:
+      - /{camera}/get_right_ir_exposure
+      - /{camera}/set_right_ir_exposure
+      - /{camera}/get_right_ir_gain
+      - /{camera}/set_right_ir_gain
+      - /{camera}/set_right_ir_auto_exposure
+      - /{camera}/set_right_ir_ae_roi
+      - /{camera}/set_right_ir_flip
+      - /{camera}/set_right_ir_mirror
+      - /{camera}/set_right_ir_rotation
+      - /{camera}/toggle_right_ir
+
+  - name: left_color_stream
+    when:
+      enable_left_color: true
+    required_topics:
+      - /{camera}/left_color/image_raw
+      - /{camera}/left_color/camera_info
+    required_services:
+      - /{camera}/get_left_color_exposure
+      - /{camera}/set_left_color_exposure
+      - /{camera}/get_left_color_gain
+      - /{camera}/set_left_color_gain
+      - /{camera}/set_left_color_auto_exposure
+      - /{camera}/set_left_color_ae_roi
+      - /{camera}/set_left_color_flip
+      - /{camera}/set_left_color_mirror
+      - /{camera}/set_left_color_rotation
+      - /{camera}/toggle_left_color
+
+  - name: right_color_stream
+    when:
+      enable_right_color: true
+    required_topics:
+      - /{camera}/right_color/image_raw
+      - /{camera}/right_color/camera_info
+    required_services:
+      - /{camera}/get_right_color_exposure
+      - /{camera}/set_right_color_exposure
+      - /{camera}/get_right_color_gain
+      - /{camera}/set_right_color_gain
+      - /{camera}/set_right_color_auto_exposure
+      - /{camera}/set_right_color_ae_roi
+      - /{camera}/set_right_color_flip
+      - /{camera}/set_right_color_mirror
+      - /{camera}/set_right_color_rotation
+      - /{camera}/toggle_right_color
+
+  - name: depth_point_cloud
+    when:
+      enable_point_cloud: true
+    required_topics:
+      - /{camera}/depth/points
+
+  - name: colored_point_cloud
+    when:
+      enable_colored_point_cloud: true
+      enable_color: true
+      enable_depth: true
+    required_topics:
+      - /{camera}/depth_registered/points
+
+  - name: accel_stream
+    when:
+      enable_sync_output_accel_gyro: false
+      enable_accel: true
+    required_topics:
+      - /{camera}/accel/sample
+      - /{camera}/accel/imu_info
+
+  - name: gyro_stream
+    when:
+      enable_sync_output_accel_gyro: false
+      enable_gyro: true
+    required_topics:
+      - /{camera}/gyro/sample
+      - /{camera}/gyro/imu_info
+
+  - name: synchronized_imu
+    when:
+      enable_sync_output_accel_gyro: true
+      enable_accel: true
+      enable_gyro: true
+    required_topics:
+      - /{camera}/gyro_accel/sample
+      - /{camera}/accel/imu_info
+      - /{camera}/gyro/imu_info
+
+  - name: software_aligned_depth
+    when:
+      depth_registration: true
+      align_mode: SW
+    required_topics:
+      - /{camera}/depth/image_unaligned
+
+  - name: enhanced_depth
+    when:
+      enable_enhanced_depth: true
+    required_topics:
+      - /{camera}/confidence/image_raw
+
+  - name: d2c_viewer
+    when:
+      enable_d2c_viewer: true
+      enable_color: true
+      enable_depth: true
+    required_topics:
+      - /{camera}/depth_to_color/image_raw
+
+  - name: ros2_depth_to_color_extrinsics
+    ros_versions: ["2"]
+    when:
+      enable_publish_extrinsic: true
+      enable_color: true
+      enable_depth: true
+    required_topics:
+      - /{camera}/depth_to_color
+
+  - name: ros1_depth_to_color_extrinsics
+    ros_versions: ["1"]
+    when:
+      enable_color: true
+      enable_depth: true
+    required_topics:
+      - /{camera}/depth_to_color

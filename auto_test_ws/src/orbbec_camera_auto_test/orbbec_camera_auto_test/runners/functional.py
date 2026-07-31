@@ -20,6 +20,12 @@ from ..core.reporter import build_functional_summary, collect_failures, ensure_d
 from ..core.ros_utils import RosHarness, resolve_service_type
 from ..core.session import TestSession, discover_orbbec_devices
 from ..profile.loader import CameraProfile, LaunchScenarioSpec, load_camera_profile
+from ..profile.requirements import (
+    LaunchRequirementProfile,
+    ResolvedInterfaceRequirements,
+    load_launch_requirement_profile,
+    resolve_required_interfaces,
+)
 from ..profile.templating import expand_launch_scenario
 
 
@@ -85,11 +91,19 @@ def _wait_for_camera_ready(
     harness.wait_for_node(camera_name, namespace=f"/{camera_name}", timeout=60.0)
     emit_status(f"camera node '/{camera_name}/{camera_name}' is online")
     emit_status(f"waiting for service '/{camera_name}/get_sdk_version'")
-    harness.wait_for_service(
-        f"/{camera_name}/get_sdk_version",
-        resolve_service_type("orbbec_camera_msgs/srv/GetString", harness.ros_version),
-        timeout=60.0,
-    )
+    try:
+        harness.wait_for_service(
+            f"/{camera_name}/get_sdk_version",
+            resolve_service_type(
+                "orbbec_camera_msgs/srv/GetString", harness.ros_version
+            ),
+            timeout=60.0,
+        )
+    except Exception as exc:  # noqa: BLE001
+        emit_status(
+            "readiness service is unavailable; continuing to required-interface "
+            f"validation: {exc}"
+        )
     emit_status(f"launch is ready for camera '{camera_name}'")
 
 
@@ -123,8 +137,81 @@ def _require_detected_camera(
     return discovery
 
 
+def _required_topic_unavailable_reason(spec, discovered_names: set[str]) -> str:
+    if spec.name not in discovered_names:
+        return f"required topic not advertised: {spec.name}"
+    if spec.paired_topic and spec.paired_topic not in discovered_names:
+        return (
+            f"required paired topic not advertised: {spec.paired_topic} "
+            f"(required by {spec.name})"
+        )
+    return ""
+
+
+def _required_service_unavailable_reason(spec, discovered_names: set[str]) -> str:
+    if spec.name not in discovered_names:
+        return f"required service not advertised: {spec.name}"
+    if spec.getter_name and spec.getter_name not in discovered_names:
+        return (
+            f"required getter service not advertised: {spec.getter_name} "
+            f"(required by {spec.name})"
+        )
+    return ""
+
+
+def _required_topic_failure(spec, reason: str, profile_name: str) -> Dict[str, Any]:
+    return {
+        "name": spec.name,
+        "type": spec.type,
+        "mode": spec.mode,
+        "validator": spec.validator,
+        "required": True,
+        "status": "failed",
+        "message": f"{reason}; requirement profile: {profile_name}",
+    }
+
+
+def _required_service_failure(spec, reason: str, profile_name: str) -> Dict[str, Any]:
+    return {
+        "name": spec.name,
+        "type": spec.type,
+        "mode": spec.mode,
+        "required": True,
+        "status": "failed",
+        "message": f"{reason}; requirement profile: {profile_name}",
+    }
+
+
+def _validate_requirement_catalog(
+    scenario: LaunchScenarioSpec,
+    requirements: ResolvedInterfaceRequirements,
+) -> None:
+    catalog_topics = {spec.name for spec in scenario.topics}
+    catalog_services = {spec.name for spec in scenario.services}
+    unknown_topics = sorted(set(requirements.required_topics) - catalog_topics)
+    unknown_services = sorted(set(requirements.required_services) - catalog_services)
+    if unknown_topics or unknown_services:
+        details = []
+        if unknown_topics:
+            details.append(f"topics={unknown_topics}")
+        if unknown_services:
+            details.append(f"services={unknown_services}")
+        raise ValueError(
+            "required-interface table references interfaces missing from the "
+            f"functional catalog: {', '.join(details)}"
+        )
+
+
+def _set_required_flags(
+    results: list[Dict[str, Any]], required_names: set[str]
+) -> None:
+    for item in results:
+        item["required"] = item.get("name") in required_names
+
+
 def _run_scenario(
     profile: CameraProfile,
+    requirement_profile: LaunchRequirementProfile,
     launch_file: str,
     scenario: LaunchScenarioSpec,
     base_launch_args: Dict[str, Any],
@@ -143,9 +230,19 @@ def _run_scenario(
     launch_args.update(scenario.launch_args)
     camera_name = str(launch_args.get("camera_name", "camera"))
     scenario = expand_launch_scenario(scenario, camera_name)
+    requirements = resolve_required_interfaces(
+        requirement_profile, launch_args, camera_name
+    )
+    required_topic_names = set(requirements.required_topics)
+    required_service_names = set(requirements.required_services)
+    _validate_requirement_catalog(scenario, requirements)
     write_json(
         scenario_dir / "launch_args.json",
-        {"launch_file": launch_file, "launch_args": launch_args},
+        {
+            "launch_file": launch_file,
+            "launch_args": launch_args,
+            "effective_launch_args": requirements.effective_launch_args,
+        },
     )
 
     session = TestSession(
@@ -163,6 +260,16 @@ def _run_scenario(
     scenario_result = {
         "name": scenario.name,
         "launch_args": launch_args,
+        "requirements": {
+            "profile_name": requirements.profile_name,
+            "camera_models": requirements.camera_models,
+            "matched_rules": requirements.matched_rules,
+            "required_topics": requirements.required_topics,
+            "required_services": requirements.required_services,
+            "missing_topics": [],
+            "missing_services": [],
+            "status": "not_checked",
+        },
         "graph_snapshot": {},
         "topics": [],
         "services": [],
@@ -184,6 +291,37 @@ def _run_scenario(
             discovered_service_names = {
                 item.get("name") for item in scenario_result["graph_snapshot"].get("services", [])
             }
+            topic_specs_by_name = {spec.name: spec for spec in scenario.topics}
+            service_specs_by_name = {spec.name: spec for spec in scenario.services}
+            missing_topic_reasons = {
+                name: reason
+                for name in requirements.required_topics
+                if (
+                    reason := _required_topic_unavailable_reason(
+                        topic_specs_by_name[name], discovered_topic_names
+                    )
+                )
+            }
+            missing_service_reasons = {
+                name: reason
+                for name in requirements.required_services
+                if (
+                    reason := _required_service_unavailable_reason(
+                        service_specs_by_name[name], discovered_service_names
+                    )
+                )
+            }
+            scenario_result["requirements"].update(
+                {
+                    "missing_topics": list(missing_topic_reasons),
+                    "missing_services": list(missing_service_reasons),
+                    "status": (
+                        "failed"
+                        if missing_topic_reasons or missing_service_reasons
+                        else "passed"
+                    ),
+                }
+            )
             discovered_topics = select_discovered_topic_specs(
                 scenario.topics, discovered_topic_names
             )
@@ -202,11 +340,22 @@ def _run_scenario(
                 )
                 for spec in artifact_services
             ]
-            if reboot_service is not None and reboot_service.name not in discovered_service_names:
-                scenario_result["reboot"] = {
-                    "status": "skipped",
-                    "message": "reboot service not discovered",
-                }
+            if reboot_service is not None and (
+                reboot_service.name not in discovered_service_names
+            ):
+                reason = missing_service_reasons.get(reboot_service.name)
+                if reason:
+                    scenario_result["reboot"] = _required_service_failure(
+                        reboot_service, reason, requirements.profile_name
+                    )
+                else:
+                    scenario_result["reboot"] = {
+                        "name": reboot_service.name,
+                        "type": reboot_service.type,
+                        "required": False,
+                        "status": "skipped",
+                        "message": "reboot service not discovered",
+                    }
                 reboot_service = None
             emit_status(
                 f"topic discovery selected {len(discovered_topics)}/{len(scenario.topics)} interfaces"
@@ -220,9 +369,23 @@ def _run_scenario(
             scenario_result["topics"] = run_topic_checks(
                 harness, discovered_topics, topic_log_path, emit_status=emit_status
             )
+            _set_required_flags(
+                scenario_result["topics"], required_topic_names
+            )
+            scenario_result["topics"].extend(
+                _required_topic_failure(
+                    topic_specs_by_name[name],
+                    reason,
+                    requirements.profile_name,
+                )
+                for name, reason in missing_topic_reasons.items()
+            )
             emit_status(f"testing scenario services for '{scenario.name}'")
             scenario_result["services"] = run_service_checks(
                 harness, regular_services, service_log_path, emit_status=emit_status
+            )
+            _set_required_flags(
+                scenario_result["services"], required_service_names
             )
             emit_status(f"testing scenario artifact services for '{scenario.name}'")
             scenario_result["artifacts"] = run_artifact_service_checks(
@@ -232,6 +395,18 @@ def _run_scenario(
                 service_log_path,
                 emit_status=emit_status,
             )
+            _set_required_flags(
+                scenario_result["artifacts"], required_service_names
+            )
+            for name, reason in missing_service_reasons.items():
+                spec = service_specs_by_name[name]
+                failure = _required_service_failure(
+                    spec, reason, requirements.profile_name
+                )
+                if spec.mode == "artifact":
+                    scenario_result["artifacts"].append(failure)
+                elif spec.mode != "reboot":
+                    scenario_result["services"].append(failure)
     except Exception as exc:  # noqa: BLE001
         scenario_result["status"] = "failed"
         scenario_result["message"] = str(exc)
@@ -239,12 +414,16 @@ def _run_scenario(
     finally:
         session.stop()
 
-    if any(
-        item.get("status") == "failed"
-        for item in (
-            scenario_result["topics"]
-            + scenario_result["services"]
-            + scenario_result["artifacts"]
+    if (
+        scenario_result["requirements"].get("status") == "failed"
+        or scenario_result["reboot"].get("status") == "failed"
+        or any(
+            item.get("status") == "failed"
+            for item in (
+                scenario_result["topics"]
+                + scenario_result["services"]
+                + scenario_result["artifacts"]
+            )
         )
     ):
         scenario_result["status"] = "failed"
@@ -286,6 +465,40 @@ def run_functional_test(args) -> int:
     }
 
     try:
+        requirement_profile = load_launch_requirement_profile(
+            launch_file, args.ros_version
+        )
+        for raw_scenario in profile.launch_scenarios:
+            validation_args = dict(base_launch_args)
+            validation_args.update(raw_scenario.launch_args)
+            validation_camera = str(validation_args.get("camera_name", "camera"))
+            validation_scenario = expand_launch_scenario(
+                raw_scenario, validation_camera
+            )
+            validation_requirements = resolve_required_interfaces(
+                requirement_profile, validation_args, validation_camera
+            )
+            _validate_requirement_catalog(
+                validation_scenario, validation_requirements
+            )
+        result["requirement_profile"] = {
+            "name": requirement_profile.name,
+            "launch_file": requirement_profile.launch_file,
+            "camera_models": requirement_profile.camera_models,
+        }
+        emit_status(
+            "matched required-interface profile "
+            f"'{requirement_profile.name}' for ROS {args.ros_version}"
+        )
+    except Exception as exc:  # noqa: BLE001
+        result["status"] = "failed"
+        result["preflight_error"] = str(exc)
+        emit_status(f"functional requirement preflight failed: {exc}")
+        write_json(results_dir / "result.json", result)
+        write_markdown(results_dir / "summary.md", build_functional_summary(result))
+        return 1
+
+    try:
         _require_detected_camera(
             args.driver_setup,
             emit_status,
@@ -305,6 +518,7 @@ def run_functional_test(args) -> int:
     for scenario in profile.launch_scenarios:
         scenario_result, reboot_spec = _run_scenario(
             profile=profile,
+            requirement_profile=requirement_profile,
             launch_file=launch_file,
             scenario=scenario,
             base_launch_args=base_launch_args,
@@ -370,8 +584,29 @@ def run_functional_test(args) -> int:
                     service_log_path,
                     emit_status=emit_status,
                 )
+                scenario_result["reboot"]["required"] = (
+                    reboot_spec.name
+                    in set(
+                        scenario_result.get("requirements", {}).get(
+                            "required_services", []
+                        )
+                    )
+                )
         except Exception as exc:  # noqa: BLE001
-            scenario_result["reboot"] = {"status": "failed", "message": str(exc)}
+            scenario_result["reboot"] = {
+                "name": reboot_spec.name,
+                "type": reboot_spec.type,
+                "required": (
+                    reboot_spec.name
+                    in set(
+                        scenario_result.get("requirements", {}).get(
+                            "required_services", []
+                        )
+                    )
+                ),
+                "status": "failed",
+                "message": str(exc),
+            }
             emit_status(f"reboot recovery check failed for '{scenario.name}': {exc}")
         finally:
             reboot_session.stop()
