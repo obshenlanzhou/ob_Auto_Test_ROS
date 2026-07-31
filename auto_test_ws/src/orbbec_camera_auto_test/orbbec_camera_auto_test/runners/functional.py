@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+import time
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
@@ -27,6 +28,10 @@ from ..profile.requirements import (
     resolve_required_interfaces,
 )
 from ..profile.templating import expand_launch_scenario
+
+
+REQUIRED_INTERFACE_DISCOVERY_TIMEOUT = 10.0
+REQUIRED_INTERFACE_DISCOVERY_INTERVAL = 0.2
 
 
 def _parse_scalar(value: str) -> Any:
@@ -86,9 +91,10 @@ def _make_status_logger(*log_paths: Path):
 def _wait_for_camera_ready(
     session: TestSession, harness: RosHarness, camera_name: str, emit_status
 ) -> None:
-    session.assert_running()
+    session.assert_healthy()
     emit_status(f"waiting for camera node '/{camera_name}/{camera_name}'")
     harness.wait_for_node(camera_name, namespace=f"/{camera_name}", timeout=60.0)
+    session.assert_healthy()
     emit_status(f"camera node '/{camera_name}/{camera_name}' is online")
     emit_status(f"waiting for service '/{camera_name}/get_sdk_version'")
     try:
@@ -100,10 +106,12 @@ def _wait_for_camera_ready(
             timeout=60.0,
         )
     except Exception as exc:  # noqa: BLE001
+        session.assert_healthy()
         emit_status(
             "readiness service is unavailable; continuing to required-interface "
             f"validation: {exc}"
         )
+    session.assert_healthy()
     emit_status(f"launch is ready for camera '{camera_name}'")
 
 
@@ -209,6 +217,83 @@ def _set_required_flags(
         item["required"] = item.get("name") in required_names
 
 
+def _required_interface_gaps(
+    scenario: LaunchScenarioSpec,
+    requirements: ResolvedInterfaceRequirements,
+    graph_snapshot: Dict[str, Any],
+) -> tuple[Dict[str, str], Dict[str, str]]:
+    discovered_topic_names = {
+        item.get("name") for item in graph_snapshot.get("topics", [])
+    }
+    discovered_service_names = {
+        item.get("name") for item in graph_snapshot.get("services", [])
+    }
+    topic_specs_by_name = {spec.name: spec for spec in scenario.topics}
+    service_specs_by_name = {spec.name: spec for spec in scenario.services}
+    missing_topic_reasons = {
+        name: reason
+        for name in requirements.required_topics
+        if (
+            reason := _required_topic_unavailable_reason(
+                topic_specs_by_name[name], discovered_topic_names
+            )
+        )
+    }
+    missing_service_reasons = {
+        name: reason
+        for name in requirements.required_services
+        if (
+            reason := _required_service_unavailable_reason(
+                service_specs_by_name[name], discovered_service_names
+            )
+        )
+    }
+    return missing_topic_reasons, missing_service_reasons
+
+
+def _wait_for_required_interfaces(
+    session: TestSession,
+    harness: RosHarness,
+    scenario: LaunchScenarioSpec,
+    requirements: ResolvedInterfaceRequirements,
+    emit_status,
+    timeout: float = REQUIRED_INTERFACE_DISCOVERY_TIMEOUT,
+) -> tuple[Dict[str, Any], Dict[str, str], Dict[str, str]]:
+    deadline = time.monotonic() + max(timeout, 0.0)
+    last_missing_names: tuple[str, ...] | None = None
+    while True:
+        session.assert_healthy()
+        graph_snapshot = harness.graph_snapshot()
+        session.assert_healthy()
+        missing_topic_reasons, missing_service_reasons = (
+            _required_interface_gaps(
+                scenario,
+                requirements,
+                graph_snapshot,
+            )
+        )
+        missing_names = tuple(
+            [*missing_topic_reasons, *missing_service_reasons]
+        )
+        if not missing_names:
+            if last_missing_names:
+                emit_status("all required ROS interfaces are now available")
+            return graph_snapshot, {}, {}
+        if time.monotonic() >= deadline:
+            return (
+                graph_snapshot,
+                missing_topic_reasons,
+                missing_service_reasons,
+            )
+        if missing_names != last_missing_names:
+            emit_status(
+                "waiting for required ROS interfaces: "
+                + ", ".join(missing_names)
+            )
+            last_missing_names = missing_names
+        harness.spin_once(REQUIRED_INTERFACE_DISCOVERY_INTERVAL)
+
+
 def _run_scenario(
     profile: CameraProfile,
     requirement_profile: LaunchRequirementProfile,
@@ -262,7 +347,8 @@ def _run_scenario(
         "launch_args": launch_args,
         "requirements": {
             "profile_name": requirements.profile_name,
-            "camera_models": requirements.camera_models,
+            "launch_file": requirement_profile.launch_file,
+            "effective_launch_args": requirements.effective_launch_args,
             "matched_rules": requirements.matched_rules,
             "required_topics": requirements.required_topics,
             "required_services": requirements.required_services,
@@ -283,8 +369,22 @@ def _run_scenario(
         session.start()
         with RosHarness("orbbec_camera_functional_test", ros_version=ros_version) as harness:
             _wait_for_camera_ready(session, harness, camera_name, emit_status)
-            emit_status(f"collecting ROS graph snapshot for scenario '{scenario.name}'")
-            scenario_result["graph_snapshot"] = harness.graph_snapshot()
+            emit_status(
+                f"waiting up to {REQUIRED_INTERFACE_DISCOVERY_TIMEOUT:.0f}s "
+                f"for required ROS interfaces in scenario '{scenario.name}'"
+            )
+            (
+                scenario_result["graph_snapshot"],
+                missing_topic_reasons,
+                missing_service_reasons,
+            ) = _wait_for_required_interfaces(
+                session,
+                harness,
+                scenario,
+                requirements,
+                emit_status,
+                timeout=REQUIRED_INTERFACE_DISCOVERY_TIMEOUT,
+            )
             discovered_topic_names = {
                 item.get("name") for item in scenario_result["graph_snapshot"].get("topics", [])
             }
@@ -293,24 +393,6 @@ def _run_scenario(
             }
             topic_specs_by_name = {spec.name: spec for spec in scenario.topics}
             service_specs_by_name = {spec.name: spec for spec in scenario.services}
-            missing_topic_reasons = {
-                name: reason
-                for name in requirements.required_topics
-                if (
-                    reason := _required_topic_unavailable_reason(
-                        topic_specs_by_name[name], discovered_topic_names
-                    )
-                )
-            }
-            missing_service_reasons = {
-                name: reason
-                for name in requirements.required_services
-                if (
-                    reason := _required_service_unavailable_reason(
-                        service_specs_by_name[name], discovered_service_names
-                    )
-                )
-            }
             scenario_result["requirements"].update(
                 {
                     "missing_topics": list(missing_topic_reasons),
@@ -322,6 +404,34 @@ def _run_scenario(
                     ),
                 }
             )
+            if missing_topic_reasons or missing_service_reasons:
+                scenario_result["topics"].extend(
+                    _required_topic_failure(
+                        topic_specs_by_name[name],
+                        reason,
+                        requirements.profile_name,
+                    )
+                    for name, reason in missing_topic_reasons.items()
+                )
+                for name, reason in missing_service_reasons.items():
+                    spec = service_specs_by_name[name]
+                    failure = _required_service_failure(
+                        spec, reason, requirements.profile_name
+                    )
+                    if spec.mode == "artifact":
+                        scenario_result["artifacts"].append(failure)
+                    elif spec.mode == "reboot":
+                        scenario_result["reboot"] = failure
+                    else:
+                        scenario_result["services"].append(failure)
+                missing_names = [
+                    *missing_topic_reasons,
+                    *missing_service_reasons,
+                ]
+                raise RuntimeError(
+                    "required-interface validation failed; stopping scenario "
+                    f"before functional checks: {', '.join(missing_names)}"
+                )
             discovered_topics = select_discovered_topic_specs(
                 scenario.topics, discovered_topic_names
             )
@@ -372,14 +482,6 @@ def _run_scenario(
             _set_required_flags(
                 scenario_result["topics"], required_topic_names
             )
-            scenario_result["topics"].extend(
-                _required_topic_failure(
-                    topic_specs_by_name[name],
-                    reason,
-                    requirements.profile_name,
-                )
-                for name, reason in missing_topic_reasons.items()
-            )
             emit_status(f"testing scenario services for '{scenario.name}'")
             scenario_result["services"] = run_service_checks(
                 harness, regular_services, service_log_path, emit_status=emit_status
@@ -398,18 +500,10 @@ def _run_scenario(
             _set_required_flags(
                 scenario_result["artifacts"], required_service_names
             )
-            for name, reason in missing_service_reasons.items():
-                spec = service_specs_by_name[name]
-                failure = _required_service_failure(
-                    spec, reason, requirements.profile_name
-                )
-                if spec.mode == "artifact":
-                    scenario_result["artifacts"].append(failure)
-                elif spec.mode != "reboot":
-                    scenario_result["services"].append(failure)
     except Exception as exc:  # noqa: BLE001
         scenario_result["status"] = "failed"
         scenario_result["message"] = str(exc)
+        reboot_service = None
         emit_status(f"launch scenario '{scenario.name}' failed: {exc}")
     finally:
         session.stop()
@@ -484,7 +578,6 @@ def run_functional_test(args) -> int:
         result["requirement_profile"] = {
             "name": requirement_profile.name,
             "launch_file": requirement_profile.launch_file,
-            "camera_models": requirement_profile.camera_models,
         }
         emit_status(
             "matched required-interface profile "

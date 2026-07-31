@@ -6,18 +6,25 @@ import pytest
 import yaml
 
 from orbbec_camera_auto_test.profile.loader import (
+    CameraProfile,
+    LaunchScenarioSpec,
     ServiceSpec,
     TopicSpec,
     load_camera_profile,
 )
 from orbbec_camera_auto_test.profile.requirements import (
+    LaunchRequirementProfile,
+    RequiredInterfaceRule,
     load_launch_requirement_profile,
     resolve_required_interfaces,
 )
+from orbbec_camera_auto_test.runners import functional
 from orbbec_camera_auto_test.runners.functional import (
+    _run_scenario,
     _required_service_unavailable_reason,
     _required_topic_unavailable_reason,
     _wait_for_camera_ready,
+    _wait_for_required_interfaces,
     run_functional_test,
 )
 
@@ -68,6 +75,24 @@ def test_launch_overrides_change_the_mandatory_interface_set() -> None:
     assert "/front_camera/left_ir/image_raw" in resolved.required_topics
     assert "/front_camera/depth/points" not in resolved.required_topics
     assert "/front_camera/depth/image_unaligned" in resolved.required_topics
+
+
+def test_synchronized_imu_is_mandatory_when_sync_output_is_enabled() -> None:
+    profile = _load("gemini_330_series.launch.py", "2")
+    resolved = resolve_required_interfaces(
+        profile,
+        {
+            "enable_sync_output_accel_gyro": "true",
+            "enable_accel": "false",
+            "enable_gyro": "false",
+        },
+        "camera",
+    )
+
+    assert "synchronized_imu" in resolved.matched_rules
+    assert "/camera/gyro_accel/sample" in resolved.required_topics
+    assert "/camera/accel/imu_info" in resolved.required_topics
+    assert "/camera/gyro/imu_info" in resolved.required_topics
 
 
 def test_named_driver_config_overrides_launch_stream_defaults() -> None:
@@ -202,7 +227,7 @@ def test_required_dependency_is_reported_as_unavailable() -> None:
 
 def test_missing_readiness_service_does_not_bypass_requirement_validation() -> None:
     class FakeSession:
-        def assert_running(self) -> None:
+        def assert_healthy(self) -> None:
             return None
 
     class FakeHarness:
@@ -223,3 +248,166 @@ def test_missing_readiness_service_does_not_bypass_requirement_validation() -> N
         "continuing to required-interface validation" in message
         for message in messages
     )
+
+
+def test_missing_required_interface_stops_before_functional_checks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    checks_called = {"topics": False}
+
+    class FakeSession:
+        def __init__(self, *args, **kwargs) -> None:
+            return None
+
+        def start(self) -> None:
+            return None
+
+        def stop(self) -> None:
+            return None
+
+        def assert_healthy(self) -> None:
+            return None
+
+    class FakeHarness:
+        ros_version = "2"
+
+        def __init__(self, *args, **kwargs) -> None:
+            return None
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args) -> None:
+            return None
+
+        def wait_for_node(self, *args, **kwargs) -> None:
+            return None
+
+        def wait_for_service(self, *args, **kwargs) -> None:
+            return None
+
+        def graph_snapshot(self):
+            return {"nodes": [], "topics": [], "services": []}
+
+    def unexpected_topic_checks(*args, **kwargs):
+        checks_called["topics"] = True
+        return []
+
+    monkeypatch.setattr(functional, "TestSession", FakeSession)
+    monkeypatch.setattr(functional, "RosHarness", FakeHarness)
+    monkeypatch.setattr(functional, "resolve_service_type", lambda *args: object)
+    monkeypatch.setattr(functional, "run_topic_checks", unexpected_topic_checks)
+    monkeypatch.setattr(functional, "REQUIRED_INTERFACE_DISCOVERY_TIMEOUT", 0.0)
+
+    profile = CameraProfile(
+        profile_name="generic_functional",
+        launch_file="",
+        default_launch_args={},
+        launch_scenarios=[],
+        performance_topics=[],
+        performance_scenarios=[],
+    )
+    scenario = LaunchScenarioSpec(
+        name="default",
+        topics=[TopicSpec(name="/{camera}/required")],
+    )
+    requirement_profile = LaunchRequirementProfile(
+        name="test_launch",
+        ros_version="2",
+        launch_file="camera.launch.py",
+        camera_models=["Test Camera"],
+        defaults={},
+        config_overrides={},
+        rules=[
+            RequiredInterfaceRule(
+                name="required_stream",
+                required_topics=["/{camera}/required"],
+            )
+        ],
+    )
+
+    result, reboot_spec = _run_scenario(
+        profile=profile,
+        requirement_profile=requirement_profile,
+        launch_file="camera.launch.py",
+        scenario=scenario,
+        base_launch_args={"camera_name": "camera"},
+        results_dir=tmp_path,
+        launch_log_path=tmp_path / "launch.log",
+        topic_log_path=tmp_path / "topic.log",
+        service_log_path=tmp_path / "service.log",
+        driver_setup=None,
+        ros_version="2",
+        ros_setup=None,
+        emit_status=lambda message: None,
+    )
+
+    assert result["status"] == "failed"
+    assert "stopping scenario before functional checks" in result["message"]
+    assert result["topics"][0]["status"] == "failed"
+    assert checks_called["topics"] is False
+    assert reboot_spec is None
+
+
+def test_required_interface_wait_accepts_delayed_graph_publication() -> None:
+    class HealthySession:
+        def assert_healthy(self) -> None:
+            return None
+
+    class DelayedGraphHarness:
+        def __init__(self) -> None:
+            self.snapshot_count = 0
+            self.spin_count = 0
+
+        def graph_snapshot(self):
+            self.snapshot_count += 1
+            topics = (
+                []
+                if self.snapshot_count == 1
+                else [{"name": "/tf_static", "types": ["tf2_msgs/msg/TFMessage"]}]
+            )
+            return {"nodes": [], "topics": topics, "services": []}
+
+        def spin_once(self, timeout: float) -> None:
+            self.spin_count += 1
+
+    scenario = LaunchScenarioSpec(
+        name="default",
+        topics=[TopicSpec(name="/tf_static")],
+    )
+    requirements = resolve_required_interfaces(
+        LaunchRequirementProfile(
+            name="test_launch",
+            ros_version="2",
+            launch_file="camera.launch.py",
+            camera_models=["Test Camera"],
+            defaults={},
+            config_overrides={},
+            rules=[
+                RequiredInterfaceRule(
+                    name="static_tf",
+                    required_topics=["/tf_static"],
+                )
+            ],
+        ),
+        {},
+        "camera",
+    )
+    harness = DelayedGraphHarness()
+    messages = []
+
+    snapshot, missing_topics, missing_services = _wait_for_required_interfaces(
+        HealthySession(),
+        harness,
+        scenario,
+        requirements,
+        messages.append,
+        timeout=1.0,
+    )
+
+    assert snapshot["topics"][0]["name"] == "/tf_static"
+    assert missing_topics == {}
+    assert missing_services == {}
+    assert harness.spin_count == 1
+    assert "all required ROS interfaces are now available" in messages

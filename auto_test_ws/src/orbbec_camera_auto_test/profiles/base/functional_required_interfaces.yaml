@@ -596,8 +596,6 @@ rules:
   - name: synchronized_imu
     when:
       enable_sync_output_accel_gyro: true
-      enable_accel: true
-      enable_gyro: true
     required_topics:
       - /{camera}/gyro_accel/sample
       - /{camera}/accel/imu_info

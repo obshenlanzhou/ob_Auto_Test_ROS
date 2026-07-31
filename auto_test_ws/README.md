@@ -156,6 +156,8 @@ Web UI 内置驱动包当前的单相机 Launch 候选：ROS2 19 个，ROS1 21 �
 
 非必选接口未发布时仍会被发现过滤，不计为失败；必选接口未发布时会在结果表中显示 `required topic/service not advertised`，并使场景及整次功能测试失败。
 
+节点和基础服务就绪后，功能 runner 会等待最多 10 秒并持续刷新 ROS Graph，兼容 `/tf_static` 等首帧到达后才发布的必选接口。等待超时仍缺失时，才停止当前 Launch 并跳过后续检查；等待期间出现 `[ERROR]`、`[FATAL]`（例如 `Failed to initialize device`）仍会立即终止。
+
 自定义 `config_file_path` 会参与必选接口解析：可直接传入当前进程可读取的 YAML 路径；只传文件名时，需要在对应 Launch Profile 的 `config_overrides` 中登记。内置的 `gemini2L_dual_ir.yaml` 和 `gemini305_dual_color.yaml` 已登记。
 
 ### 性能测试

@@ -131,11 +131,16 @@ def _append_functional_detail_tables(
     if requirements:
         missing_topics = set(requirements.get("missing_topics", []))
         missing_services = set(requirements.get("missing_services", []))
+        conformance_checked = requirements.get("status") != "not_checked"
         required_rows = [
             [
                 "Topic",
                 name,
-                "failed" if name in missing_topics else "passed",
+                (
+                    "not checked"
+                    if not conformance_checked
+                    else ("failed" if name in missing_topics else "passed")
+                ),
             ]
             for name in requirements.get("required_topics", [])
         ]
@@ -143,7 +148,11 @@ def _append_functional_detail_tables(
             [
                 "Service",
                 name,
-                "failed" if name in missing_services else "passed",
+                (
+                    "not checked"
+                    if not conformance_checked
+                    else ("failed" if name in missing_services else "passed")
+                ),
             ]
             for name in requirements.get("required_services", [])
         )
@@ -153,7 +162,11 @@ def _append_functional_detail_tables(
                 "#### Matched Requirement Profile",
                 [
                     ("Profile", requirements.get("profile_name", "")),
-                    ("Camera models", requirements.get("camera_models", [])),
+                    ("Launch file", requirements.get("launch_file", "")),
+                    (
+                        "Effective launch arguments",
+                        requirements.get("effective_launch_args", {}),
+                    ),
                     ("Matched rules", requirements.get("matched_rules", [])),
                     ("Status", requirements.get("status", "")),
                 ],

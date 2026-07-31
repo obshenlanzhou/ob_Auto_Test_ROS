@@ -17,7 +17,11 @@ def test_functional_summary_lists_each_executed_check() -> None:
                 "message": "",
                 "requirements": {
                     "profile_name": "ros2_test_camera",
-                    "camera_models": ["Test Camera"],
+                    "launch_file": "camera.launch.py",
+                    "effective_launch_args": {
+                        "enable_color": True,
+                        "enable_depth": True,
+                    },
                     "matched_rules": ["camera_core", "color_stream"],
                     "required_topics": ["/camera/color/image_raw"],
                     "required_services": ["/camera/get_sdk_version"],
@@ -73,6 +77,9 @@ def test_functional_summary_lists_each_executed_check() -> None:
 
     assert "## Scenario Details: default" in summary
     assert "### Required Interface Conformance" in summary
+    assert "| Launch file | camera.launch.py |" in summary
+    assert "Effective launch arguments" in summary
+    assert "Camera models" not in summary
     assert "| Kind | Required Interface | Graph Status |" in summary
     assert "| Topic | Type | Required | Check | Status | Details |" in summary
     assert "message (image)" in summary

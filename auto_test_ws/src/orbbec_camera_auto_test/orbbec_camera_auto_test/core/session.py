@@ -25,6 +25,15 @@ CAMERA_PROCESS_HINTS = (
     "orbbec_camera_node",
     "nodelet",
 )
+FATAL_LAUNCH_OUTPUT_MARKERS = (
+    "[error]",
+    "failed to initialize device",
+    "[fatal]",
+    "process has died",
+    "failed to load component",
+    "exception in load_composable_nodes",
+    "caught exception in launch",
+)
 
 
 def _parse_env_output(raw_output: bytes) -> Dict[str, str]:
@@ -273,6 +282,7 @@ class TestSession:
         self._reader_thread: Optional[threading.Thread] = None
         self._log_stream = None
         self._captured_lines = []
+        self._captured_lines_lock = threading.Lock()
         self._primed_pids: Set[int] = set()
         self._process_cache: Dict[int, psutil.Process] = {}
         self.process_group_id: Optional[int] = None
@@ -367,7 +377,8 @@ class TestSession:
         if self.process is None or self.process.stdout is None:
             return
         for line in self.process.stdout:
-            self._captured_lines.append(line.rstrip("\n"))
+            with self._captured_lines_lock:
+                self._captured_lines.append(line.rstrip("\n"))
             self._log_stream.write(line)
             self._log_stream.flush()
 
@@ -377,11 +388,30 @@ class TestSession:
     def assert_running(self) -> None:
         if self.is_running():
             return
-        output_tail = "\n".join(self._captured_lines[-40:])
+        with self._captured_lines_lock:
+            output_tail = "\n".join(self._captured_lines[-40:])
         exit_code = None if self.process is None else self.process.poll()
         raise RuntimeError(
             f"Launch exited early for {self.launch_file} with code {exit_code}\n{output_tail}"
         )
+
+    def fatal_output_line(self) -> str:
+        with self._captured_lines_lock:
+            captured_lines = list(self._captured_lines)
+        for line in reversed(captured_lines):
+            lowered = line.lower()
+            if any(marker in lowered for marker in FATAL_LAUNCH_OUTPUT_MARKERS):
+                return line
+        return ""
+
+    def assert_healthy(self) -> None:
+        self.assert_running()
+        fatal_line = self.fatal_output_line()
+        if fatal_line:
+            raise RuntimeError(
+                f"Launch reported a fatal startup error for {self.launch_file}: "
+                f"{fatal_line}"
+            )
 
     def stop(self, timeout: float = 10.0) -> None:
         if self.process is not None and self.process.poll() is None:
