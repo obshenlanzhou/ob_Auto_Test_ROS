@@ -42,11 +42,17 @@ def test_all_six_standalone_manifests_load():
         "launch_restart_stream_check",
         "preset_upgrade_stress_test",
     }
-    assert all(
-        field["option"] != "--launch-arg"
+    manifests_with_launch_args = {
+        manifest["id"]
         for manifest in manifests
-        for field in manifest["fields"]
-    )
+        if any(field["option"] == "--launch-arg" for field in manifest["fields"])
+    }
+    assert manifests_with_launch_args == {
+        "export_load_stress_test",
+        "launch_param_load_stress",
+        "launch_restart_stream_check",
+        "preset_upgrade_stress_test",
+    }
 
 
 def test_manifest_options_exist_in_script_help():
@@ -473,6 +479,25 @@ def test_multi_value_fields_show_at_least_two_examples():
     ).read_text(encoding="utf-8")
     assert 'placeholder="enable_point_cloud=true&#10;enable_colored_point_cloud=true"' in template
     assert 'placeholder="/{camera}/color/image_raw&#10;/{camera}/depth/image_raw"' in template
+
+
+def test_camera_launch_stress_manifests_enable_diagnostics_by_default():
+    manifests = manifest_catalog(STANDALONE_ROOT)
+    for test_id in (
+        "launch_restart_stream_check",
+        "launch_param_load_stress",
+        "export_load_stress_test",
+        "preset_upgrade_stress_test",
+    ):
+        launch_args = next(
+            field
+            for field in manifests[test_id]["fields"]
+            if field["name"] == "launch_args"
+        )
+        assert launch_args["default"] == [
+            "enable_heartbeat=true",
+            "enable_firmware_log=true",
+        ]
 
 
 def test_dynamic_fields_use_direct_placeholders_without_example_prefix():

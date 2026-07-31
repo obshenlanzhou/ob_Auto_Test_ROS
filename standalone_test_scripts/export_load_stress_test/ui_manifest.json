@@ -18,6 +18,7 @@
     {"name": "image_topics", "option": "--image-topic", "type": "list", "label": "图像 Topic 模板", "section": "basic", "default": [], "placeholder": "/{camera}/color/image_raw\n/{camera}/depth/image_raw"},
     {"name": "save_image_count", "option": "--save-image-count", "type": "integer", "label": "每 Topic 存图数", "section": "basic", "default": "1", "min": 0},
     {"name": "launch_package", "option": "--launch-package", "type": "text", "label": "Launch Package", "section": "advanced", "default": "orbbec_camera"},
+    {"name": "launch_args", "option": "--launch-arg", "type": "list", "label": "Launch 参数（每行一个）", "section": "advanced", "default": ["enable_heartbeat=true", "enable_firmware_log=true"], "placeholder": "enable_heartbeat=true\nenable_firmware_log=true"},
     {"name": "sdk_log_level", "option": "--sdk-log-level", "type": "select", "label": "SDK 日志级别", "section": "advanced", "default": "debug", "choices": ["debug", "info", "warn", "error", "fatal", "none"]},
     {"name": "stable_seconds", "option": "--stable-seconds", "type": "duration", "label": "稳定出流时间", "section": "advanced", "default": "5"},
     {"name": "stream_timeout", "option": "--stream-timeout", "type": "duration", "label": "出流超时", "section": "advanced", "default": "60"},

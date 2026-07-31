@@ -30,6 +30,10 @@ ENV_READY_VAR = "EXPORT_LOAD_STRESS_TEST_ENV_READY"
 INTERRUPTED = False
 TOOL_VERSION = "1.0"
 TEST_ID = "export_load_stress_test"
+DEFAULT_STRESS_LAUNCH_ARGS = {
+    "enable_heartbeat": "true",
+    "enable_firmware_log": "true",
+}
 DEFAULT_CONFIG_JSONS = [
     Path(__file__).resolve().parent / "config" / "Gemini_336L_1.json",
     Path(__file__).resolve().parent / "config" / "Gemini_336L_2.json",
@@ -921,7 +925,7 @@ def write_json(path: Path, payload: Any) -> None:
 
 
 def build_common_launch_args(raw_launch_args: List[str]) -> Dict[str, str]:
-    launch_args: Dict[str, str] = {}
+    launch_args: Dict[str, str] = dict(DEFAULT_STRESS_LAUNCH_ARGS)
     for raw_arg in raw_launch_args:
         key, value = parse_launch_arg(raw_arg)
         launch_args[key] = value

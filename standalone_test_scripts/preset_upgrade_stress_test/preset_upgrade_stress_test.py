@@ -33,6 +33,10 @@ INTERRUPTED = False
 SCRIPT_DIR = Path(__file__).resolve().parent
 TOOL_VERSION = "1.0"
 TEST_ID = "preset_upgrade_stress_test"
+DEFAULT_STRESS_LAUNCH_ARGS = {
+    "enable_heartbeat": "true",
+    "enable_firmware_log": "true",
+}
 DEFAULT_PRESET_A_PATH = SCRIPT_DIR / "config" / "g336x_K_High_Confidence_0.0.2.bin"
 DEFAULT_PRESET_B_PATH = SCRIPT_DIR / "config" / "g336x_K_High_Accuracy_0.0.2.bin"
 DEFAULT_IMAGE_TOPIC_TEMPLATES = [
@@ -783,6 +787,7 @@ def select_launch_file(args) -> str:
 
 def build_base_launch_args(args) -> Dict[str, str]:
     launch_args: Dict[str, str] = {
+        **DEFAULT_STRESS_LAUNCH_ARGS,
         "enable_color": "true",
         "enable_depth": "true",
     }

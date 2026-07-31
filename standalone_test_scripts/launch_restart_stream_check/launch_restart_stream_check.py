@@ -35,6 +35,10 @@ ENV_READY_VAR = "LAUNCH_RESTART_STREAM_CHECK_ENV_READY"
 INTERRUPTED = False
 TOOL_VERSION = "1.0"
 TEST_ID = "launch_restart_stream_check"
+DEFAULT_STRESS_LAUNCH_ARGS = {
+    "enable_heartbeat": "true",
+    "enable_firmware_log": "true",
+}
 
 
 def timestamp() -> str:
@@ -78,6 +82,17 @@ def parse_launch_arg(raw: str) -> tuple[str, str]:
     if not key:
         raise ValueError(f"launch arg key is empty: {raw}")
     return key, value.strip()
+
+
+def merge_launch_arg_overrides(
+    launch_args: Dict[str, str],
+    raw_launch_args: List[str],
+) -> Dict[str, str]:
+    merged = dict(launch_args)
+    for raw_arg in raw_launch_args:
+        key, value = parse_launch_arg(raw_arg)
+        merged[key] = value
+    return merged
 
 
 def ensure_dir(path: Path) -> Path:
@@ -619,7 +634,7 @@ def run(args) -> int:
     ]
     auto_discover_topics = not explicit_topics
 
-    launch_args: Dict[str, str] = {}
+    launch_args: Dict[str, str] = dict(DEFAULT_STRESS_LAUNCH_ARGS)
     if camera["name"]:
         launch_args["camera_name"] = camera["name"]
     if camera["serial_number"]:
@@ -632,9 +647,7 @@ def run(args) -> int:
         launch_args["net_device_port"] = camera["device_port"]
     if camera["config_file_path"]:
         launch_args["config_file_path"] = camera["config_file_path"]
-    for raw_arg in args.launch_arg:
-        key, value = parse_launch_arg(raw_arg)
-        launch_args[key] = value
+    launch_args = merge_launch_arg_overrides(launch_args, args.launch_arg)
     launch_args["log_level"] = args.sdk_log_level
     launch_args["log_file_name"] = f"{template_camera_name}.log"
 

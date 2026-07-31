@@ -84,6 +84,24 @@ def script_help(script: Path) -> str:
     return completed.stdout
 
 
+def evaluate_script(script: Path, expression: str):
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            f"import json; import {script.stem} as module; "
+            f"print(json.dumps({expression}))",
+        ],
+        cwd=str(script.parent),
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert completed.returncode == 0, completed.stderr
+    return json.loads(completed.stdout.strip().splitlines()[-1])
+
+
 def test_protocol_copies_are_identical():
     expected = PROTOCOLS[0].read_bytes()
     assert all(path.read_bytes() == expected for path in PROTOCOLS)
@@ -263,3 +281,25 @@ def test_invalid_cli_returns_argparse_exit_code():
         timeout=10,
     )
     assert completed.returncode == 2
+
+
+def test_camera_launch_stress_defaults_enable_heartbeat_and_firmware_log():
+    expressions = {
+        "launch_restart": (
+            'module.merge_launch_arg_overrides(module.DEFAULT_STRESS_LAUNCH_ARGS, '
+            '["enable_heartbeat=false"])'
+        ),
+        "launch_param_load": (
+            'module.merge_launch_arg_overrides(module.DEFAULT_STRESS_LAUNCH_ARGS, '
+            '["enable_heartbeat=false"])'
+        ),
+        "export_load": 'module.build_common_launch_args(["enable_heartbeat=false"])',
+        "preset_upgrade": (
+            'module.build_base_launch_args(type("Args", (), '
+            '{"launch_arg": ["enable_heartbeat=false"]})())'
+        ),
+    }
+    for test_id, expression in expressions.items():
+        launch_args = evaluate_script(SCRIPTS[test_id], expression)
+        assert launch_args["enable_heartbeat"] == "false", test_id
+        assert launch_args["enable_firmware_log"] == "true", test_id

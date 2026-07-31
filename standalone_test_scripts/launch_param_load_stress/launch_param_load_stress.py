@@ -40,6 +40,10 @@ ENV_READY_VAR = "LAUNCH_PARAM_LOAD_STRESS_ENV_READY"
 INTERRUPTED = False
 TOOL_VERSION = "1.0"
 TEST_ID = "launch_param_load_stress"
+DEFAULT_STRESS_LAUNCH_ARGS = {
+    "enable_heartbeat": "true",
+    "enable_firmware_log": "true",
+}
 
 
 @dataclass
@@ -198,6 +202,17 @@ def parse_launch_arg(raw: str) -> Tuple[str, str]:
     if not key:
         raise ValueError(f"launch arg key is empty: {raw}")
     return key, value.strip()
+
+
+def merge_launch_arg_overrides(
+    launch_args: Dict[str, Any],
+    raw_launch_args: List[str],
+) -> Dict[str, Any]:
+    merged = dict(launch_args)
+    for raw_arg in raw_launch_args:
+        key, value = parse_launch_arg(raw_arg)
+        merged[key] = value
+    return merged
 
 
 def ensure_dir(path: Path) -> Path:
@@ -1241,10 +1256,10 @@ def run(args) -> int:
     yaml_params_list = [load_yaml_file(p) for p in camera_configs]
 
     # Common launch args (everything except per-camera overrides)
-    common_launch_args: Dict[str, Any] = {}
-    for raw_arg in args.launch_arg:
-        key, value = parse_launch_arg(raw_arg)
-        common_launch_args[key] = value
+    common_launch_args = merge_launch_arg_overrides(
+        DEFAULT_STRESS_LAUNCH_ARGS,
+        args.launch_arg,
+    )
 
     launch_path = resolve_launch_file_path(
         ros_version=args.ros_version,
