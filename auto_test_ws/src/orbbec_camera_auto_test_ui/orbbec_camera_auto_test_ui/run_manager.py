@@ -97,6 +97,30 @@ RESULTS_ROOT = AUTO_TEST_WS / "results"
 UI_RESULTS_ROOT = RESULTS_ROOT / "ui_runs"
 CONFIG_PATH = RESULTS_ROOT / "ui_config.json"
 STANDALONE_ROOT = AUTO_TEST_WS.parent / "standalone_test_scripts"
+FRAMEWORK_MODES = {"functional", "performance", "restart", "stream_stall", "all"}
+MODE_CONFIG_KEYS = (
+    "performance_scenario",
+    "launch_file",
+    "launch_config",
+    "stream_options",
+    "run_count",
+    "continue_on_error",
+    "duration",
+    "stable_seconds",
+    "stream_timeout",
+    "max_gap_seconds",
+    "restart_delay",
+    "image_topics",
+    "warning_interval_sec",
+    "warmup_sec",
+    "save_csv",
+    "queue_size",
+    "camera_name",
+    "serial_number",
+    "usb_port",
+    "config_file_path",
+    "launch_args",
+)
 
 
 def _discover_sibling_driver_setup(ros_version: str) -> str:
@@ -599,7 +623,7 @@ def load_config() -> Dict[str, Any]:
         ros_domain_id = normalize_ros_domain_id(domain_value)
     except ValueError:
         ros_domain_id = ""
-    return {
+    loaded = {
         "ros_version": ros_version,
         "ros_domain_id": ros_domain_id,
         "ros_setup": config.get("ros_setup") or _default_ros_setup_for_version(ros_version),
@@ -623,8 +647,35 @@ def load_config() -> Dict[str, Any]:
         "warmup_sec": config.get("warmup_sec") or "2.0",
         "save_csv": config.get("save_csv") or "true",
         "queue_size": config.get("queue_size") or "10",
+        "camera_name": config.get("camera_name") or "",
+        "serial_number": config.get("serial_number") or "",
+        "usb_port": config.get("usb_port") or "",
+        "config_file_path": config.get("config_file_path") or "",
+        "launch_args": config.get("launch_args") or "",
         "standalone_configs": config.get("standalone_configs") or {},
     }
+    raw_mode_configs = config.get("mode_configs")
+    mode_configs = (
+        {
+            mode: {
+                key: value
+                for key, value in values.items()
+                if key in MODE_CONFIG_KEYS
+            }
+            for mode, values in raw_mode_configs.items()
+            if mode in FRAMEWORK_MODES and isinstance(values, dict)
+        }
+        if isinstance(raw_mode_configs, dict)
+        else {}
+    )
+    active_mode = loaded["mode"]
+    if active_mode not in mode_configs:
+        # Migrate the previous single-history format without discarding it.
+        mode_configs[active_mode] = {
+            key: loaded[key] for key in MODE_CONFIG_KEYS
+        }
+    loaded["mode_configs"] = mode_configs
+    return loaded
 
 
 def save_config(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -653,6 +704,11 @@ def save_config(payload: Dict[str, Any]) -> Dict[str, Any]:
         "warmup_sec",
         "save_csv",
         "queue_size",
+        "camera_name",
+        "serial_number",
+        "usb_port",
+        "config_file_path",
+        "launch_args",
         "standalone_configs",
     ):
         if key in payload:
@@ -661,6 +717,13 @@ def save_config(payload: Dict[str, Any]) -> Dict[str, Any]:
                 if key == "ros_domain_id"
                 else payload[key]
             )
+    mode = _safe_text(payload.get("mode") or config.get("mode")) or "functional"
+    if mode in FRAMEWORK_MODES:
+        mode_config = dict(config.get("mode_configs", {}).get(mode, {}))
+        for key in MODE_CONFIG_KEYS:
+            if key in payload:
+                mode_config[key] = payload[key]
+        config.setdefault("mode_configs", {})[mode] = mode_config
     write_json(CONFIG_PATH, config)
     return config
 
@@ -1136,6 +1199,11 @@ class RunManager:
                 "warmup_sec": payload.get("warmup_sec") or "2.0",
                 "save_csv": payload.get("save_csv") or "true",
                 "queue_size": payload.get("queue_size") or "10",
+                "camera_name": payload.get("camera_name") or "",
+                "serial_number": payload.get("serial_number") or "",
+                "usb_port": payload.get("usb_port") or "",
+                "config_file_path": payload.get("config_file_path") or "",
+                "launch_args": payload.get("launch_args") or "",
             }
         )
         payload = {**payload, **config}

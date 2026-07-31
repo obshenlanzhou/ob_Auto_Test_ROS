@@ -93,6 +93,70 @@ class RunConfigurationTest(unittest.TestCase):
                 run_manager.save_config({"ros_domain_id": ""})
                 self.assertEqual(run_manager.load_config()["ros_domain_id"], "")
 
+    def test_framework_modes_keep_independent_configuration_history(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "ui_config.json"
+            with patch.object(run_manager, "CONFIG_PATH", config_path):
+                run_manager.save_config(
+                    {
+                        "mode": "functional",
+                        "launch_file": "astra2.launch.py",
+                        "run_count": "2",
+                        "stream_options": {"enable_color": "true"},
+                        "camera_name": "functional_camera",
+                        "launch_args": "enable_ir=true",
+                    }
+                )
+                run_manager.save_config(
+                    {
+                        "mode": "restart",
+                        "launch_file": "gemini_330_series.launch.py",
+                        "run_count": "8",
+                        "duration": "30m",
+                        "stream_options": {"enable_depth": "true"},
+                        "camera_name": "restart_camera",
+                        "launch_args": "enable_ir=false",
+                    }
+                )
+
+                config = run_manager.load_config()
+
+            self.assertEqual(
+                config["mode_configs"]["functional"]["launch_file"],
+                "astra2.launch.py",
+            )
+            self.assertEqual(config["mode_configs"]["functional"]["run_count"], "2")
+            self.assertEqual(
+                config["mode_configs"]["functional"]["stream_options"],
+                {"enable_color": "true"},
+            )
+            self.assertEqual(
+                config["mode_configs"]["functional"]["camera_name"],
+                "functional_camera",
+            )
+            self.assertEqual(
+                config["mode_configs"]["functional"]["launch_args"],
+                "enable_ir=true",
+            )
+            self.assertEqual(
+                config["mode_configs"]["restart"]["launch_file"],
+                "gemini_330_series.launch.py",
+            )
+            self.assertEqual(config["mode_configs"]["restart"]["run_count"], "8")
+            self.assertEqual(config["mode_configs"]["restart"]["duration"], "30m")
+            self.assertEqual(
+                config["mode_configs"]["restart"]["stream_options"],
+                {"enable_depth": "true"},
+            )
+            self.assertEqual(
+                config["mode_configs"]["restart"]["camera_name"],
+                "restart_camera",
+            )
+            self.assertEqual(
+                config["mode_configs"]["restart"]["launch_args"],
+                "enable_ir=false",
+            )
+
     def test_point_cloud_does_not_reuse_depth_image_metadata(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             run_root = Path(temp_dir)

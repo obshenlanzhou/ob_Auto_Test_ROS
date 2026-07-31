@@ -11,6 +11,8 @@ const state = {
   resultSummaryRunId: null,
   currentSnapshot: null,
   deviceQueryPending: false,
+  activeMode: "functional",
+  modeConfigs: {},
 };
 
 const $ = (id) => document.getElementById(id);
@@ -119,6 +121,29 @@ const STREAM_CONTROLS = {
   enable_accel: "streamAccel",
   enable_gyro: "streamGyro",
   enable_sync_output_accel_gyro: "streamSyncImu",
+};
+const DEFAULT_MODE_CONFIG = {
+  performance_scenario: "",
+  launch_file: "",
+  launch_config: "generic",
+  stream_options: {},
+  run_count: "1",
+  continue_on_error: false,
+  duration: "",
+  stable_seconds: "10",
+  stream_timeout: "60",
+  max_gap_seconds: "1.5",
+  restart_delay: "2",
+  image_topics: "",
+  warning_interval_sec: "1.0",
+  warmup_sec: "2.0",
+  save_csv: "true",
+  queue_size: "10",
+  camera_name: "",
+  serial_number: "",
+  usb_port: "",
+  config_file_path: "",
+  launch_args: "",
 };
 
 function applyTheme(theme, persist = true) {
@@ -1473,35 +1498,90 @@ function updateModeControls() {
   updateFormReadiness();
 }
 
+function currentModeConfig() {
+  return {
+    performance_scenario: $("performanceScenario").value,
+    launch_file: $("launchFile").value,
+    launch_config: $("launchConfig").value,
+    stream_options: Object.fromEntries(
+      Object.entries(STREAM_CONTROLS).map(([name, id]) => [name, $(id).value])
+    ),
+    run_count: $("runCount").value,
+    continue_on_error: $("continueOnError").checked,
+    duration: $("duration").value,
+    stable_seconds: $("stableSeconds").value,
+    stream_timeout: $("streamTimeout").value,
+    max_gap_seconds: $("maxGapSeconds").value,
+    restart_delay: $("restartDelay").value,
+    image_topics: $("imageTopics").value,
+    warning_interval_sec: $("warningIntervalSec").value,
+    warmup_sec: $("warmupSec").value,
+    save_csv: $("saveCsv").value,
+    queue_size: $("queueSize").value,
+    camera_name: $("cameraName").value,
+    serial_number: $("serialNumber").value,
+    usb_port: $("usbPort").value,
+    config_file_path: $("configFilePath").value,
+    launch_args: $("launchArgs").value,
+  };
+}
+
+function applyModeConfig(mode) {
+  const config = {
+    ...DEFAULT_MODE_CONFIG,
+    ...(state.modeConfigs[mode] || {}),
+  };
+  $("performanceScenario").value = config.performance_scenario;
+  $("runCount").value = config.run_count;
+  $("continueOnError").checked = truthy(config.continue_on_error);
+  $("duration").value = config.duration;
+  $("stableSeconds").value = config.stable_seconds;
+  $("streamTimeout").value = config.stream_timeout;
+  $("maxGapSeconds").value = config.max_gap_seconds;
+  $("restartDelay").value = config.restart_delay;
+  $("imageTopics").value = config.image_topics;
+  $("warningIntervalSec").value = config.warning_interval_sec;
+  $("warmupSec").value = config.warmup_sec;
+  $("saveCsv").value = config.save_csv;
+  $("queueSize").value = config.queue_size;
+  $("cameraName").value = config.camera_name;
+  $("serialNumber").value = config.serial_number;
+  $("usbPort").value = config.usb_port;
+  $("configFilePath").value = config.config_file_path;
+  $("launchArgs").value = config.launch_args;
+  const files = SINGLE_CAMERA_LAUNCH_FILES[$("rosVersion").value] || [];
+  renderLaunchFileOptions(files, config.launch_file);
+  updateLaunchConfigOptions(config.launch_config);
+  for (const [name, id] of Object.entries(STREAM_CONTROLS)) {
+    $(id).value = config.stream_options?.[name] || "";
+  }
+  updateSpecialConfigControls();
+}
+
+function changeFrameworkMode() {
+  state.modeConfigs[state.activeMode] = currentModeConfig();
+  const mode = $("mode").value;
+  state.activeMode = mode;
+  applyModeConfig(mode);
+  updateModeControls();
+}
+
 async function loadConfig() {
   const config = await api("/api/config");
   state.config = config;
   state.setupDefaults = config.setup_defaults || {};
+  state.modeConfigs = config.mode_configs || {};
   $("rosVersion").value = config.ros_version || "2";
   $("rosDomainId").value = config.ros_domain_id || "";
   $("standaloneRosDomainId").value = config.ros_domain_id || "";
   $("rosSetup").value = config.ros_setup || "";
   $("cameraSetup").value = config.camera_setup || "";
   $("mode").value = config.mode || "functional";
-  $("runCount").value = config.run_count || "1";
-  $("continueOnError").checked = truthy(config.continue_on_error);
-  $("duration").value = config.duration || "";
-  $("stableSeconds").value = config.stable_seconds || "10";
-  $("streamTimeout").value = config.stream_timeout || "60";
-  $("maxGapSeconds").value = config.max_gap_seconds || "1.5";
-  $("restartDelay").value = config.restart_delay || "2";
-  $("imageTopics").value = config.image_topics || "";
-  $("warningIntervalSec").value = config.warning_interval_sec || "1.0";
-  $("warmupSec").value = config.warmup_sec || "2.0";
-  $("saveCsv").value = config.save_csv || "true";
-  $("queueSize").value = config.queue_size || "10";
-  $("performanceScenario").value = config.performance_scenario || "";
-  for (const [name, id] of Object.entries(STREAM_CONTROLS)) {
-    $(id).value = config.stream_options?.[name] || "";
-  }
+  state.activeMode = $("mode").value;
   $("workspacePath").textContent = `工作区: ${config.auto_test_ws}`;
   $("workspacePath").title = config.auto_test_ws || "";
   updateRosVersionControls({ fillBlank: true });
+  applyModeConfig(state.activeMode);
 }
 
 function renderLaunchFileOptions(files, preferred = "") {
@@ -2171,7 +2251,7 @@ async function init() {
     updateRosVersionControls();
     loadLaunchFiles();
   });
-  $("mode").addEventListener("change", updateModeControls);
+  $("mode").addEventListener("change", changeFrameworkMode);
   $("launchFile").addEventListener("change", () => updateLaunchConfigOptions());
   $("launchConfig").addEventListener("change", updateSpecialConfigControls);
   $("standaloneTest").addEventListener("change", () =>
