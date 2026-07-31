@@ -57,7 +57,38 @@ standalone_test_scripts/
 --driver-setup /path/to/orbbec_camera_ws/install/setup.bash
 ```
 
-`image_receive_stats_test` 是订阅端监测工具，运行前需要先手动 source ROS 环境。
+`image_receive_stats_test` 是订阅端监测工具，但同样支持上述环境参数，方便统一启动。
+
+## 通用参数与结果契约
+
+所有公开长参数统一使用 kebab-case。循环上限统一使用 `--run-count`，运行时间上限统一
+使用 `--duration`；两者同时设置时，任一上限先达到即结束。相机使用可重复的 launch
+参数风格配置：
+
+```bash
+--camera name=camera_01,serial-number=SN001,usb-port=2-1
+```
+
+支持字段为 `name`、`serial-number`、`usb-port`、`device-ip`、`device-port` 和
+`config-file-path`。每个字段都可以填写或不填，兼容的字段可以组合。无需显式相机配置
+的脚本会使用自己的默认值。
+
+每次完成的运行都会生成 `result.json`、`summary.md` 和 `events.jsonl`。
+`result.json` 的状态统一为 `passed`、`failed`、`interrupted`，对应退出码分别为
+`0`、`1`、`130`；命令行参数错误返回 `2`。脚本特有的日志、图片、CSV 和导出文件
+统一在 `result.json` 的 `artifacts` 中列出。
+
+## 本地 Web UI 集成
+
+每个脚本目录包含一份由开发者维护的 `ui_manifest.json`。本地 Web UI 会发现这些清单，
+自动生成基础/高级结构化表单，不提供原始参数输入框：
+
+```text
+http://127.0.0.1:8000/?workspace=standalone
+```
+
+清单声明字段类型、默认值、风险等级和停止策略。脚本仍须保持独立：清单可以描述脚本的
+CLI，但脚本本身不能导入 Web UI 包。
 
 ## 脚本索引
 
@@ -77,9 +108,11 @@ standalone_test_scripts/
 ```text
 每个测试脚本放在独立目录中
 脚本目录内放置 README.md 和 README.zh-CN.md
+需要出现在本地 Web UI 时提供 ui_manifest.json
 脚本名清晰表达测试场景
 不要依赖 orbbec_camera_auto_test 框架模块
 需要 ROS 时支持 --ros-version、--ros-setup、--driver-setup
-最终结果写入该脚本专属文件，例如 summary.md、summary.csv 或 result.json
-测试通过返回 0，失败返回非 0
+适用时支持统一的相机、生命周期和环境参数
+按统一契约写入 result.json、summary.md 和 events.jsonl
+通过返回 0，失败返回 1，中断返回 130，参数错误返回 2
 ```

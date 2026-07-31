@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "id": "image_receive_stats_test",
+  "title": "图像接收统计",
+  "description": "订阅图像 Topic，记录帧间隔、时间戳、停流告警与 CSV。",
+  "script": "image_topic_receive_stats.py",
+  "risk": "normal",
+  "stop_policy": "immediate",
+  "fields": [
+    {"name": "ros_version", "option": "--ros-version", "type": "select", "label": "ROS 版本", "section": "basic", "default": "2", "choices": [{"value": "2", "label": "ROS 2"}, {"value": "1", "label": "ROS 1"}]},
+    {"name": "ros_setup", "option": "--ros-setup", "type": "path", "label": "ROS Setup", "section": "basic", "default": "/opt/ros/humble/setup.bash"},
+    {"name": "driver_setup", "option": "--driver-setup", "type": "path", "label": "Driver Setup", "section": "basic", "default": "", "placeholder": "/path/to/orbbec_camera/install/setup.bash"},
+    {"name": "image_topics", "option": "--image-topic", "type": "list", "label": "图像 Topic（每行一个）", "section": "basic", "default": [], "required": true, "placeholder": "/camera/color/image_raw\n/camera/depth/image_raw"},
+    {"name": "duration", "option": "--duration", "type": "duration", "label": "最长运行时间", "section": "basic", "default": ""},
+    {"name": "warning_interval_sec", "option": "--warning-interval-sec", "type": "number", "label": "告警间隔秒数", "section": "basic", "default": "1.0", "min": 0.001},
+    {"name": "warmup_sec", "option": "--warmup-sec", "type": "number", "label": "预热秒数", "section": "basic", "default": "2.0", "min": 0},
+    {"name": "save_csv", "option": "--save-csv", "type": "boolean", "label": "保存逐帧 CSV", "section": "basic", "default": true},
+    {"name": "queue_size", "option": "--queue-size", "type": "integer", "label": "Queue Size", "section": "advanced", "default": "10", "min": 1},
+    {"name": "buff_size", "option": "--buff-size", "type": "integer", "label": "ROS 1 Buffer MB", "section": "advanced", "default": "16", "min": 1, "when": {"ros_version": "1"}},
+    {"name": "qos", "option": "--qos", "type": "select", "label": "ROS 2 QoS", "section": "advanced", "default": "sensor_data", "choices": ["sensor_data", "default", "reliable", "best_effort"], "when": {"ros_version": "2"}}
+  ]
+}

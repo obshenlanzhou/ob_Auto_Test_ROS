@@ -14,11 +14,23 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from _test_protocol import (
+    EventWriter,
+    artifact_list,
+    atomic_write_json,
+    collect_test_environment,
+    contract_result,
+    iso_now,
+    namespace_request,
+    parse_camera,
+    test_environment_markdown,
+)
 
 ENV_READY_VAR = "FIRMWARE_UPDATE_STRESS_TEST_ENV_READY"
 INTERRUPTED = False
 SCRIPT_DIR = Path(__file__).resolve().parent
-TOOL_VERSION = "0.1"
+TOOL_VERSION = "1.0"
+TEST_ID = "firmware_update_stress_test"
 SUCCESS_RE = re.compile(
     r"Firmware tool completed successfully\. Updated (?P<updated>\d+)/(?P<total>\d+) target device\(s\)\."
 )
@@ -32,7 +44,6 @@ def handle_sigint(signum, frame) -> None:
     del signum, frame
     global INTERRUPTED
     INTERRUPTED = True
-    raise KeyboardInterrupt
 
 
 def ensure_dir(path: Path) -> Path:
@@ -80,8 +91,13 @@ def normalize_firmware_paths(values: List[str]) -> List[Path]:
 
 
 class StatusLogger:
-    def __call__(self, message: str) -> None:
+    def __init__(self, events: Optional[EventWriter] = None) -> None:
+        self.events = events
+
+    def __call__(self, message: str, *, event: str = "log", **fields: Any) -> None:
         print(f"[{timestamp()}] {message}", flush=True)
+        if self.events is not None:
+            self.events.emit(event, message, **fields)
 
 
 def capture_sourced_env(ros_setup: str, driver_setup: str, ros_version: str) -> Dict[str, str]:
@@ -245,6 +261,7 @@ def build_summary(result: Dict[str, Any]) -> str:
         f"- Elapsed seconds: `{result.get('elapsed_seconds', 0.0):.1f}`",
         f"- Results dir: `{result.get('results_dir', '')}`",
         "",
+        *test_environment_markdown(result.get("environment", {})),
         "## Targets",
         "",
     ]
@@ -294,37 +311,50 @@ def run(args) -> int:
     previous_sigint_handler = signal.getsignal(signal.SIGINT)
     signal.signal(signal.SIGINT, handle_sigint)
     runtime_env = prepare_runtime_env(args)
+    environment = collect_test_environment(args)
 
     firmwares = normalize_firmware_paths(args.firmware)
-    serial_numbers = split_csv_values(args.serial_number)
-    selectors = [bool(serial_numbers), bool(args.usb_port), bool(args.device_ip)]
-    if sum(1 for item in selectors if item) > 1:
-        raise ValueError("only one selector can be used: --serial-number, --usb-port, or --device-ip")
+    cameras = [parse_camera(raw) for raw in args.camera] or [parse_camera("name=camera")]
+    serial_numbers = [item["serial_number"] for item in cameras if item["serial_number"]]
+    usb_ports = {item["usb_port"] for item in cameras if item["usb_port"]}
+    device_ips = {item["device_ip"] for item in cameras if item["device_ip"]}
+    device_ports = {item["device_port"] for item in cameras if item["device_port"]}
+    if len(usb_ports) > 1:
+        raise ValueError("firmware update accepts at most one distinct usb-port")
+    if len(device_ips) > 1:
+        raise ValueError("firmware update accepts at most one distinct device-ip")
+    if len(device_ports) > 1:
+        raise ValueError("firmware update accepts at most one distinct device-port")
+    usb_port = next(iter(usb_ports), "")
+    device_ip = next(iter(device_ips), "")
+    device_port = next(iter(device_ports), "8090")
 
-    test_count = int(args.test_count)
-    if test_count < 0:
-        raise ValueError("--test-count must be >= 0")
-    duration_seconds = parse_duration(args.duration, 300.0)
+    run_count = int(args.run_count)
+    if run_count <= 0:
+        raise ValueError("--run-count must be > 0")
+    duration_seconds = (
+        parse_duration(args.duration, 0.0) if str(args.duration or "").strip() else None
+    )
     restart_delay = float(args.restart_delay)
     if restart_delay < 0:
         raise ValueError("--restart-delay must be >= 0")
 
     run_id = datetime.now().strftime("%Y%m%d_%H%M%S_firmware_update")
+    run_started_at = iso_now()
     results_dir = ensure_dir(
         Path(args.results_dir or (SCRIPT_DIR / "results" / run_id)).expanduser().resolve()
     )
-    emit = StatusLogger()
+    events = EventWriter(results_dir / "events.jsonl")
+    emit = StatusLogger(events)
     result: Dict[str, Any] = {
         "status": "passed",
         "tool_version": TOOL_VERSION,
+        "environment": environment,
         "ros_version": args.ros_version,
         "firmwares": [str(path) for path in firmwares],
-        "serial_numbers": serial_numbers,
-        "usb_port": args.usb_port,
-        "device_ip": args.device_ip,
-        "device_port": args.device_port,
-        "test_count": test_count,
-        "duration_seconds": duration_seconds,
+        "cameras": cameras,
+        "run_count": run_count,
+        "duration_limit_seconds": duration_seconds,
         "restart_delay_seconds": restart_delay,
         "success_log_pattern": SUCCESS_RE.pattern,
         "results_dir": str(results_dir),
@@ -336,39 +366,52 @@ def run(args) -> int:
     emit(f"tool version: {TOOL_VERSION}")
     emit(f"results dir: {results_dir}")
     emit(f"firmwares: {', '.join(path.name for path in firmwares)}")
+    emit("test started", event="phase", phase="starting")
     if serial_numbers:
         emit(f"target serial numbers: {','.join(serial_numbers)}")
-    elif args.usb_port:
-        emit(f"target usb port: {args.usb_port}")
-    elif args.device_ip:
-        emit(f"target device ip: {args.device_ip}")
+    elif usb_port:
+        emit(f"target usb port: {usb_port}")
+    elif device_ip:
+        emit(f"target device ip: {device_ip}")
     else:
         emit("target selector: default device")
-    emit(f"test count: {test_count} ({'duration mode' if test_count == 0 else 'round mode'})")
+    emit(f"run count: {run_count}")
 
     start_monotonic = time.monotonic()
-    deadline = start_monotonic + duration_seconds
+    deadline = (
+        start_monotonic + duration_seconds
+        if duration_seconds is not None
+        else None
+    )
     test_index = 0
 
     try:
         while True:
-            if test_count > 0 and test_index >= test_count:
+            if INTERRUPTED:
+                result["status"] = "interrupted"
+                emit(
+                    "stop requested; current firmware update completed",
+                    event="phase",
+                    phase="stopped-at-safe-point",
+                )
                 break
-            if test_count == 0 and time.monotonic() >= deadline:
+            if test_index >= run_count:
+                break
+            if deadline is not None and time.monotonic() >= deadline:
                 break
 
             firmware_path = firmwares[test_index % len(firmwares)]
             test_index += 1
             test_name = f"test_{test_index:04d}"
-            progress_label = f"{test_index}/{test_count}" if test_count > 0 else f"{test_index}/duration"
+            progress_label = f"{test_index}/{run_count}"
             log_file = results_dir / "logs" / test_name / "update.log"
             command = build_update_command(
                 ros_version=args.ros_version,
                 firmware_path=firmware_path,
                 serial_numbers=serial_numbers,
-                usb_port=args.usb_port,
-                device_ip=args.device_ip,
-                device_port=args.device_port,
+                usb_port=usb_port,
+                device_ip=device_ip,
+                device_port=device_port,
                 reconnect_timeout_sec=args.reconnect_timeout_sec,
                 reconnect_poll_ms=args.reconnect_poll_ms,
                 sdk_log_level=args.sdk_log_level,
@@ -388,7 +431,13 @@ def run(args) -> int:
             }
             result["tests"].append(test_record)
 
-            emit(f"{test_name} ({progress_label}): update firmware from {firmware_path.name}")
+            emit(
+                f"{test_name} ({progress_label}): update firmware from {firmware_path.name}",
+                event="progress",
+                current=test_index,
+                total=run_count,
+                phase="updating",
+            )
             test_env = dict(runtime_env)
             test_env["ORBBEC_LOG_DIR"] = str(ensure_dir(log_file.parent / "sdk"))
             returncode, output = run_command_to_log(command, test_env, results_dir, log_file)
@@ -419,10 +468,22 @@ def run(args) -> int:
             result["passed_tests"] += 1
             emit(
                 f"{test_name} ({progress_label}): passed, "
-                f"updated {success_log['updated']}/{success_log['total']}"
+                f"updated {success_log['updated']}/{success_log['total']}",
+                event="progress",
+                current=test_index,
+                total=run_count,
+                phase="completed-cycle",
             )
 
-            if restart_delay > 0 and (test_count == 0 or test_index < test_count):
+            if INTERRUPTED:
+                result["status"] = "interrupted"
+                emit(
+                    "stop requested; current firmware update completed",
+                    event="phase",
+                    phase="stopped-at-safe-point",
+                )
+                break
+            if restart_delay > 0 and test_index < run_count:
                 time.sleep(restart_delay)
     except KeyboardInterrupt:
         result["status"] = "interrupted"
@@ -449,8 +510,26 @@ def run(args) -> int:
         for test in result.get("tests", []):
             if not test.get("ended_at"):
                 test["ended_at"] = datetime.now().isoformat(timespec="seconds")
-        write_json(results_dir / "result.json", result)
         (results_dir / "summary.md").write_text(build_summary(result), encoding="utf-8")
+        emit(
+            f"test finished with status {result['status']}",
+            event="completed",
+            status=result["status"],
+        )
+        payload = contract_result(
+            test_id=TEST_ID,
+            run_id=run_id,
+            started_at=run_started_at,
+            ended_at=iso_now(),
+            request=namespace_request(args),
+            details=result,
+            summary={
+                "passed_runs": result["passed_tests"],
+                "completed_runs": len(result["tests"]),
+            },
+            artifacts=artifact_list(results_dir),
+        )
+        atomic_write_json(results_dir / "result.json", payload)
         signal.signal(signal.SIGINT, previous_sigint_handler)
 
     if result["status"] == "passed":
@@ -472,9 +551,10 @@ def parse_args():
             "Examples:\n"
             "  python3 ./firmware_update_stress_test/firmware_update_stress_test.py "
             "--ros-version 2 --driver-setup /path/to/install/setup.bash "
-            "--firmware /path/fw_a.bin --firmware /path/fw_b.bin --test-count 10\n\n"
+            "--firmware /path/fw_a.bin --firmware /path/fw_b.bin --run-count 10\n\n"
             "  python3 ./firmware_update_stress_test/firmware_update_stress_test.py "
-            "--serial-number SN1,SN2 --firmware /path/fw.bin --test-count 3\n"
+            "--camera name=camera,serial-number=SN1 "
+            "--firmware /path/fw.bin --run-count 3\n"
         ),
     )
     parser.add_argument("--ros-version", choices=("1", "2"), default=os.environ.get("ROS_VERSION", "2"))
@@ -487,16 +567,20 @@ def parse_args():
         help="Firmware image path. Repeat to cycle through multiple files in order.",
     )
     parser.add_argument(
-        "--serial-number",
+        "--camera",
         action="append",
         default=[],
-        help="Target serial number(s). Repeat or pass comma-separated values for batch update.",
+        help=(
+            "Camera target as comma-separated KEY=VALUE fields. Supported keys: "
+            "name, serial-number, usb-port, device-ip, device-port, config-file-path."
+        ),
     )
-    parser.add_argument("--usb-port", default="", help="Single target USB port selector")
-    parser.add_argument("--device-ip", default="", help="Single target network device IP selector")
-    parser.add_argument("--device-port", default="8090", help="Network device port")
-    parser.add_argument("--test-count", type=int, default=10, help="Update command invocations; 0 means duration mode")
-    parser.add_argument("--duration", default="300", help="Duration used when --test-count is 0; supports 300, 15m, 2h")
+    parser.add_argument("--run-count", type=int, default=10, help="Maximum update cycles")
+    parser.add_argument(
+        "--duration",
+        default="",
+        help="Optional maximum wall time, such as 300, 15m, or 2h",
+    )
     parser.add_argument("--restart-delay", default="2", help="Delay seconds between update commands")
     parser.add_argument("--reconnect-timeout-sec", default="120", help="Passed to firmware_update_tool")
     parser.add_argument("--reconnect-poll-ms", default="1000", help="Passed to firmware_update_tool")

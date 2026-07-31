@@ -77,3 +77,45 @@ def test_session_sets_ros_home_for_ros1(
         assert "ROS_HOME" not in captured_env
     else:
         assert captured_env["ROS_HOME"] == str(work_dir)
+
+
+def test_session_detects_fatal_driver_initialization_output(tmp_path: Path) -> None:
+    class RunningProcess:
+        @staticmethod
+        def poll():
+            return None
+
+    test_session = session.TestSession(
+        launch_file="camera.launch.py",
+        launch_args={},
+        work_dir=tmp_path / "work",
+        log_path=tmp_path / "launch.log",
+    )
+    test_session.process = RunningProcess()
+    test_session._captured_lines.append(  # noqa: SLF001
+        "[camera] [ERROR] Failed to initialize device accel sensor not found"
+    )
+
+    with pytest.raises(RuntimeError, match="fatal startup error"):
+        test_session.assert_healthy()
+
+
+def test_session_treats_ros_error_log_as_fatal(tmp_path: Path) -> None:
+    class RunningProcess:
+        @staticmethod
+        def poll():
+            return None
+
+    test_session = session.TestSession(
+        launch_file="camera.launch.py",
+        launch_args={},
+        work_dir=tmp_path / "work",
+        log_path=tmp_path / "launch.log",
+    )
+    test_session.process = RunningProcess()
+    test_session._captured_lines.append(  # noqa: SLF001
+        "[camera] [ERROR] recoverable frame warning"
+    )
+
+    with pytest.raises(RuntimeError, match="recoverable frame warning"):
+        test_session.assert_healthy()

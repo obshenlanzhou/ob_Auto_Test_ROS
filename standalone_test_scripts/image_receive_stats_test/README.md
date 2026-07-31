@@ -32,23 +32,26 @@ ROS1 example:
 
 ```bash
 python3 ./image_topic_receive_stats.py \
-  --topics "/camera_01/color/image_raw,/camera_01/depth/image_raw" \
-  --output_dir "./image_receive_stats_test" \
-  --warning_interval_sec 1.0 \
-  --warmup_sec 2.0 \
-  --queue_size 10 \
-  --buff_size 16
+  --ros-version 1 \
+  --image-topic /camera_01/color/image_raw \
+  --image-topic /camera_01/depth/image_raw \
+  --results-dir ./image_receive_stats_test \
+  --warning-interval-sec 1.0 \
+  --warmup-sec 2.0 \
+  --queue-size 10
 ```
 
 ROS2 example:
 
 ```bash
 python3 ./image_topic_receive_stats.py \
-  --topics "/camera/color/image_raw,/camera/depth/image_raw" \
-  --output_dir "./image_receive_stats_test" \
-  --warning_interval_sec 1.0 \
-  --warmup_sec 2.0 \
-  --queue_size 10 \
+  --ros-version 2 \
+  --image-topic /camera/color/image_raw \
+  --image-topic /camera/depth/image_raw \
+  --results-dir ./image_receive_stats_test \
+  --warning-interval-sec 1.0 \
+  --warmup-sec 2.0 \
+  --queue-size 10 \
   --qos sensor_data
 ```
 
@@ -56,15 +59,14 @@ python3 ./image_topic_receive_stats.py \
 
 | Option | Description | Default |
 | --- | --- | --- |
-| `--topics` | Required comma-separated `sensor_msgs/Image` topics | None |
-| `--output_dir` | Output directory | `image_receive_stats_<timestamp>` for ROS1, `image_receive_stats_ros2_<timestamp>` for ROS2 |
-| `--warning_interval_sec` | Warn when consecutive receive gaps exceed this value | `1.0` |
-| `--warmup_sec` | Ignore frames during startup warmup | `2.0` |
-| `--queue_size` | Subscriber queue size | `10` |
-| `--buff_size` | ROS1 socket buffer size in MB | `16` |
+| `--image-topic` | Required `sensor_msgs/Image` topic; repeatable | None |
+| `--results-dir` | Output directory | Timestamped directory |
+| `--warning-interval-sec` | Warn when consecutive receive gaps exceed this value | `1.0` |
+| `--warmup-sec` | Ignore frames during startup warmup | `2.0` |
+| `--queue-size` | Subscriber queue size | `10` |
+| `--duration` | Optional maximum wall time | Empty |
 | `--qos` | ROS2 subscriber QoS: `sensor_data`, `default`, `reliable`, or `best_effort` | `sensor_data` |
-| `--save_csv` | Enable or disable per-frame CSV saving | `true` |
-| `--disable_csv` | Disable per-frame CSV while keeping summary and warnings | Disabled |
+| `--save-csv` | Enable or disable per-frame CSV saving | `true` |
 
 ## Outputs
 
@@ -74,8 +76,11 @@ The output directory contains:
 warnings.log
 summary.csv
 metadata.json
+summary.md
+result.json
+events.jsonl
 <topic_name>.csv
 ```
 
-`summary.csv`, `warnings.log`, and `metadata.json` are always generated.
+The common result files and the statistics summary are always generated.
 Per-topic CSV files are generated when per-frame CSV saving is enabled.

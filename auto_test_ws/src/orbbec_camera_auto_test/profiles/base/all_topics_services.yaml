@@ -44,6 +44,18 @@ launch_scenarios:
         type: sensor_msgs/msg/Image
         mode: message
         validator: image
+      - name: /{camera}/depth/image_unaligned
+        type: sensor_msgs/msg/Image
+        mode: message
+        validator: image
+      - name: /{camera}/confidence/image_raw
+        type: sensor_msgs/msg/Image
+        mode: message
+        validator: image
+      - name: /{camera}/depth_to_color/image_raw
+        type: sensor_msgs/msg/Image
+        mode: message
+        validator: image
       - name: /{camera}/depth/image_raw/compressedDepth
         type: sensor_msgs/msg/CompressedImage
         mode: advertised
@@ -219,6 +231,11 @@ launch_scenarios:
         type: orbbec_camera_msgs/msg/DeviceStatus
         mode: message
         validator: device_status
+      - name: /{camera}/sdk_version
+        type: std_msgs/msg/String
+        mode: message
+        validator: string_non_empty
+        qos: transient_local
       - name: /diagnostics
         type: diagnostic_msgs/msg/DiagnosticArray
         mode: advertised

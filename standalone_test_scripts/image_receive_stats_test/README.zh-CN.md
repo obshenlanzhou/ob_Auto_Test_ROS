@@ -28,23 +28,26 @@ ROS1 示例：
 
 ```bash
 python3 ./image_topic_receive_stats.py \
-  --topics "/camera_01/color/image_raw,/camera_01/depth/image_raw" \
-  --output_dir "./image_receive_stats_test" \
-  --warning_interval_sec 1.0 \
-  --warmup_sec 2.0 \
-  --queue_size 10 \
-  --buff_size 16
+  --ros-version 1 \
+  --image-topic /camera_01/color/image_raw \
+  --image-topic /camera_01/depth/image_raw \
+  --results-dir ./image_receive_stats_test \
+  --warning-interval-sec 1.0 \
+  --warmup-sec 2.0 \
+  --queue-size 10
 ```
 
 ROS2 示例：
 
 ```bash
 python3 ./image_topic_receive_stats.py \
-  --topics "/camera/color/image_raw,/camera/depth/image_raw" \
-  --output_dir "./image_receive_stats_test" \
-  --warning_interval_sec 1.0 \
-  --warmup_sec 2.0 \
-  --queue_size 10 \
+  --ros-version 2 \
+  --image-topic /camera/color/image_raw \
+  --image-topic /camera/depth/image_raw \
+  --results-dir ./image_receive_stats_test \
+  --warning-interval-sec 1.0 \
+  --warmup-sec 2.0 \
+  --queue-size 10 \
   --qos sensor_data
 ```
 
@@ -52,15 +55,14 @@ python3 ./image_topic_receive_stats.py \
 
 | 参数 | 说明 | 默认值 |
 | --- | --- | --- |
-| `--topics` | 必填，逗号分隔的 `sensor_msgs/Image` 话题列表 | 无 |
-| `--output_dir` | 输出目录 | ROS1 为 `image_receive_stats_<timestamp>`，ROS2 为 `image_receive_stats_ros2_<timestamp>` |
-| `--warning_interval_sec` | 相邻两帧接收间隔超过该值时记录告警 | `1.0` |
-| `--warmup_sec` | 启动预热时间，预热期间不记录统计 | `2.0` |
-| `--queue_size` | Subscriber 队列大小 | `10` |
-| `--buff_size` | ROS1 Subscriber socket buffer 大小，单位 MB | `16` |
+| `--image-topic` | 必填的 `sensor_msgs/Image` 话题，可重复传入 | 无 |
+| `--results-dir` | 输出目录 | 带时间戳的目录 |
+| `--warning-interval-sec` | 相邻两帧接收间隔超过该值时记录告警 | `1.0` |
+| `--warmup-sec` | 启动预热时间，预热期间不记录统计 | `2.0` |
+| `--queue-size` | Subscriber 队列大小 | `10` |
+| `--duration` | 可选的最长运行时间 | 空 |
 | `--qos` | ROS2 Subscriber QoS，可选 `sensor_data`、`default`、`reliable`、`best_effort` | `sensor_data` |
-| `--save_csv` | 是否保存逐帧 CSV | `true` |
-| `--disable_csv` | 关闭逐帧 CSV，但保留汇总和告警文件 | 默认关闭 |
+| `--save-csv` | 是否保存逐帧 CSV | `true` |
 
 ## 输出文件
 
@@ -70,7 +72,10 @@ python3 ./image_topic_receive_stats.py \
 warnings.log
 summary.csv
 metadata.json
+summary.md
+result.json
+events.jsonl
 <topic_name>.csv
 ```
 
-`summary.csv`、`warnings.log` 和 `metadata.json` 始终生成。启用逐帧 CSV 时，每个话题还会生成一个对应的 CSV 文件。
+通用结果文件和统计汇总始终生成。启用逐帧 CSV 时，每个话题还会生成一个对应的 CSV 文件。

@@ -89,6 +89,250 @@ def summarize_statuses(items: List[Dict[str, Any]]) -> Dict[str, int]:
     return counts
 
 
+def _functional_result_detail(item: Dict[str, Any]) -> Any:
+    message = item.get("message")
+    metrics = item.get("metrics")
+    if message and metrics:
+        return {"message": message, "metrics": metrics}
+    return message or metrics or ""
+
+
+def _functional_check_name(item: Dict[str, Any]) -> str:
+    mode = str(item.get("mode", ""))
+    validator = str(item.get("validator", ""))
+    if mode == "message" and validator:
+        return f"{mode} ({validator})"
+    return mode
+
+
+def _required_label(item: Dict[str, Any]) -> str:
+    return "Yes" if item.get("required", False) else "No"
+
+
+def _append_functional_detail_tables(
+    lines: List[str], scenario: Dict[str, Any]
+) -> None:
+    scenario_name = scenario.get("name", "")
+    lines.extend([f"## Scenario Details: {scenario_name}", ""])
+
+    scenario_message = scenario.get("message")
+    if scenario_message:
+        lines.extend(
+            _key_value_table(
+                "### Scenario Result",
+                [
+                    ("Status", scenario.get("status", "")),
+                    ("Message", scenario_message),
+                ],
+            )
+        )
+
+    requirements = scenario.get("requirements")
+    if requirements:
+        missing_topics = set(requirements.get("missing_topics", []))
+        missing_services = set(requirements.get("missing_services", []))
+        conformance_checked = requirements.get("status") != "not_checked"
+        required_rows = [
+            [
+                "Topic",
+                name,
+                (
+                    "not checked"
+                    if not conformance_checked
+                    else ("failed" if name in missing_topics else "passed")
+                ),
+            ]
+            for name in requirements.get("required_topics", [])
+        ]
+        required_rows.extend(
+            [
+                "Service",
+                name,
+                (
+                    "not checked"
+                    if not conformance_checked
+                    else ("failed" if name in missing_services else "passed")
+                ),
+            ]
+            for name in requirements.get("required_services", [])
+        )
+        lines.extend(["### Required Interface Conformance", ""])
+        lines.extend(
+            _key_value_table(
+                "#### Matched Requirement Profile",
+                [
+                    ("Profile", requirements.get("profile_name", "")),
+                    ("Launch file", requirements.get("launch_file", "")),
+                    (
+                        "Effective launch arguments",
+                        requirements.get("effective_launch_args", {}),
+                    ),
+                    ("Matched rules", requirements.get("matched_rules", [])),
+                    ("Status", requirements.get("status", "")),
+                ],
+            )
+        )
+        lines.extend(
+            _markdown_table(
+                ["Kind", "Required Interface", "Graph Status"],
+                required_rows
+                or [["N/A", "No required interfaces resolved", "N/A"]],
+            )
+        )
+        lines.append("")
+
+    lines.extend(["### Topics", ""])
+    topics = scenario.get("topics", [])
+    if topics:
+        lines.extend(
+            _markdown_table(
+                ["Topic", "Type", "Required", "Check", "Status", "Details"],
+                [
+                    [
+                        item.get("name", ""),
+                        item.get("type", ""),
+                        _required_label(item),
+                        _functional_check_name(item),
+                        item.get("status", ""),
+                        _functional_result_detail(item),
+                    ]
+                    for item in topics
+                ],
+            )
+        )
+    else:
+        lines.extend(
+            _markdown_table(
+                ["Topic", "Type", "Required", "Check", "Status", "Details"],
+                [
+                    [
+                        "N/A",
+                        "N/A",
+                        "N/A",
+                        "N/A",
+                        "N/A",
+                        "No topic checks were executed",
+                    ]
+                ],
+            )
+        )
+    lines.append("")
+
+    lines.extend(["### Services", ""])
+    services = scenario.get("services", [])
+    if services:
+        lines.extend(
+            _markdown_table(
+                ["Service", "Type", "Required", "Check", "Status", "Details"],
+                [
+                    [
+                        item.get("name", ""),
+                        item.get("type", ""),
+                        _required_label(item),
+                        _functional_check_name(item),
+                        item.get("status", ""),
+                        _functional_result_detail(item),
+                    ]
+                    for item in services
+                ],
+            )
+        )
+    else:
+        lines.extend(
+            _markdown_table(
+                ["Service", "Type", "Required", "Check", "Status", "Details"],
+                [
+                    [
+                        "N/A",
+                        "N/A",
+                        "N/A",
+                        "N/A",
+                        "N/A",
+                        "No service checks were executed",
+                    ]
+                ],
+            )
+        )
+    lines.append("")
+
+    lines.extend(["### Artifacts", ""])
+    artifacts = scenario.get("artifacts", [])
+    if artifacts:
+        lines.extend(
+            _markdown_table(
+                [
+                    "Service",
+                    "Type",
+                    "Required",
+                    "Check",
+                    "Status",
+                    "Details",
+                    "New Files",
+                ],
+                [
+                    [
+                        item.get("name", ""),
+                        item.get("type", ""),
+                        _required_label(item),
+                        _functional_check_name(item),
+                        item.get("status", ""),
+                        _functional_result_detail(item),
+                        item.get("new_files", []),
+                    ]
+                    for item in artifacts
+                ],
+            )
+        )
+    else:
+        lines.extend(
+            _markdown_table(
+                [
+                    "Service",
+                    "Type",
+                    "Required",
+                    "Check",
+                    "Status",
+                    "Details",
+                    "New Files",
+                ],
+                [
+                    [
+                        "N/A",
+                        "N/A",
+                        "N/A",
+                        "N/A",
+                        "N/A",
+                        "No artifact checks were executed",
+                        "N/A",
+                    ]
+                ],
+            )
+        )
+    lines.append("")
+
+    lines.extend(["### Reboot Recovery", ""])
+    default_reboot = {
+        "status": "skipped",
+        "message": "reboot check was not configured",
+    }
+    reboot = scenario.get("reboot", default_reboot)
+    lines.extend(
+        _markdown_table(
+            ["Service", "Type", "Required", "Status", "Details"],
+            [
+                [
+                    reboot.get("name", "reboot_device"),
+                    reboot.get("type", ""),
+                    _required_label(reboot),
+                    reboot.get("status", "skipped"),
+                    reboot.get("message", ""),
+                ]
+            ],
+        )
+    )
+    lines.append("")
+
+
 def build_functional_summary(result: Dict[str, Any]) -> List[str]:
     lines = [
         f"# Functional Test Summary: {result['profile_name']}",
@@ -102,6 +346,10 @@ def build_functional_summary(result: Dict[str, Any]) -> List[str]:
                 ("Status", result.get("status", "")),
                 ("Camera name", result.get("camera_name", "")),
                 ("Launch file", result.get("launch_file", "")),
+                (
+                    "Requirement profile",
+                    result.get("requirement_profile", {}).get("name", "N/A"),
+                ),
             ],
         )
     )
@@ -136,6 +384,9 @@ def build_functional_summary(result: Dict[str, Any]) -> List[str]:
         lines.append("| --- | --- | --- | --- | --- | --- |")
         lines.append("| N/A | N/A | N/A | N/A | N/A | N/A |")
     lines.append("")
+
+    for scenario in result.get("scenarios", []):
+        _append_functional_detail_tables(lines, scenario)
 
     lines.append("## Failures")
     lines.append("")
@@ -445,6 +696,10 @@ def collect_failures(result: Dict[str, Any]) -> List[str]:
     if result.get("preflight_error"):
         failures.append(f"preflight: {result['preflight_error']}")
     for scenario in result.get("scenarios", []):
+        if scenario.get("status") == "failed" and scenario.get("message"):
+            failures.append(
+                f"{scenario.get('name', 'scenario')}: {scenario['message']}"
+            )
         for item in (
             scenario.get("topics", [])
             + scenario.get("services", [])

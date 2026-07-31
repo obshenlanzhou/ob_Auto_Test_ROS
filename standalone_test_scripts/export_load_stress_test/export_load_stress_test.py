@@ -14,10 +14,26 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from _test_protocol import (
+    EventWriter,
+    artifact_list,
+    atomic_write_json,
+    collect_test_environment,
+    contract_result,
+    iso_now,
+    namespace_request,
+    parse_camera,
+    test_environment_markdown,
+)
 
 ENV_READY_VAR = "EXPORT_LOAD_STRESS_TEST_ENV_READY"
 INTERRUPTED = False
-TOOL_VERSION = "0.1"
+TOOL_VERSION = "1.0"
+TEST_ID = "export_load_stress_test"
+DEFAULT_STRESS_LAUNCH_ARGS = {
+    "enable_heartbeat": "true",
+    "enable_firmware_log": "true",
+}
 DEFAULT_CONFIG_JSONS = [
     Path(__file__).resolve().parent / "config" / "Gemini_336L_1.json",
     Path(__file__).resolve().parent / "config" / "Gemini_336L_2.json",
@@ -33,6 +49,9 @@ class CameraSpec:
     name: str
     usb_port: str = ""
     serial_number: str = ""
+    device_ip: str = ""
+    device_port: str = ""
+    config_file_path: str = ""
 
 
 def timestamp() -> str:
@@ -85,32 +104,7 @@ def parse_launch_arg(raw: str) -> tuple[str, str]:
 
 
 def parse_camera_spec(raw: str) -> CameraSpec:
-    text = raw.strip()
-    if not text:
-        raise ValueError("--camera cannot be empty")
-    name = ""
-    fields: Dict[str, str] = {}
-    for index, part in enumerate(item.strip() for item in text.split(",")):
-        if not part:
-            continue
-        if "=" in part:
-            key, value = part.split("=", 1)
-            fields[key.strip()] = value.strip()
-        elif index == 0:
-            name = part
-        else:
-            raise ValueError(f"unsupported camera item '{part}' in {raw}")
-    name = fields.pop("name", name).strip()
-    if not name:
-        raise ValueError(f"camera name is required in --camera {raw}")
-    unsupported = sorted(set(fields).difference({"usb_port", "serial_number"}))
-    if unsupported:
-        raise ValueError(f"unsupported camera fields in --camera {raw}: {', '.join(unsupported)}")
-    return CameraSpec(
-        name=name,
-        usb_port=fields.get("usb_port", ""),
-        serial_number=fields.get("serial_number", ""),
-    )
+    return CameraSpec(**parse_camera(raw))
 
 
 def expand_camera_template(value: str, camera_name: str) -> str:
@@ -158,8 +152,13 @@ def build_launch_command(
 
 
 class StatusLogger:
-    def __call__(self, message: str) -> None:
+    def __init__(self, events: Optional[EventWriter] = None) -> None:
+        self.events = events
+
+    def __call__(self, message: str, *, event: str = "log", **fields: Any) -> None:
         print(f"[{timestamp()}] {message}", flush=True)
+        if self.events is not None:
+            self.events.emit(event, message, **fields)
 
 
 def capture_sourced_env(ros_setup: str, driver_setup: str, ros_version: str) -> Dict[str, str]:
@@ -926,7 +925,7 @@ def write_json(path: Path, payload: Any) -> None:
 
 
 def build_common_launch_args(raw_launch_args: List[str]) -> Dict[str, str]:
-    launch_args: Dict[str, str] = {}
+    launch_args: Dict[str, str] = dict(DEFAULT_STRESS_LAUNCH_ARGS)
     for raw_arg in raw_launch_args:
         key, value = parse_launch_arg(raw_arg)
         launch_args[key] = value
@@ -946,6 +945,12 @@ def build_camera_launch_args(
         launch_args["usb_port"] = camera.usb_port
     if camera.serial_number:
         launch_args["serial_number"] = camera.serial_number
+    if camera.device_ip:
+        launch_args["net_device_ip"] = camera.device_ip
+    if camera.device_port:
+        launch_args["net_device_port"] = camera.device_port
+    if camera.config_file_path:
+        launch_args["config_file_path"] = camera.config_file_path
     return launch_args
 
 
@@ -962,12 +967,13 @@ def build_summary(result: Dict[str, Any]) -> str:
     lines = [
         "# Export Load Stress Test",
         "",
+        *test_environment_markdown(result.get("environment", {})),
         "## Result",
         "",
         f"- Status: {result.get('status', '')}",
         f"- Tool version: {result.get('tool_version', '')}",
         f"- Passed tests: {result.get('passed_tests', 0)}",
-        f"- Planned tests: {result.get('test_count', 0)}",
+        f"- Planned runs: {result.get('run_count', 0)}",
         f"- Completed tests: {len(tests)}",
         f"- Failed tests: {len(failed_tests)}",
         f"- Elapsed seconds: {float(result.get('elapsed_seconds', 0.0) or 0.0):.1f}",
@@ -1086,14 +1092,17 @@ def run(args) -> int:
     signal.signal(signal.SIGINT, handle_sigint)
     runtime_env = prepare_runtime_env(args)
     apply_python_paths(runtime_env)
+    environment = collect_test_environment(args)
 
-    emit = StatusLogger()
     config_jsons = normalize_config_paths(args.config_json)
-    cameras = [parse_camera_spec(raw) for raw in (args.camera or ["camera"])]
+    cameras = [parse_camera_spec(raw) for raw in (args.camera or ["name=camera"])]
     common_launch_args = build_common_launch_args(args.launch_arg)
-    test_count = int(args.test_count)
-    if test_count <= 0:
-        raise ValueError("--test-count must be > 0")
+    run_count = int(args.run_count)
+    if run_count <= 0:
+        raise ValueError("--run-count must be > 0")
+    duration_seconds = (
+        parse_duration(args.duration, 0.0) if str(args.duration or "").strip() else None
+    )
 
     stable_seconds = parse_duration(args.stable_seconds, 5.0)
     stream_timeout = parse_duration(args.stream_timeout, 60.0)
@@ -1109,9 +1118,12 @@ def run(args) -> int:
         raise ValueError("--jpg-quality must be between 1 and 100")
 
     run_id = datetime.now().strftime("%Y%m%d_%H%M%S_export_load")
+    run_started_at = iso_now()
     default_results_dir = Path(__file__).resolve().parent / "results" / run_id
     results_dir = ensure_dir(Path(args.results_dir).resolve() if args.results_dir else default_results_dir)
     exports_dir = ensure_dir(results_dir / "exports")
+    events = EventWriter(results_dir / "events.jsonl")
+    emit = StatusLogger(events)
 
     image_topic_templates = args.image_topic or DEFAULT_IMAGE_TOPIC_TEMPLATES
     image_topics = [
@@ -1128,10 +1140,12 @@ def run(args) -> int:
     result: Dict[str, Any] = {
         "status": "passed",
         "tool_version": TOOL_VERSION,
+        "environment": environment,
         "ros_version": args.ros_version,
         "launch_file": args.launch_file,
         "launch_package": args.launch_package,
-        "test_count": test_count,
+        "run_count": run_count,
+        "duration_limit_seconds": duration_seconds,
         "passed_tests": 0,
         "config_jsons": [str(path) for path in config_jsons],
         "cameras": [asdict(camera) for camera in cameras],
@@ -1149,7 +1163,8 @@ def run(args) -> int:
 
     emit(f"tool version: {TOOL_VERSION}")
     emit(f"results dir: {results_dir}")
-    emit(f"test count: {test_count}")
+    emit("test started", event="phase", phase="starting")
+    emit(f"run count: {run_count}")
     emit(f"cameras: {', '.join(camera.name for camera in cameras)}")
     emit(f"config JSON cycle: {', '.join(str(path) for path in config_jsons)}")
     emit(f"monitor topics: {', '.join(image_topics)}")
@@ -1159,12 +1174,21 @@ def run(args) -> int:
         emit("save JPG images: disabled")
 
     test_start_monotonic = time.monotonic()
+    deadline = (
+        test_start_monotonic + duration_seconds
+        if duration_seconds is not None
+        else None
+    )
     active_sessions: List[LaunchSession] = []
     current_test: Optional[Dict[str, Any]] = None
     keep_launch_running = False
     try:
         with RosHarness(args.ros_version, "export_load_stress_test", args.queue_size) as harness:
-            for test_index in range(1, test_count + 1):
+            test_index = 0
+            while test_index < run_count:
+                if deadline is not None and time.monotonic() >= deadline:
+                    break
+                test_index += 1
                 config_json = config_jsons[(test_index - 1) % len(config_jsons)]
                 input_payload = load_json_file(config_json)
                 test_name = f"test_{test_index:04d}"
@@ -1184,7 +1208,13 @@ def run(args) -> int:
                 current_test = test_payload
                 result["tests"].append(test_payload)
 
-                emit(f"{test_name}: start, config={config_json.name}")
+                emit(
+                    f"{test_name}: start, config={config_json.name}",
+                    event="progress",
+                    current=test_index,
+                    total=run_count,
+                    phase="running",
+                )
                 sessions: List[LaunchSession] = []
                 for camera in cameras:
                     launch_args = build_camera_launch_args(
@@ -1334,7 +1364,9 @@ def run(args) -> int:
                 test_payload["ended_at"] = datetime.now().isoformat(timespec="seconds")
                 result["passed_tests"] += 1
                 current_test = None
-                if test_index < test_count:
+                if test_index < run_count and (
+                    deadline is None or time.monotonic() < deadline
+                ):
                     time.sleep(restart_delay)
     except KeyboardInterrupt:
         if result.get("manual_confirmation_required"):
@@ -1369,8 +1401,26 @@ def run(args) -> int:
         for test_payload in result.get("tests", []):
             if not test_payload.get("ended_at"):
                 test_payload["ended_at"] = datetime.now().isoformat(timespec="seconds")
-        write_json(results_dir / "result.json", result)
         (results_dir / "summary.md").write_text(build_summary(result), encoding="utf-8")
+        emit(
+            f"test finished with status {result['status']}",
+            event="completed",
+            status=result["status"],
+        )
+        payload = contract_result(
+            test_id=TEST_ID,
+            run_id=run_id,
+            started_at=run_started_at,
+            ended_at=iso_now(),
+            request=namespace_request(args),
+            details=result,
+            summary={
+                "passed_runs": result["passed_tests"],
+                "completed_runs": len(result["tests"]),
+            },
+            artifacts=artifact_list(results_dir),
+        )
+        atomic_write_json(results_dir / "result.json", payload)
         signal.signal(signal.SIGINT, previous_sigint_handler)
 
     if result["status"] == "passed":
@@ -1391,9 +1441,10 @@ def parse_args():
         epilog=(
             "Examples:\n"
             "  python3 ./export_load_stress_test/export_load_stress_test.py "
-            "--test-count 2 --camera camera\n\n"
-            "  python3 ./export_load_stress_test/export_load_stress_test.py --test-count 2 "
-            "--camera camera_01,usb_port=2-1 --camera camera_02,usb_port=2-3\n"
+            "--run-count 2 --camera name=camera\n\n"
+            "  python3 ./export_load_stress_test/export_load_stress_test.py --run-count 2 "
+            "--camera name=camera_01,usb-port=2-1 "
+            "--camera name=camera_02,usb-port=2-3\n"
         ),
     )
     parser.add_argument("--ros-version", choices=("1", "2"), default=os.environ.get("ROS_VERSION", "2"))
@@ -1414,11 +1465,17 @@ def parse_args():
         action="append",
         default=[],
         help=(
-            "Camera spec. Examples: camera, camera_01,usb_port=2-1, "
-            "name=camera_02,serial_number=123"
+            "Camera launch arguments as comma-separated KEY=VALUE fields. "
+            "Supported keys: name, serial-number, usb-port, device-ip, "
+            "device-port, config-file-path."
         ),
     )
-    parser.add_argument("--test-count", type=int, default=10, help="Total stress test count")
+    parser.add_argument("--run-count", type=int, default=10, help="Maximum complete test cycles")
+    parser.add_argument(
+        "--duration",
+        default="",
+        help="Optional maximum wall time, such as 300, 15m, or 2h",
+    )
     parser.add_argument(
         "--image-topic",
         action="append",

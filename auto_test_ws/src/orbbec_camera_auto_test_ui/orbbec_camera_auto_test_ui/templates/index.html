@@ -34,7 +34,20 @@
             <p id="workspacePath">正在连接测试工作区...</p>
           </div>
         </div>
+
+        <nav class="workspace-switch" aria-label="测试入口">
+          <button type="button" class="active" id="frameworkWorkspaceButton" data-workspace="framework">
+            <span>自动化框架</span><small>Profiles &amp; runners</small>
+          </button>
+          <button type="button" id="standaloneWorkspaceButton" data-workspace="standalone">
+            <span>独立脚本</span><small>Standalone tools</small>
+          </button>
+        </nav>
+
         <div class="header-tools">
+          <button type="button" class="device-info-button" id="showDevices">
+            <span aria-hidden="true">◉</span> 相机信息
+          </button>
           <div class="theme-switch" role="group" aria-label="页面主题">
             <button type="button" data-theme-value="light" aria-pressed="true"><span aria-hidden="true">☀</span> 浅色</button>
             <button type="button" data-theme-value="dark" aria-pressed="false"><span aria-hidden="true">☾</span> 深色</button>
@@ -55,16 +68,16 @@
         </div>
         <div class="metric">
           <span class="metric-icon" aria-hidden="true">02</span>
-          <div><small>测试模式</small><strong id="currentMode">—</strong></div>
+          <div><small id="currentModeLabel">测试模式</small><strong id="currentMode">—</strong></div>
         </div>
         <div class="metric">
           <span class="metric-icon" aria-hidden="true">03</span>
-          <div><small>Launch</small><strong id="launchCount">—</strong></div>
+          <div><small id="resourceCountLabel">可用 Launch</small><strong id="launchCount">—</strong></div>
         </div>
       </section>
 
       <section class="layout">
-        <form id="runForm" class="panel controls">
+        <form id="runForm" class="panel controls workspace-form" data-workspace-panel="framework">
           <div class="panel-header controls-header">
             <div>
               <span class="panel-kicker">CONTROL DECK</span>
@@ -87,14 +100,18 @@
                 </select>
               </label>
               <label>
+                <span>ROS Domain ID</span>
+                <input id="rosDomainId" name="ros_domain_id" type="number" min="0" max="232" step="1" placeholder="0（留空表示不设置）" />
+              </label>
+              <label>
                 <span>ROS Setup</span>
-                <input id="rosSetup" name="ros_setup" autocomplete="off" />
+                <input id="rosSetup" name="ros_setup" autocomplete="off" placeholder="/opt/ros/humble/setup.bash" />
+              </label>
+              <label>
+                <span>Camera ROS Setup</span>
+                <input id="cameraSetup" name="camera_setup" autocomplete="off" placeholder="/path/to/orbbecsdk_ros2/install/setup.bash" />
               </label>
             </div>
-            <label>
-              <span>Camera ROS Setup</span>
-              <input id="cameraSetup" name="camera_setup" autocomplete="off" placeholder="/path/to/orbbecsdk_ros2/install/setup.bash" />
-            </label>
           </section>
 
           <section class="form-section">
@@ -155,7 +172,7 @@
             </div>
 
             <div id="streamTopicFields">
-              <label><span>Image Topics</span><textarea id="imageTopics" name="image_topics" rows="3" placeholder="/{camera}/color/image_raw"></textarea></label>
+              <label><span>Image Topics</span><textarea id="imageTopics" name="image_topics" rows="3" placeholder="/{camera}/color/image_raw&#10;/{camera}/depth/image_raw"></textarea></label>
             </div>
           </section>
 
@@ -188,9 +205,9 @@
             <div class="section-content">
               <div class="grid two">
                 <label><span>Camera Name</span><input id="cameraName" name="camera_name" placeholder="camera" /></label>
-                <label><span>Serial Number</span><input id="serialNumber" name="serial_number" /></label>
-                <label><span>USB Port</span><input id="usbPort" name="usb_port" /></label>
-                <label><span>Config File Path</span><input id="configFilePath" name="config_file_path" /></label>
+                <label><span>Serial Number</span><input id="serialNumber" name="serial_number" placeholder="CV2R1610002F" /></label>
+                <label><span>USB Port</span><input id="usbPort" name="usb_port" placeholder="2-1" /></label>
+                <label><span>Config File Path</span><input id="configFilePath" name="config_file_path" placeholder="/path/to/camera_config.yaml" /></label>
               </div>
             </div>
           </details>
@@ -198,13 +215,66 @@
           <details class="form-section compact-section">
             <summary class="section-title"><span>05</span><div>Launch 参数<small>Advanced launch options</small></div><i aria-hidden="true">⌄</i></summary>
             <div class="section-content">
-              <label><span>Extra Launch Args</span><textarea id="launchArgs" name="launch_args" rows="4" placeholder="enable_point_cloud=true"></textarea></label>
+              <label><span>Extra Launch Args</span><textarea id="launchArgs" name="launch_args" rows="4" placeholder="enable_point_cloud=true&#10;enable_colored_point_cloud=true"></textarea></label>
             </div>
           </details>
 
+          <div class="form-validation is-hidden" id="frameworkValidation" role="alert"></div>
           <div class="actions">
+            <div class="form-readiness" id="frameworkReadiness"><i aria-hidden="true"></i><span>正在检查必填项…</span></div>
             <button type="submit" class="primary" id="startButton"><span class="button-icon" aria-hidden="true">▶</span>开始测试</button>
-            <button type="button" class="danger" id="stopButton"><span class="button-icon" aria-hidden="true">■</span>停止</button>
+            <button type="button" class="danger is-hidden" id="stopButton"><span class="button-icon" aria-hidden="true">■</span>停止</button>
+          </div>
+        </form>
+
+        <form id="standaloneForm" class="panel controls workspace-form is-hidden" data-workspace-panel="standalone">
+          <div class="panel-header controls-header">
+            <div>
+              <span class="panel-kicker">STANDALONE TOOLS</span>
+              <h2>独立脚本</h2>
+              <p>由脚本清单生成参数表单，单次只运行一个工具</p>
+            </div>
+            <span class="manifest-badge">MANIFEST</span>
+          </div>
+
+          <section class="form-section">
+            <div class="section-title"><span>01</span><div>选择脚本<small>Standalone runner</small></div></div>
+            <label>
+              <span>测试工具</span>
+              <select id="standaloneTest"></select>
+            </label>
+            <p id="standaloneDescription" class="field-note"></p>
+            <div id="standaloneRisk" class="risk-banner is-hidden" role="alert"></div>
+          </section>
+
+          <section class="form-section">
+            <div class="section-title"><span>02</span><div>基础参数<small>Required and common options</small></div></div>
+            <div class="grid two standalone-global-fields">
+              <label>
+                <span>ROS Domain ID</span>
+                <input id="standaloneRosDomainId" name="ros_domain_id" type="number" min="0" max="232" step="1" placeholder="0（留空表示不设置）" />
+              </label>
+            </div>
+            <div id="standaloneBasicFields" class="dynamic-fields"></div>
+          </section>
+
+          <details class="form-section compact-section">
+            <summary class="section-title"><span>03</span><div>高级参数<small>Timeouts, logging and tuning</small></div><i aria-hidden="true">⌄</i></summary>
+            <div class="section-content">
+              <div id="standaloneAdvancedFields" class="dynamic-fields"></div>
+            </div>
+          </details>
+
+          <div class="selector-priority">
+            USB 相机可使用 <code>serial-number / usb-port</code> 定位，网络相机使用
+            <code>device-ip / device-port</code>；Camera Name 和 Config File Path 为两类相机的通用参数。
+          </div>
+
+          <div class="form-validation is-hidden" id="standaloneValidation" role="alert"></div>
+          <div class="actions">
+            <div class="form-readiness" id="standaloneReadiness"><i aria-hidden="true"></i><span>正在检查必填项…</span></div>
+            <button type="submit" class="primary" id="standaloneStartButton"><span class="button-icon" aria-hidden="true">▶</span>运行独立脚本</button>
+            <button type="button" class="danger is-hidden" id="standaloneStopButton"><span class="button-icon" aria-hidden="true">■</span>停止</button>
           </div>
         </form>
 
@@ -213,61 +283,98 @@
             <div>
               <span class="panel-kicker">LIVE TELEMETRY</span>
               <h2>运行监控</h2>
-              <p>进程资源、数据流与实时日志</p>
+              <p id="monitorDescription">进程资源、数据流与实时日志</p>
             </div>
             <span id="runMeta" class="run-meta"></span>
           </div>
 
-          <details class="command-box" id="commandBox"></details>
-
-          <section class="performance-panel">
-            <div class="perf-metrics">
-              <div class="perf-metric accent"><span>运行时间</span><strong id="perfElapsed">00:00:00</strong></div>
-              <div class="perf-metric"><span>CPU 负载</span><strong id="perfCpu">—</strong></div>
-              <div class="perf-metric"><span>内存占用</span><strong id="perfRam">—</strong></div>
-              <div class="perf-metric"><span>进程数</span><strong id="perfPidCount">—</strong></div>
-            </div>
-
-            <div class="perf-metrics restart-metrics is-hidden" id="restartMetrics">
-              <div class="perf-metric"><span>成功重启</span><strong id="restartSuccessCount">—</strong></div>
-              <div class="perf-metric"><span>启动轮次</span><strong id="restartAttemptCount">—</strong></div>
-              <div class="perf-metric"><span>当前轮状态</span><strong id="restartAttemptStatus">—</strong></div>
-              <div class="perf-metric"><span>Restart 状态</span><strong id="restartOverallStatus">—</strong></div>
-            </div>
-            <div class="restart-message is-hidden" id="restartMessage"></div>
-
-            <div class="data-section">
-              <div class="data-title"><span>系统资源</span></div>
-              <div class="system-table-wrap">
-                <table class="system-table">
-                  <thead><tr><th>资源范围</th><th>CPU</th><th>RAM</th><th>进程数</th></tr></thead>
-                  <tbody id="systemTableBody"><tr><td colspan="4">等待资源采样…</td></tr></tbody>
-                </table>
-              </div>
-            </div>
-
-            <div class="data-section">
-              <div class="data-title"><span>数据流性能</span></div>
-              <div class="fps-table-wrap">
-                <table class="fps-table">
-                  <thead><tr><th>Topic</th><th>分辨率</th><th>格式</th><th>当前 FPS</th><th>平均 FPS</th><th>目标 FPS</th><th>丢帧</th><th>丢帧率</th></tr></thead>
-                  <tbody id="fpsTableBody"><tr><td colspan="8">等待性能压测数据…</td></tr></tbody>
-                </table>
-              </div>
+          <section class="monitor-empty" id="monitorEmpty" aria-live="polite">
+            <div class="monitor-empty-mark" aria-hidden="true"><i></i><i></i><i></i></div>
+            <span class="panel-kicker">READY TO RUN</span>
+            <h3 id="monitorEmptyTitle">等待测试任务</h3>
+            <p id="monitorEmptyDescription">在左侧完成配置并开始测试，运行指标与实时日志会显示在这里。</p>
+            <div class="monitor-empty-hints" aria-label="运行步骤">
+              <span><b>1</b> 选择测试</span>
+              <span><b>2</b> 检查参数</span>
+              <span><b>3</b> 开始运行</span>
             </div>
           </section>
 
-          <section class="log-panel">
-            <div class="log-toolbar">
-              <div class="data-title"><span>实时日志</span></div>
-              <div class="toolbar-actions">
-                <label class="follow-toggle"><input id="followLogs" type="checkbox" checked /><span>自动跟随</span></label>
-                <button type="button" class="text-button" id="copyLogs">复制</button>
-                <button type="button" class="text-button" id="clearLogs">清空</button>
+          <div class="monitor-content is-hidden" id="monitorContent">
+            <section class="run-result is-hidden" id="runResultSummary" aria-live="polite">
+              <div class="run-result-hero">
+                <span class="run-result-mark" id="runResultMark" aria-hidden="true">✓</span>
+                <div class="run-result-copy">
+                  <span class="panel-kicker">RUN COMPLETE</span>
+                  <h3 id="runResultTitle">测试已完成</h3>
+                  <p id="runResultMessage"></p>
+                </div>
+                <div class="run-result-actions">
+                  <button type="button" class="ghost" id="viewCurrentReport">查看完整报告</button>
+                </div>
               </div>
-            </div>
-            <pre id="logOutput" class="log" aria-live="polite"></pre>
-          </section>
+              <div class="run-result-facts" id="runResultFacts"></div>
+              <div class="run-result-highlights is-hidden" id="runResultHighlights"></div>
+            </section>
+
+            <details class="command-box" id="commandBox"></details>
+
+            <section id="standaloneMonitor" class="standalone-monitor is-hidden">
+              <div class="perf-metrics standalone-metrics">
+                <div class="perf-metric accent"><span>运行时间</span><strong id="standaloneElapsed">00:00:00</strong></div>
+                <div class="perf-metric"><span>当前轮次</span><strong id="standaloneRound">—</strong></div>
+              </div>
+            </section>
+
+            <section class="performance-panel" id="frameworkMonitor">
+              <div class="perf-metrics">
+                <div class="perf-metric accent"><span>运行时间</span><strong id="perfElapsed">00:00:00</strong></div>
+                <div class="perf-metric"><span>CPU 负载</span><strong id="perfCpu">—</strong></div>
+                <div class="perf-metric"><span>内存占用</span><strong id="perfRam">—</strong></div>
+                <div class="perf-metric"><span>进程数</span><strong id="perfPidCount">—</strong></div>
+              </div>
+
+              <div class="perf-metrics restart-metrics is-hidden" id="restartMetrics">
+                <div class="perf-metric"><span>成功重启</span><strong id="restartSuccessCount">—</strong></div>
+                <div class="perf-metric"><span>启动轮次</span><strong id="restartAttemptCount">—</strong></div>
+                <div class="perf-metric"><span>当前轮状态</span><strong id="restartAttemptStatus">—</strong></div>
+                <div class="perf-metric"><span>Restart 状态</span><strong id="restartOverallStatus">—</strong></div>
+              </div>
+              <div class="restart-message is-hidden" id="restartMessage"></div>
+
+              <div class="data-section">
+                <div class="data-title"><span>系统资源</span></div>
+                <div class="system-table-wrap">
+                  <table class="system-table">
+                    <thead><tr><th>资源范围</th><th>CPU</th><th>RAM</th><th>进程数</th></tr></thead>
+                    <tbody id="systemTableBody"><tr><td colspan="4">等待资源采样…</td></tr></tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div class="data-section">
+                <div class="data-title"><span>数据流性能</span></div>
+                <div class="fps-table-wrap">
+                  <table class="fps-table">
+                    <thead><tr><th>Topic</th><th>分辨率</th><th>格式</th><th>当前 FPS</th><th>平均 FPS</th><th>目标 FPS</th><th>丢帧</th><th>丢帧率</th></tr></thead>
+                    <tbody id="fpsTableBody"><tr><td colspan="8">等待性能压测数据…</td></tr></tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
+
+            <section class="log-panel">
+              <div class="log-toolbar">
+                <div class="data-title"><span>实时日志</span></div>
+                <div class="toolbar-actions">
+                  <label class="follow-toggle"><input id="followLogs" type="checkbox" checked /><span>自动跟随</span></label>
+                  <button type="button" class="text-button" id="copyLogs">复制</button>
+                  <button type="button" class="text-button" id="clearLogs">清空</button>
+                </div>
+              </div>
+              <pre id="logOutput" class="log" aria-live="polite"></pre>
+            </section>
+          </div>
         </section>
       </section>
 
@@ -294,6 +401,55 @@
         </div>
       </section>
     </main>
+
+    <dialog class="exit-code-dialog device-info-dialog" id="deviceInfoDialog" aria-labelledby="deviceInfoDialogTitle">
+      <form method="dialog">
+        <div class="exit-code-dialog-header">
+          <div>
+            <span class="panel-kicker">CONNECTED DEVICES</span>
+            <h2 id="deviceInfoDialogTitle">相机信息</h2>
+          </div>
+          <button type="submit" class="exit-code-dialog-close" aria-label="关闭相机信息">×</button>
+        </div>
+        <div class="device-info-toolbar">
+          <p id="deviceInfoSummary">使用当前页面的 ROS 2 与 Camera ROS Setup 查询设备。</p>
+          <button type="button" class="ghost" id="refreshDevices"><span aria-hidden="true">↻</span> 刷新</button>
+        </div>
+        <div class="device-info-content" id="deviceInfoContent" aria-live="polite"></div>
+        <details class="device-raw-output is-hidden" id="deviceRawOutput">
+          <summary>查看原始输出</summary>
+          <pre></pre>
+        </details>
+      </form>
+    </dialog>
+
+    <dialog class="exit-code-dialog" id="exitCodeDialog" aria-labelledby="exitCodeDialogTitle">
+      <form method="dialog">
+        <div class="exit-code-dialog-header">
+          <div>
+            <span class="panel-kicker">PROCESS EXIT STATUS</span>
+            <h2 id="exitCodeDialogTitle">退出码说明</h2>
+          </div>
+          <button type="submit" class="exit-code-dialog-close" aria-label="关闭退出码说明">×</button>
+        </div>
+        <p class="exit-code-dialog-description">这里只展示当前测试框架实际定义和使用的退出码。</p>
+        <div class="exit-code-table-wrap">
+          <table class="exit-code-table">
+            <thead><tr><th>退出码</th><th>UI 状态</th><th>含义</th></tr></thead>
+            <tbody>
+              <tr><td><code>0</code></td><td><span class="exit-status passed">已通过</span></td><td>程序正常完成，测试结果通过。</td></tr>
+              <tr><td><code>1</code></td><td><span class="exit-status failed">失败</span></td><td>测试未通过、环境异常或程序执行错误。</td></tr>
+              <tr><td><code>2</code></td><td><span class="exit-status warning">警告</span></td><td>任务完成但存在非致命异常，主要用于框架重启测试。</td></tr>
+              <tr><td><code>130</code></td><td><span class="exit-status interrupted">已中断</span></td><td>收到 SIGINT，通常是点击“停止”或按下 Ctrl+C。</td></tr>
+              <tr><td><code>—</code></td><td><span class="exit-status idle">未结束</span></td><td>进程仍在运行，或尚未生成退出码。</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="exit-code-dialog-footer">
+          <button type="submit" class="primary">知道了</button>
+        </div>
+      </form>
+    </dialog>
 
     <script src="/static/app.js"></script>
   </body>

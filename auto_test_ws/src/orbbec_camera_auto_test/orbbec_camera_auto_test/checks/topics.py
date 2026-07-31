@@ -141,7 +141,14 @@ def run_topic_checks(harness, topic_specs: List[TopicSpec], log_path, emit_statu
             emit_status,
             f"[TOPIC] checking {spec.name} (mode={spec.mode}, timeout={spec.timeout}s)",
         )
-        result = {"name": spec.name, "type": spec.type, "status": "passed", "message": ""}
+        result = {
+            "name": spec.name,
+            "type": spec.type,
+            "mode": spec.mode,
+            "validator": spec.validator,
+            "status": "passed",
+            "message": "",
+        }
         discovery_reason = _topic_support_reason(harness, spec)
         if discovery_reason:
             if _is_not_advertised(discovery_reason):

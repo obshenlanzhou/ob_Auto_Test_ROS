@@ -1,10 +1,10 @@
 # Orbbec Camera Auto Test
 
-面向 Orbbec ROS 相机的通用自动化测试工作区，支持 ROS2、ROS1、命令行和本地 Web UI。单相机测试不再按相机型号维护 YAML：用户选择驱动 Launch，并按需指定开关流参数；测试框架只检查 ROS Graph 实际发现的接口。
+面向 Orbbec ROS 相机的通用自动化测试工作区，支持 ROS2、ROS1、命令行和本地 Web UI。用户选择驱动 Launch，并按需指定开关流参数；功能测试根据 ROS 版本、Launch 和有效启动参数解析必选接口，同时继续检查 ROS Graph 中发现的可选接口。
 
 ## 测试能力
 
-- 功能测试：检查已发现的 Topic、Service、数据内容、文件保存和设备重启恢复。
+- 功能测试：校验必选 Topic、Service 是否齐全，并检查数据内容、文件保存和设备重启恢复。
 - 性能测试：统计已发现主数据流的 FPS、丢帧、CPU、内存和进程数。
 - 丢帧分析：同时记录驱动端 CSV 与接收端帧时间戳。
 - Launch 重启测试：重复启动驱动并验证图像流稳定恢复。
@@ -25,7 +25,32 @@ cd "$HOME/ORBBEC/ob_Auto_Test_ROS/auto_test_ws"
 ./run_camera_auto_test_ui.sh
 ```
 
-浏览器访问 `http://127.0.0.1:8000`。页面中选择 ROS 版本、单相机 Launch、测试模式和需要覆盖的流开关，然后填写驱动环境路径。
+浏览器访问 `http://127.0.0.1:8000`。顶部提供两个入口：
+
+- **自动化框架**：选择 ROS 版本、单相机 Launch、测试模式和流开关。
+- **独立脚本**：通过脚本旁的 `ui_manifest.json` 生成结构化表单，运行
+  `standalone_test_scripts/` 中的六个工具。直接入口为
+  `http://127.0.0.1:8000/?workspace=standalone`。
+
+两个入口共用运行监控和历史归档，任一时刻只运行一个任务。固件与 Preset 升级会在
+启动前二次确认，停止时等待当前升级操作到达安全点。
+
+关闭 Web UI 时，`Ctrl+C` 或 `SIGTERM` 会先停止当前测试并等待结果状态落盘，再关闭
+HTTP 服务。普通测试超时未退出时会依次发送 `SIGTERM`、`SIGKILL` 清理进程组；固件与
+Preset 升级等 safe-point 任务会持续等待当前操作到达安全点，再次按 `Ctrl+C` 才强制终止。
+
+顶部的“相机信息”会使用当前页面填写的 ROS 2 与 Camera ROS Setup 执行
+`ros2 run orbbec_camera list_devices_node`，展示所有已连接相机的型号、PID、序列号、
+连接方式、固件、USB 端口和 Preset。也可以直接调用同一接口：
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/devices \
+  -H 'Content-Type: application/json' \
+  -d '{"ros_version":"2","ros_domain_id":"0","ros_setup":"/opt/ros/humble/setup.bash","camera_setup":"/path/to/driver/install/setup.bash"}'
+```
+
+响应中的 `devices` 是结构化相机列表，`output` 保留节点原始输出；该查询接口仅支持
+ROS 2。
 
 ROS2 命令行示例：
 
@@ -70,6 +95,10 @@ export ORBBEC_ROS1_CAMERA_SETUP=/path/to/ros1_driver/devel/setup.bash
 ./run_camera_auto_test_ui.sh
 ```
 
+ROS 2 的 Domain ID 可在自动化框架和独立脚本页面配置，允许范围为 `0-232`。
+配置后，测试进程以及顶部“相机信息”查询都会使用对应的 `ROS_DOMAIN_ID`；留空表示
+不设置，执行前会清除从 Web UI 服务进程继承的 `ROS_DOMAIN_ID`。ROS 1 运行时不注入该变量。
+
 依赖包括 `PyYAML`、`psutil` 以及对应 ROS 版本的 `rclpy` 或 `rospy`。运行 `stress` 场景还需要安装 `stress-ng`。
 
 ## 通用单相机模型
@@ -78,9 +107,9 @@ export ORBBEC_ROS1_CAMERA_SETUP=/path/to/ros1_driver/devel/setup.bash
 
 1. **Launch**：决定使用哪个驱动入口。
 2. **流参数**：可选地覆盖 `enable_color`、`enable_depth`、`enable_ir`、左右 IR、点云、IMU 等参数；“默认”表示不传参数，由 Launch 决定。
-3. **运行时发现**：只测试 ROS Graph 中实际发布的 Topic 和 Service。
+3. **必选接口与运行时发现**：按 ROS 版本、Launch 和流参数解析必选接口；其余接口按 ROS Graph 发现结果测试。
 
-因此新增相机通常只需要使用它已有的新 Launch，不需要创建相机专用测试 YAML。用户需要确认所选 Launch 是否支持显式传入的流参数。
+新增单相机 Launch 时，需要在必选接口表中登记其默认参数和适用型号；未登记的 Launch 会在设备探测和启动前失败。用户还需要确认所选 Launch 是否支持显式传入的流参数。
 
 Web UI 内置驱动包当前的单相机 Launch 候选：ROS2 19 个，ROS1 21 个。`lidar` Launch 不包含丢帧场景所需的驱动参数，因此不放入通用单相机列表。
 
@@ -99,7 +128,7 @@ Web UI 内置驱动包当前的单相机 Launch 候选：ROS2 19 个，ROS1 21 �
 
 | 模式 | 作用 |
 | --- | --- |
-| `functional` | 对统一目录中且已发现的 Topic、Service 执行功能检查 |
+| `functional` | 校验 Launch 必选接口，并对已发现的 Topic、Service 执行功能检查 |
 | `performance` | 对已发现的主数据流采集 FPS 与系统资源 |
 | `restart` | 反复启动 Launch 并等待图像流稳定 |
 | `stream_stall` | 长时间监控断流；当前由 Web UI 或独立 runner 使用 |
@@ -116,16 +145,20 @@ Web UI 内置驱动包当前的单相机 Launch 候选：ROS2 19 个，ROS1 21 �
   --driver-setup /path/to/install/setup.bash
 ```
 
-统一接口目录是 [all_topics_services.yaml](src/orbbec_camera_auto_test/profiles/base/all_topics_services.yaml)。执行流程为：
+统一接口目录是 [all_topics_services.yaml](src/orbbec_camera_auto_test/profiles/base/all_topics_services.yaml)，ROS 版本/Launch 必选接口表是 [functional_required_interfaces.yaml](src/orbbec_camera_auto_test/profiles/base/functional_required_interfaces.yaml)。执行流程为：
 
-1. 检查相机是否连接。
-2. 启动用户选择的 Launch。
-3. 等待相机节点和基础 Service。
-4. 获取 ROS Graph 快照。
-5. 仅检查目录中且已发现的接口。
-6. 输出 JSON、Markdown 和详细日志。
+1. 按 ROS 版本和 Launch 匹配必选接口配置；未配置时直接失败。
+2. 合并 Launch 默认值、命令行/UI 覆盖值、驱动配置 YAML 和场景参数，解析本次必选接口。
+3. 检查相机是否连接并启动用户选择的 Launch。
+4. 等待相机节点和基础 Service，获取 ROS Graph 快照。
+5. 必选接口缺失时记录失败；目录中的其他接口仍按发现结果检查。
+6. 输出 JSON、Markdown 和详细日志，其中 Markdown 包含必选接口、Topic、Service、产物和重启结果表。
 
-日志中的 `[TOPIC][SKIP] ... topic not advertised` 表示统一目录包含该接口，但当前 Launch 没有发布它；这是发现过滤结果，不是测试失败。
+非必选接口未发布时仍会被发现过滤，不计为失败；必选接口未发布时会在结果表中显示 `required topic/service not advertised`，并使场景及整次功能测试失败。
+
+节点和基础服务就绪后，功能 runner 会等待最多 10 秒并持续刷新 ROS Graph，兼容 `/tf_static` 等首帧到达后才发布的必选接口。等待超时仍缺失时，才停止当前 Launch 并跳过后续检查；等待期间出现 `[ERROR]`、`[FATAL]`（例如 `Failed to initialize device`）仍会立即终止。
+
+自定义 `config_file_path` 会参与必选接口解析：可直接传入当前进程可读取的 YAML 路径；只传文件名时，需要在对应 Launch Profile 的 `config_overrides` 中登记。内置的 `gemini2L_dual_ir.yaml` 和 `gemini305_dual_color.yaml` 已登记。
 
 ### 性能测试
 
@@ -234,13 +267,16 @@ Launch 参数优先级为：显式 `--launch-arg` 和专用参数，高于驱动
 
 默认结果写入 `auto_test_ws/results/`；Web UI 写入 `results/ui_runs/`。常见文件：
 
-- `result.json`、`summary.md`
+- `result.json`、`summary.md`、`events.jsonl`
 - `launch_args.json`、`launch.log`
 - `topic.log`、`service.log`
 - `fps.csv`、`system_usage.csv`
 - `driver_frame_timestamp.csv`、`frame_timestamps/*.csv`
 
 `results/` 是运行产物，不应提交到 Git。
+
+独立脚本的 `result.json` 缺失、格式错误或 `test_id` 不匹配时，Web UI 会将该任务
+标记为失败。每个独立脚本的表单值按脚本分别保存在本机 UI 配置中。
 
 ## 目录结构
 
@@ -257,12 +293,13 @@ auto_test_ws/
 │   │   │   └── runners/
 │   │   └── profiles/
 │   │       ├── base/all_topics_services.yaml
+│   │       ├── base/functional_required_interfaces.yaml
 │   │       └── cameras/.../performance/   # 暂存的独立多相机配置
 │   └── orbbec_camera_auto_test_ui/
 └── results/
 ```
 
-单相机功能和性能测试不再读取相机专用 Profile。多相机 Profile 暂时保留为独立能力，不出现在当前通用 Web UI 流程中。
+单相机功能测试读取统一接口目录和 Launch 必选接口表，性能测试仍使用统一运行时发现模型。多相机 Profile 暂时保留为独立能力，不出现在当前通用 Web UI 流程中。
 
 ## 验证
 

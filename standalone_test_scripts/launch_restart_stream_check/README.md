@@ -93,5 +93,6 @@ launch_restart_stream_check/results/YYYYMMDD_HHMMSS_restart_stream/
 ├── logs/test_XXXX/<camera>.launch.log      # ROS launch log for each restart
 ├── logs/test_XXXX/sdk/Log/<camera>/        # SDK debug log for each restart
 ├── summary.md                              # Run command, final result, elapsed time, monitored streams
+├── events.jsonl                            # Structured lifecycle and progress events
 └── result.json                             # Structured per-restart results and log paths
 ```

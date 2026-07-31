@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "id": "launch_param_load_stress",
+  "title": "Launch 参数加载压测",
+  "description": "加载相机 YAML 参数，验证参数、Service 与图像 Topic。",
+  "script": "launch_param_load_stress.py",
+  "risk": "normal",
+  "stop_policy": "immediate",
+  "fields": [
+    {"name": "ros_version", "option": "--ros-version", "type": "select", "label": "ROS 版本", "section": "basic", "default": "2", "choices": [{"value": "2", "label": "ROS 2"}, {"value": "1", "label": "ROS 1"}]},
+    {"name": "ros_setup", "option": "--ros-setup", "type": "path", "label": "ROS Setup", "section": "basic", "default": "/opt/ros/humble/setup.bash"},
+    {"name": "driver_setup", "option": "--driver-setup", "type": "path", "label": "Driver Setup", "section": "basic", "default": "", "placeholder": "/path/to/orbbec_camera/install/setup.bash"},
+    {"name": "launch_file", "option": "--launch-file", "type": "path", "label": "Launch 文件", "section": "basic", "default": "", "required": true, "placeholder": "gemini_330_series.launch.py"},
+    {"name": "cameras", "option": "--camera", "type": "camera-list", "label": "相机", "section": "basic", "default": [], "required": true, "config_file_required": true},
+    {"name": "run_count", "option": "--run-count", "type": "integer", "label": "最大循环次数", "section": "basic", "default": "1", "min": 1},
+    {"name": "duration", "option": "--duration", "type": "duration", "label": "最长运行时间", "section": "basic", "default": ""},
+    {"name": "save_image_count", "option": "--save-image-count", "type": "integer", "label": "每 Topic 存图数", "section": "basic", "default": "1", "min": 0},
+    {"name": "launch_package", "option": "--launch-package", "type": "text", "label": "Launch Package", "section": "advanced", "default": "orbbec_camera"},
+    {"name": "launch_args", "option": "--launch-arg", "type": "list", "label": "Launch 参数（每行一个）", "section": "advanced", "default": ["enable_heartbeat=true", "enable_firmware_log=true"], "placeholder": "enable_heartbeat=true\nenable_firmware_log=true"},
+    {"name": "sdk_log_level", "option": "--sdk-log-level", "type": "select", "label": "SDK 日志级别", "section": "advanced", "default": "debug", "choices": ["debug", "info", "warn", "error", "fatal", "none"]},
+    {"name": "startup_timeout", "option": "--startup-timeout", "type": "duration", "label": "启动超时", "section": "advanced", "default": "30"},
+    {"name": "topic_timeout", "option": "--topic-timeout", "type": "duration", "label": "Topic 超时", "section": "advanced", "default": "20"},
+    {"name": "service_timeout", "option": "--service-timeout", "type": "duration", "label": "Service 超时", "section": "advanced", "default": "15"},
+    {"name": "skip_topic_check", "option": "--skip-topic-check", "type": "flag", "label": "跳过 Topic 检查", "section": "advanced", "default": false},
+    {"name": "skip_service_check", "option": "--skip-service-check", "type": "flag", "label": "跳过 Service 检查", "section": "advanced", "default": false},
+    {"name": "jpg_quality", "option": "--jpg-quality", "type": "integer", "label": "JPG 质量", "section": "advanced", "default": "80", "min": 1, "max": 100}
+  ]
+}

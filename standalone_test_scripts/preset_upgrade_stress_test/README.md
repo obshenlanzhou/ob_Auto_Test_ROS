@@ -28,8 +28,8 @@ python3 ./preset_upgrade_stress_test/preset_upgrade_stress_test.py \
   --ros-version 2 \
   --ros-setup /opt/ros/humble/setup.bash \
   --driver-setup /path/to/camera_ws/install/setup.bash \
-  --test-count 10 \
-  --save-images-count 1
+  --run-count 10 \
+  --save-image-count 1
 ```
 
 ROS 1:
@@ -39,12 +39,12 @@ python3 ./preset_upgrade_stress_test/preset_upgrade_stress_test.py \
   --ros-version 1 \
   --ros-setup /opt/ros/noetic/setup.bash \
   --driver-setup /path/to/camera_ws/devel/setup.bash \
-  --test-count 10
+  --run-count 10
 ```
 
 ### Multi-Camera
 
-Pass `--camera` once per device. Set `usb_port` or `serial_number` to avoid
+Pass `--camera` once per device. Set `usb-port` or `serial-number` to avoid
 selecting the wrong device during upgrade or launch:
 
 ```bash
@@ -52,13 +52,15 @@ python3 ./preset_upgrade_stress_test/preset_upgrade_stress_test.py \
   --ros-version 2 \
   --ros-setup /opt/ros/humble/setup.bash \
   --driver-setup /path/to/camera_ws/install/setup.bash \
-  --camera camera_01,usb_port=2-1 \
-  --camera camera_02,usb_port=2-3 \
-  --test-count 10 \
-  --save-images-count 1
+  --camera name=camera_01,usb-port=2-1 \
+  --camera name=camera_02,usb-port=2-3 \
+  --run-count 10 \
+  --save-image-count 1
 ```
 
-`--camera` format: `name[,usb_port=PORT][,serial_number=SN]`
+`--camera` is a comma-separated `KEY=VALUE` specification. Supported keys are
+`name`, `serial-number`, `usb-port`, `device-ip`, `device-port`, and
+`config-file-path`; every field is optional.
 
 ### Options
 
@@ -71,9 +73,9 @@ python3 ./preset_upgrade_stress_test/preset_upgrade_stress_test.py \
 | `--preset-a-path` / `--preset-b-path` | bundled bin files | Preset files to upgrade alternately |
 | `--preset-a-name` | `K High Confidence` | `device_preset` name corresponding to preset A |
 | `--preset-b-name` | `K High Accuracy` | `device_preset` name corresponding to preset B |
-| `--test-count` | `0` | Number of upgrade cycles; `0` = run until `--duration` or Ctrl-C |
-| `--duration` | `300` | Time limit used with `--test-count 0`; supports `300`, `15m`, and `2h` |
-| `--save-images-count` | `1` | Images saved per topic per test (`0` = disabled) |
+| `--run-count` | empty | Optional maximum number of upgrade cycles |
+| `--duration` | `300` | Maximum wall time; supports `300`, `15m`, and `2h` |
+| `--save-image-count` | `1` | Images saved per topic per test (`0` = disabled) |
 | `--jpg-quality` | `95` | JPEG quality for saved images (1–100) |
 | `--image-topic` | color + depth | Topics to monitor; repeatable, `{camera}` expands to each camera name |
 | `--launch-arg` | — | Extra launch argument (e.g. `enable_left_ir=true`); repeatable |
@@ -121,6 +123,7 @@ Each run creates:
 preset_upgrade_stress_test/results/YYYYMMDD_HHMMSS_preset_upgrade/
 ├── summary.md                              # Final summary
 ├── result.json                             # Machine-readable result
+├── events.jsonl                            # Structured lifecycle and progress events
 ├── logs/test_XXXX/<camera>/upgrade.log     # firmware_update_tool output
 ├── logs/test_XXXX/<camera>/<camera>.launch.log  # launch output
 ├── logs/test_XXXX/<camera>/sdk/Log/         # Upgrade-tool and camera SDK debug logs

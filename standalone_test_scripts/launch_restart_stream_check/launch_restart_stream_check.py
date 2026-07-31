@@ -13,6 +13,17 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from _test_protocol import (
+    EventWriter,
+    artifact_list,
+    atomic_write_json,
+    collect_test_environment,
+    contract_result,
+    iso_now,
+    namespace_request,
+    parse_camera,
+    test_environment_markdown,
+)
 
 DEFAULT_CAMERA_LAUNCH = {
     ("2", "gemini_301"): "gemini_301_series.launch.py",
@@ -22,7 +33,12 @@ DEFAULT_CAMERA_LAUNCH = {
 }
 ENV_READY_VAR = "LAUNCH_RESTART_STREAM_CHECK_ENV_READY"
 INTERRUPTED = False
-TOOL_VERSION = "0.1"
+TOOL_VERSION = "1.0"
+TEST_ID = "launch_restart_stream_check"
+DEFAULT_STRESS_LAUNCH_ARGS = {
+    "enable_heartbeat": "true",
+    "enable_firmware_log": "true",
+}
 
 
 def timestamp() -> str:
@@ -68,6 +84,17 @@ def parse_launch_arg(raw: str) -> tuple[str, str]:
     return key, value.strip()
 
 
+def merge_launch_arg_overrides(
+    launch_args: Dict[str, str],
+    raw_launch_args: List[str],
+) -> Dict[str, str]:
+    merged = dict(launch_args)
+    for raw_arg in raw_launch_args:
+        key, value = parse_launch_arg(raw_arg)
+        merged[key] = value
+    return merged
+
+
 def ensure_dir(path: Path) -> Path:
     path.mkdir(parents=True, exist_ok=True)
     return path
@@ -90,9 +117,14 @@ def _image_topic_kind(type_name: str) -> Optional[str]:
 
 
 class StatusLogger:
-    def __call__(self, message: str) -> None:
+    def __init__(self, events: Optional[EventWriter] = None) -> None:
+        self.events = events
+
+    def __call__(self, message: str, *, event: str = "log", **fields: Any) -> None:
         line = f"[{timestamp()}] {message}"
         print(line, flush=True)
+        if self.events is not None:
+            self.events.emit(event, message, **fields)
 
 
 def capture_sourced_env(ros_setup: str, driver_setup: str, ros_version: str) -> Dict[str, str]:
@@ -530,6 +562,7 @@ def build_summary(result: Dict[str, Any]) -> str:
     lines = [
         "# Launch Restart Stream Check",
         "",
+        *test_environment_markdown(result.get("environment", {})),
         "## Command",
         "",
         "```bash",
@@ -580,14 +613,20 @@ def run(args) -> int:
     signal.signal(signal.SIGINT, handle_sigint)
     runtime_env = prepare_runtime_env(args)
     apply_python_paths(runtime_env)
+    environment = collect_test_environment(args)
 
     run_id = datetime.now().strftime("%Y%m%d_%H%M%S_restart_stream")
+    run_started_at = iso_now()
     default_results_dir = Path(__file__).resolve().parent / "results" / run_id
     results_dir = ensure_dir(Path(args.results_dir).resolve() if args.results_dir else default_results_dir)
-    emit = StatusLogger()
+    events = EventWriter(results_dir / "events.jsonl")
+    emit = StatusLogger(events)
 
     launch_file = select_launch_file(args)
-    template_camera_name = args.camera_name or "camera"
+    if len(args.camera) > 1:
+        raise ValueError("launch restart accepts at most one --camera")
+    camera = parse_camera(args.camera[0]) if args.camera else parse_camera("name=camera")
+    template_camera_name = camera["name"]
     explicit_topics = [
         expand_camera_topic(item.strip(), template_camera_name)
         for item in args.image_topic
@@ -595,18 +634,20 @@ def run(args) -> int:
     ]
     auto_discover_topics = not explicit_topics
 
-    launch_args: Dict[str, str] = {}
-    if args.camera_name:
-        launch_args["camera_name"] = args.camera_name
-    if args.serial_number:
-        launch_args["serial_number"] = args.serial_number
-    if args.usb_port:
-        launch_args["usb_port"] = args.usb_port
-    if args.config_file_path:
-        launch_args["config_file_path"] = args.config_file_path
-    for raw_arg in args.launch_arg:
-        key, value = parse_launch_arg(raw_arg)
-        launch_args[key] = value
+    launch_args: Dict[str, str] = dict(DEFAULT_STRESS_LAUNCH_ARGS)
+    if camera["name"]:
+        launch_args["camera_name"] = camera["name"]
+    if camera["serial_number"]:
+        launch_args["serial_number"] = camera["serial_number"]
+    if camera["usb_port"]:
+        launch_args["usb_port"] = camera["usb_port"]
+    if camera["device_ip"]:
+        launch_args["net_device_ip"] = camera["device_ip"]
+    if camera["device_port"]:
+        launch_args["net_device_port"] = camera["device_port"]
+    if camera["config_file_path"]:
+        launch_args["config_file_path"] = camera["config_file_path"]
+    launch_args = merge_launch_arg_overrides(launch_args, args.launch_arg)
     launch_args["log_level"] = args.sdk_log_level
     launch_args["log_file_name"] = f"{template_camera_name}.log"
 
@@ -616,6 +657,9 @@ def run(args) -> int:
     topic_discovery_timeout = parse_duration(args.topic_discovery_timeout, 15.0)
     max_gap_seconds = parse_duration(args.max_gap_seconds, 1.5)
     restart_delay = float(args.restart_delay)
+    run_count = args.run_count
+    if run_count is not None and run_count <= 0:
+        raise ValueError("--run-count must be > 0")
     deadline = time.monotonic() + duration_seconds
 
     command = build_launch_command(
@@ -628,12 +672,13 @@ def run(args) -> int:
     result: Dict[str, Any] = {
         "status": "passed",
         "tool_version": TOOL_VERSION,
+        "environment": environment,
         "ros_version": args.ros_version,
         "command": command,
         "launch_file": launch_file,
         "launch_package": args.launch_package,
         "launch_args": launch_args,
-        "camera_name": args.camera_name,
+        "camera": camera,
         "topic_mode": "auto" if auto_discover_topics else "manual",
         "image_topics": explicit_topics,
         "discovered_image_topics": [],
@@ -647,6 +692,7 @@ def run(args) -> int:
         "attempts": [],
     }
 
+    emit("test started", event="phase", phase="starting")
     emit(f"tool version: {TOOL_VERSION}")
     emit(f"results dir: {results_dir}")
     emit("launch command: " + " ".join(shlex.quote(item) for item in command))
@@ -668,6 +714,8 @@ def run(args) -> int:
     try:
         with RosImageHarness(args.ros_version, "launch_restart_stream_check", args.queue_size) as harness:
             while time.monotonic() < deadline:
+                if run_count is not None and attempt_index >= run_count:
+                    break
                 attempt_index += 1
                 attempt_dir = ensure_dir(results_dir / "logs" / f"test_{attempt_index:04d}")
                 attempt_env = dict(runtime_env)
@@ -696,7 +744,13 @@ def run(args) -> int:
                 result["attempts"].append(attempt)
                 result["launch_attempts"] = attempt_index
 
-                emit(f"attempt {attempt_index}: start launch")
+                emit(
+                    f"attempt {attempt_index}: start launch",
+                    event="progress",
+                    current=attempt_index,
+                    total=run_count,
+                    phase="launching",
+                )
                 session.start()
                 if auto_discover_topics and not monitored_topics:
                     monitored_topics = discover_image_topics(
@@ -753,7 +807,13 @@ def run(args) -> int:
                 attempt["status"] = "passed"
                 attempt["ended_at"] = datetime.now().isoformat(timespec="seconds")
                 result["successful_restarts"] += 1
-                emit(f"attempt {attempt_index}: passed, stop launch")
+                emit(
+                    f"attempt {attempt_index}: passed, stop launch",
+                    event="progress",
+                    current=attempt_index,
+                    total=run_count,
+                    phase="completed-cycle",
+                )
                 session.stop()
                 active_session = None
                 current_attempt = None
@@ -794,10 +854,28 @@ def run(args) -> int:
         for attempt in result.get("attempts", []):
             if not attempt.get("ended_at"):
                 attempt["ended_at"] = datetime.now().isoformat(timespec="seconds")
-        (results_dir / "summary.md").write_text(build_summary(result), encoding="utf-8")
-        (results_dir / "result.json").write_text(
-            json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        summary_text = build_summary(result)
+        (results_dir / "summary.md").write_text(summary_text, encoding="utf-8")
+        ended_at = iso_now()
+        emit(
+            f"test finished with status {result['status']}",
+            event="completed",
+            status=result["status"],
         )
+        payload = contract_result(
+            test_id=TEST_ID,
+            run_id=run_id,
+            started_at=run_started_at,
+            ended_at=ended_at,
+            request=namespace_request(args),
+            details=result,
+            summary={
+                "successful_restarts": result["successful_restarts"],
+                "launch_attempts": result["launch_attempts"],
+            },
+            artifacts=artifact_list(results_dir),
+        )
+        atomic_write_json(results_dir / "result.json", payload)
         signal.signal(signal.SIGINT, previous_sigint_handler)
 
     if result["status"] == "passed":
@@ -837,10 +915,16 @@ def parse_args():
         default="debug",
         help="Orbbec SDK log level (default: debug)",
     )
-    parser.add_argument("--camera-name", default="", help="Optional camera_name launch arg")
-    parser.add_argument("--serial-number", default="")
-    parser.add_argument("--usb-port", default="")
-    parser.add_argument("--config-file-path", default="")
+    parser.add_argument(
+        "--camera",
+        action="append",
+        default=[],
+        help=(
+            "Camera launch arguments as comma-separated KEY=VALUE fields. "
+            "Supported keys: name, serial-number, usb-port, device-ip, "
+            "device-port, config-file-path."
+        ),
+    )
     parser.add_argument(
         "--image-topic",
         action="append",
@@ -856,6 +940,12 @@ def parse_args():
         help="Max wait time for auto image topic discovery during the first launch attempt",
     )
     parser.add_argument("--duration", default="300", help="Total test duration, supports seconds, 15m, 2h")
+    parser.add_argument(
+        "--run-count",
+        type=int,
+        default=None,
+        help="Maximum completed restart cycles; duration still applies when both are set",
+    )
     parser.add_argument("--stable-seconds", default="5", help="Required continuous stable image duration per launch")
     parser.add_argument("--stream-timeout", default="20", help="Max wait time for stable stream per launch")
     parser.add_argument("--max-gap-seconds", default="1.5", help="Max allowed receive gap between images")

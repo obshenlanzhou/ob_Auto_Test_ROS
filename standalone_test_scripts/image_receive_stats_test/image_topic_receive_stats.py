@@ -13,11 +13,25 @@ import csv
 from datetime import datetime
 import json
 import os
+from pathlib import Path
 import re
+import shlex
+import signal
+import subprocess
 import sys
 import threading
 import time
 
+from _test_protocol import (
+    EventWriter,
+    artifact_list,
+    atomic_write_json,
+    collect_test_environment,
+    contract_result,
+    iso_now,
+    namespace_request,
+    test_environment_markdown,
+)
 
 DEFAULT_WARNING_INTERVAL_SEC = 1.0
 DEFAULT_QUEUE_SIZE = 10
@@ -25,7 +39,9 @@ DEFAULT_BUFF_SIZE_MB = 16
 DEFAULT_WARMUP_SEC = 2.0
 DEFAULT_SAVE_CSV = True
 DEFAULT_QOS = "sensor_data"
-TOOL_VERSION = "0.2"
+TOOL_VERSION = "1.0"
+TEST_ID = "image_receive_stats_test"
+ENV_READY_VAR = "IMAGE_RECEIVE_STATS_ENV_READY"
 SUMMARY_UPDATE_INTERVAL_SEC = 10.0
 MIN_WARNING_CHECK_INTERVAL_SEC = 0.05
 MAX_WARNING_CHECK_INTERVAL_SEC = 1.0
@@ -91,40 +107,49 @@ def parse_args(argv, ros_version):
             "and steady-clock receive deltas to one CSV file per topic."
         ).format("ROS2" if ros_version == "ros2" else "ROS")
     )
-    parser.add_argument("--output_dir", default=None, help="Directory for output CSV files.")
+    parser.add_argument("--ros-version", choices=("1", "2"), default=None)
+    parser.add_argument("--ros-setup", default=os.environ.get("ORBBEC_ROS_SETUP", ""))
+    parser.add_argument("--driver-setup", default=os.environ.get("ORBBEC_CAMERA_SETUP", ""))
+    parser.add_argument("--results-dir", dest="output_dir", default=None, help="Results directory.")
     parser.add_argument(
-        "--topics",
+        "--image-topic",
+        dest="topics",
+        action="append",
         default=None,
-        help="Required comma-separated sensor_msgs/Image topics.",
+        help="sensor_msgs/Image topic; repeat for multiple topics.",
     )
     parser.add_argument(
-        "--warning_interval_sec",
+        "--warning-interval-sec",
+        dest="warning_interval_sec",
         type=float,
         default=None,
         help="Warn when consecutive receive deltas on a topic exceed this value.",
     )
     parser.add_argument(
-        "--warmup_sec",
+        "--warmup-sec",
+        dest="warmup_sec",
         type=float,
         default=None,
         help="Do not write CSV rows or warn during the first N seconds after startup.",
     )
     parser.add_argument(
-        "--save_csv",
+        "--save-csv",
+        dest="save_csv",
         default=None,
         choices=["true", "false", "1", "0", "yes", "no", "on", "off"],
         help="Enable or disable per-frame CSV saving; summary.csv is always enabled.",
     )
+    parser.set_defaults(disable_csv=None)
+    parser.add_argument("--queue-size", dest="queue_size", type=int, default=None, help="Subscriber queue size.")
     parser.add_argument(
-        "--disable_csv",
-        action="store_true",
-        default=None,
-        help="Disable per-frame CSV while keeping summary.csv and warning logs enabled.",
+        "--duration",
+        default="",
+        help="Optional maximum wall time, such as 300, 15m, or 2h",
     )
-    parser.add_argument("--queue_size", type=int, default=None, help="Subscriber queue size.")
     if ros_version == "ros1":
         parser.add_argument(
-            "--buff_size",
+            "--buff-size",
+            dest="buff_size",
             type=int,
             default=None,
             help="Subscriber socket buffer size in MB.",
@@ -142,6 +167,63 @@ def parse_args(argv, ros_version):
         version="%(prog)s {}".format(TOOL_VERSION),
     )
     return parser.parse_args(argv)
+
+
+def parse_duration(value):
+    text = str(value or "").strip().lower()
+    if not text:
+        return None
+    multiplier = 1.0
+    if text.endswith("s"):
+        text = text[:-1]
+    elif text.endswith("m"):
+        text = text[:-1]
+        multiplier = 60.0
+    elif text.endswith("h"):
+        text = text[:-1]
+        multiplier = 3600.0
+    duration = float(text) * multiplier
+    if duration <= 0:
+        raise ValueError("--duration must be > 0")
+    return duration
+
+
+def capture_sourced_env(ros_setup, driver_setup, ros_version):
+    env = dict(os.environ)
+    env["ROS_VERSION"] = ros_version
+    commands = []
+    for setup_file in (ros_setup, driver_setup):
+        setup_file = str(setup_file or "").strip()
+        if not setup_file:
+            continue
+        setup_path = Path(setup_file).expanduser()
+        if not setup_path.is_file():
+            raise FileNotFoundError("setup file not found: {}".format(setup_path))
+        commands.append("source {} >/dev/null 2>&1".format(shlex.quote(str(setup_path))))
+    if not commands:
+        return env
+    raw = subprocess.check_output(
+        ["bash", "-lc", " && ".join(commands) + " && env -0"],
+        env=env,
+    )
+    sourced = {}
+    for chunk in raw.split(b"\0"):
+        if chunk and b"=" in chunk:
+            key, value = chunk.split(b"=", 1)
+            sourced[key.decode("utf-8")] = value.decode("utf-8")
+    sourced["ROS_VERSION"] = ros_version
+    sourced["PYTHONUNBUFFERED"] = "1"
+    return sourced
+
+
+def prepare_runtime_env(args, ros_version):
+    if os.environ.get(ENV_READY_VAR) == "1":
+        return
+    runtime_env = capture_sourced_env(args.ros_setup, args.driver_setup, ros_version)
+    runtime_env[ENV_READY_VAR] = "1"
+    if args.ros_setup or args.driver_setup:
+        executable = sys.executable or "python3"
+        os.execvpe(executable, [executable, *sys.argv], runtime_env)
 
 
 def parse_topics(value):
@@ -590,6 +672,7 @@ class ReceiveStatsCore:
         save_csv,
         include_header_seq,
         metadata,
+        request,
     ):
         if not topics:
             raise ValueError("No image topics configured.")
@@ -609,6 +692,12 @@ class ReceiveStatsCore:
         self.save_csv = save_csv
         self.include_header_seq = include_header_seq
         self.metadata = metadata
+        self.request = request
+        self.environment = collect_test_environment(request)
+        self.run_id = os.path.basename(os.path.normpath(output_dir))
+        self.started_at = iso_now()
+        self.started_monotonic = time.monotonic()
+        self.status = "passed"
         self.loggers = {}
         self.warning_log_writer = None
         self.summary_file = os.path.join(self.output_dir, "summary.csv")
@@ -620,6 +709,8 @@ class ReceiveStatsCore:
         self.closed = False
 
         ensure_dir(self.output_dir)
+        self.events = EventWriter(Path(self.output_dir) / "events.jsonl")
+        self.events.emit("phase", "image receive statistics started", phase="running")
         self.warning_log_writer = WarningLogWriter(os.path.join(self.output_dir, "warnings.log"))
         warmup_end_steady_us = steady_time_us() + seconds_to_us(self.warmup_sec)
 
@@ -706,6 +797,7 @@ class ReceiveStatsCore:
             if warning_message:
                 warn(warning_message)
                 self.warning_log_writer.write(warning_message)
+                self.events.emit("warning", warning_message, code="no-frame")
 
     def log_summary(self, rows, log_info):
         header = summary_header(self.include_header_seq)
@@ -795,6 +887,66 @@ class ReceiveStatsCore:
             if self.warning_log_writer is not None:
                 self.warning_log_writer.close()
 
+            header = summary_header(self.include_header_seq)
+            summary_rows = [dict(zip(header, row)) for row in rows]
+            warning_count = sum(
+                int(row.get("receive_steady_delta_warning_count", 0) or 0)
+                + int(row.get("no_frame_warning_count", 0) or 0)
+                for row in summary_rows
+            )
+            elapsed_seconds = time.monotonic() - self.started_monotonic
+            details = {
+                "status": self.status,
+                "tool_version": TOOL_VERSION,
+                "environment": self.environment,
+                "topics": self.topics,
+                "elapsed_seconds": elapsed_seconds,
+                "topic_summaries": summary_rows,
+                "warnings": (
+                    [{"code": "receive-warning", "count": warning_count}]
+                    if warning_count
+                    else []
+                ),
+            }
+            summary = {
+                "topic_count": len(self.topics),
+                "warning_count": warning_count,
+            }
+            summary_lines = [
+                "# Image Receive Statistics",
+                "",
+                *test_environment_markdown(self.environment),
+                "## Result",
+                "",
+                "- Status: {}".format(self.status),
+                "- Topics: {}".format(len(self.topics)),
+                "- Warnings: {}".format(warning_count),
+                "- Elapsed seconds: {:.1f}".format(elapsed_seconds),
+                "",
+                "See `summary.csv` for per-topic metrics.",
+                "",
+            ]
+            Path(self.output_dir, "summary.md").write_text(
+                "\n".join(summary_lines),
+                encoding="utf-8",
+            )
+            self.events.emit(
+                "completed",
+                "image receive statistics finished",
+                status=self.status,
+            )
+            payload = contract_result(
+                test_id=TEST_ID,
+                run_id=self.run_id,
+                started_at=self.started_at,
+                ended_at=iso_now(),
+                request=self.request,
+                details=details,
+                summary=summary,
+                artifacts=artifact_list(Path(self.output_dir)),
+            )
+            atomic_write_json(Path(self.output_dir) / "result.json", payload)
+
 
 def validate_unique_topics(topics):
     duplicate_topics = sorted({topic for topic in topics if topics.count(topic) > 1})
@@ -820,6 +972,7 @@ def run_ros1():
             buff_size_mb,
             warmup_sec,
             save_csv,
+            request,
         ):
             if buff_size_mb <= 0:
                 raise ValueError("buff_size must be greater than 0 MB.")
@@ -843,6 +996,7 @@ def run_ros1():
                     "buff_size_mb": self.buff_size_mb,
                     "buff_size_bytes": self.buff_size_bytes,
                 },
+                request=request,
             )
 
             for topic in self.topics:
@@ -961,7 +1115,7 @@ def run_ros1():
     configured_topics = parse_topics(topics_param)
     if not configured_topics:
         raise ValueError(
-            "No image topics configured. Set --topics or the private ROS parameter ~topics."
+            "No image topics configured. Set --image-topic or the private ROS parameter ~topics."
         )
 
     save_csv = parse_bool(private_param_or_default("save_csv", args.save_csv, DEFAULT_SAVE_CSV))
@@ -991,9 +1145,33 @@ def run_ros1():
             private_param_or_default("warmup_sec", args.warmup_sec, DEFAULT_WARMUP_SEC)
         ),
         save_csv=save_csv,
+        request=namespace_request(args),
     )
-    rospy.spin()
+    duration_seconds = parse_duration(args.duration)
+    duration_timer = None
+    if duration_seconds is not None:
+        duration_timer = rospy.Timer(
+            rospy.Duration.from_sec(duration_seconds),
+            lambda _event: rospy.signal_shutdown("duration reached"),
+            oneshot=True,
+        )
+    previous_sigint_handler = signal.getsignal(signal.SIGINT)
+
+    def request_stop(_signum, _frame):
+        node.core.status = "interrupted"
+        rospy.signal_shutdown("interrupted")
+
+    signal.signal(signal.SIGINT, request_stop)
+    try:
+        rospy.spin()
+    except KeyboardInterrupt:
+        node.core.status = "interrupted"
+    finally:
+        if duration_timer is not None:
+            duration_timer.shutdown()
+        signal.signal(signal.SIGINT, previous_sigint_handler)
     node.close()
+    return 130 if node.core.status == "interrupted" else 0
 
 
 def run_ros2():
@@ -1057,6 +1235,7 @@ def run_ros2():
             qos,
             warmup_sec,
             save_csv,
+            request,
         ):
             super().__init__("image_topic_receive_stats_ros2")
 
@@ -1083,6 +1262,7 @@ def run_ros2():
                     "qos": self.qos,
                     "rmw_implementation": os.environ.get("RMW_IMPLEMENTATION", ""),
                 },
+                request=request,
             )
 
             for topic in self.topics:
@@ -1219,7 +1399,7 @@ def run_ros2():
         configured_topics = parse_topics(topics_param)
         if not configured_topics:
             raise ValueError(
-                "No image topics configured. Set --topics or the ROS2 parameter topics."
+                "No image topics configured. Set --image-topic or the ROS2 parameter topics."
             )
 
         save_csv = parse_bool(
@@ -1269,21 +1449,41 @@ def run_ros2():
                 )
             ),
             save_csv=save_csv,
+            request=namespace_request(args),
         )
     finally:
         parameter_node.destroy_node()
 
+    duration_seconds = parse_duration(args.duration)
+    deadline = (
+        time.monotonic() + duration_seconds if duration_seconds is not None else None
+    )
+    previous_sigint_handler = signal.getsignal(signal.SIGINT)
+
+    def request_stop(_signum, _frame):
+        if node is not None:
+            node.core.status = "interrupted"
+        if rclpy.ok():
+            rclpy.shutdown()
+
+    signal.signal(signal.SIGINT, request_stop)
     try:
         try:
-            rclpy.spin(node)
+            while rclpy.ok():
+                if deadline is not None and time.monotonic() >= deadline:
+                    break
+                rclpy.spin_once(node, timeout_sec=0.2)
         except KeyboardInterrupt:
-            pass
+            if node is not None:
+                node.core.status = "interrupted"
     finally:
         if node is not None:
             node.close()
             node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()
+        signal.signal(signal.SIGINT, previous_sigint_handler)
+    return 130 if node is not None and node.core.status == "interrupted" else 0
 
 
 def detect_ros_version():
@@ -1312,7 +1512,27 @@ def detect_ros_version():
 
 
 def main(ros_version=None):
-    resolved_ros_version = ros_version or detect_ros_version()
+    pre_parser = argparse.ArgumentParser(add_help=False)
+    pre_parser.add_argument(
+        "--ros-version",
+        choices=("1", "2"),
+        default=os.environ.get("ROS_VERSION", ""),
+    )
+    pre_parser.add_argument("--ros-setup", default=os.environ.get("ORBBEC_ROS_SETUP", ""))
+    pre_parser.add_argument("--driver-setup", default=os.environ.get("ORBBEC_CAMERA_SETUP", ""))
+    preliminary, _unknown = pre_parser.parse_known_args()
+    requested_version = (
+        ros_version
+        or ({"1": "ros1", "2": "ros2"}.get(preliminary.ros_version))
+    )
+    resolved_ros_version = requested_version or detect_ros_version()
+    if any(option in sys.argv[1:] for option in ("-h", "--help", "--version")):
+        parse_args(sys.argv[1:], resolved_ros_version)
+        return 0
+    prepare_runtime_env(
+        preliminary,
+        "1" if resolved_ros_version == "ros1" else "2",
+    )
     if resolved_ros_version == "ros1":
         return run_ros1()
     if resolved_ros_version == "ros2":
@@ -1321,4 +1541,4 @@ def main(ros_version=None):
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

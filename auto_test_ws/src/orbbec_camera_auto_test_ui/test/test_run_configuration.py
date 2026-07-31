@@ -1,15 +1,21 @@
 from pathlib import Path
+import os
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PACKAGE_ROOT))
 
+import orbbec_camera_auto_test_ui.run_manager as run_manager  # noqa: E402
 from orbbec_camera_auto_test_ui.run_manager import (  # noqa: E402
+    _build_shell_script,
+    _ros_domain_environment_command,
     _build_runner_args,
     build_performance_metrics,
+    normalize_ros_domain_id,
     validate_run_payload,
 )
 
@@ -47,6 +53,109 @@ class RunConfigurationTest(unittest.TestCase):
         payload["launch_file"] = "gemini2L.launch.py"
         payload["launch_config"] = "dual_color"
         self.assertTrue(any("not supported" in item for item in validate_run_payload(payload)))
+
+    def test_ros2_domain_id_is_validated_and_exported(self):
+        self.assertEqual(normalize_ros_domain_id("007"), "7")
+        self.assertEqual(
+            _ros_domain_environment_command("2", "7"), "export ROS_DOMAIN_ID=7"
+        )
+        self.assertEqual(
+            _ros_domain_environment_command("2", ""), "unset ROS_DOMAIN_ID"
+        )
+        self.assertEqual(_ros_domain_environment_command("1", "7"), "")
+
+        payload = self.base_payload()
+        payload["ros_domain_id"] = "42"
+        script, _commands, _shell = _build_shell_script(
+            payload, Path("/tmp/domain-results")
+        )
+        self.assertIn("export ROS_DOMAIN_ID=42", script)
+        self.assertIn("[UI] ROS_DOMAIN_ID=42", script)
+
+    def test_ros_domain_id_rejects_out_of_range_and_non_integer_values(self):
+        for value in ("-1", "1.5", "233", "domain"):
+            payload = self.base_payload()
+            payload["ros_domain_id"] = value
+            self.assertTrue(
+                any("Domain ID" in item for item in validate_run_payload(payload)),
+                value,
+            )
+
+    def test_ros_domain_id_config_does_not_inherit_environment_and_persists_override(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "ui_config.json"
+            with patch.object(run_manager, "CONFIG_PATH", config_path), patch.dict(
+                os.environ, {"ROS_DOMAIN_ID": "19"}
+            ):
+                self.assertEqual(run_manager.load_config()["ros_domain_id"], "")
+                run_manager.save_config({"ros_domain_id": "21"})
+                self.assertEqual(run_manager.load_config()["ros_domain_id"], "21")
+                run_manager.save_config({"ros_domain_id": ""})
+                self.assertEqual(run_manager.load_config()["ros_domain_id"], "")
+
+    def test_framework_modes_keep_independent_configuration_history(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "ui_config.json"
+            with patch.object(run_manager, "CONFIG_PATH", config_path):
+                run_manager.save_config(
+                    {
+                        "mode": "functional",
+                        "launch_file": "astra2.launch.py",
+                        "run_count": "2",
+                        "stream_options": {"enable_color": "true"},
+                        "camera_name": "functional_camera",
+                        "launch_args": "enable_ir=true",
+                    }
+                )
+                run_manager.save_config(
+                    {
+                        "mode": "restart",
+                        "launch_file": "gemini_330_series.launch.py",
+                        "run_count": "8",
+                        "duration": "30m",
+                        "stream_options": {"enable_depth": "true"},
+                        "camera_name": "restart_camera",
+                        "launch_args": "enable_ir=false",
+                    }
+                )
+
+                config = run_manager.load_config()
+
+            self.assertEqual(
+                config["mode_configs"]["functional"]["launch_file"],
+                "astra2.launch.py",
+            )
+            self.assertEqual(config["mode_configs"]["functional"]["run_count"], "2")
+            self.assertEqual(
+                config["mode_configs"]["functional"]["stream_options"],
+                {"enable_color": "true"},
+            )
+            self.assertEqual(
+                config["mode_configs"]["functional"]["camera_name"],
+                "functional_camera",
+            )
+            self.assertEqual(
+                config["mode_configs"]["functional"]["launch_args"],
+                "enable_ir=true",
+            )
+            self.assertEqual(
+                config["mode_configs"]["restart"]["launch_file"],
+                "gemini_330_series.launch.py",
+            )
+            self.assertEqual(config["mode_configs"]["restart"]["run_count"], "8")
+            self.assertEqual(config["mode_configs"]["restart"]["duration"], "30m")
+            self.assertEqual(
+                config["mode_configs"]["restart"]["stream_options"],
+                {"enable_depth": "true"},
+            )
+            self.assertEqual(
+                config["mode_configs"]["restart"]["camera_name"],
+                "restart_camera",
+            )
+            self.assertEqual(
+                config["mode_configs"]["restart"]["launch_args"],
+                "enable_ir=false",
+            )
 
     def test_point_cloud_does_not_reuse_depth_image_metadata(self):
         with tempfile.TemporaryDirectory() as temp_dir:
