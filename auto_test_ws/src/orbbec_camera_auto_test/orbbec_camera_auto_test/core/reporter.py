@@ -89,6 +89,183 @@ def summarize_statuses(items: List[Dict[str, Any]]) -> Dict[str, int]:
     return counts
 
 
+def _functional_result_detail(item: Dict[str, Any]) -> Any:
+    message = item.get("message")
+    metrics = item.get("metrics")
+    if message and metrics:
+        return {"message": message, "metrics": metrics}
+    return message or metrics or ""
+
+
+def _functional_check_name(item: Dict[str, Any]) -> str:
+    mode = str(item.get("mode", ""))
+    validator = str(item.get("validator", ""))
+    if mode == "message" and validator:
+        return f"{mode} ({validator})"
+    return mode
+
+
+def _append_functional_detail_tables(
+    lines: List[str], scenario: Dict[str, Any]
+) -> None:
+    scenario_name = scenario.get("name", "")
+    lines.extend([f"## Scenario Details: {scenario_name}", ""])
+
+    scenario_message = scenario.get("message")
+    if scenario_message:
+        lines.extend(
+            _key_value_table(
+                "### Scenario Result",
+                [
+                    ("Status", scenario.get("status", "")),
+                    ("Message", scenario_message),
+                ],
+            )
+        )
+
+    lines.extend(["### Topics", ""])
+    topics = scenario.get("topics", [])
+    if topics:
+        lines.extend(
+            _markdown_table(
+                ["Topic", "Type", "Check", "Status", "Details"],
+                [
+                    [
+                        item.get("name", ""),
+                        item.get("type", ""),
+                        _functional_check_name(item),
+                        item.get("status", ""),
+                        _functional_result_detail(item),
+                    ]
+                    for item in topics
+                ],
+            )
+        )
+    else:
+        lines.extend(
+            _markdown_table(
+                ["Topic", "Type", "Check", "Status", "Details"],
+                [
+                    [
+                        "N/A",
+                        "N/A",
+                        "N/A",
+                        "N/A",
+                        "No topic checks were executed",
+                    ]
+                ],
+            )
+        )
+    lines.append("")
+
+    lines.extend(["### Services", ""])
+    services = scenario.get("services", [])
+    if services:
+        lines.extend(
+            _markdown_table(
+                ["Service", "Type", "Check", "Status", "Details"],
+                [
+                    [
+                        item.get("name", ""),
+                        item.get("type", ""),
+                        _functional_check_name(item),
+                        item.get("status", ""),
+                        _functional_result_detail(item),
+                    ]
+                    for item in services
+                ],
+            )
+        )
+    else:
+        lines.extend(
+            _markdown_table(
+                ["Service", "Type", "Check", "Status", "Details"],
+                [
+                    [
+                        "N/A",
+                        "N/A",
+                        "N/A",
+                        "N/A",
+                        "No service checks were executed",
+                    ]
+                ],
+            )
+        )
+    lines.append("")
+
+    lines.extend(["### Artifacts", ""])
+    artifacts = scenario.get("artifacts", [])
+    if artifacts:
+        lines.extend(
+            _markdown_table(
+                [
+                    "Service",
+                    "Type",
+                    "Check",
+                    "Status",
+                    "Details",
+                    "New Files",
+                ],
+                [
+                    [
+                        item.get("name", ""),
+                        item.get("type", ""),
+                        _functional_check_name(item),
+                        item.get("status", ""),
+                        _functional_result_detail(item),
+                        item.get("new_files", []),
+                    ]
+                    for item in artifacts
+                ],
+            )
+        )
+    else:
+        lines.extend(
+            _markdown_table(
+                [
+                    "Service",
+                    "Type",
+                    "Check",
+                    "Status",
+                    "Details",
+                    "New Files",
+                ],
+                [
+                    [
+                        "N/A",
+                        "N/A",
+                        "N/A",
+                        "N/A",
+                        "No artifact checks were executed",
+                        "N/A",
+                    ]
+                ],
+            )
+        )
+    lines.append("")
+
+    lines.extend(["### Reboot Recovery", ""])
+    default_reboot = {
+        "status": "skipped",
+        "message": "reboot check was not configured",
+    }
+    reboot = scenario.get("reboot", default_reboot)
+    lines.extend(
+        _markdown_table(
+            ["Service", "Type", "Status", "Details"],
+            [
+                [
+                    reboot.get("name", "reboot_device"),
+                    reboot.get("type", ""),
+                    reboot.get("status", "skipped"),
+                    reboot.get("message", ""),
+                ]
+            ],
+        )
+    )
+    lines.append("")
+
+
 def build_functional_summary(result: Dict[str, Any]) -> List[str]:
     lines = [
         f"# Functional Test Summary: {result['profile_name']}",
@@ -136,6 +313,9 @@ def build_functional_summary(result: Dict[str, Any]) -> List[str]:
         lines.append("| --- | --- | --- | --- | --- | --- |")
         lines.append("| N/A | N/A | N/A | N/A | N/A | N/A |")
     lines.append("")
+
+    for scenario in result.get("scenarios", []):
+        _append_functional_detail_tables(lines, scenario)
 
     lines.append("## Failures")
     lines.append("")
@@ -445,6 +625,10 @@ def collect_failures(result: Dict[str, Any]) -> List[str]:
     if result.get("preflight_error"):
         failures.append(f"preflight: {result['preflight_error']}")
     for scenario in result.get("scenarios", []):
+        if scenario.get("status") == "failed" and scenario.get("message"):
+            failures.append(
+                f"{scenario.get('name', 'scenario')}: {scenario['message']}"
+            )
         for item in (
             scenario.get("topics", [])
             + scenario.get("services", [])
