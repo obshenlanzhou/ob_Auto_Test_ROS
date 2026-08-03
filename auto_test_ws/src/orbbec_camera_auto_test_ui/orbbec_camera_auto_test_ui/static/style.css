@@ -642,6 +642,30 @@ h3 {
   text-transform: uppercase;
 }
 
+.section-status {
+  margin-left: auto;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 4px 7px;
+  color: var(--muted);
+  font-size: 9px;
+  font-style: normal;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.section-status.complete {
+  border-color: var(--ok-line);
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+
+.section-status.incomplete {
+  border-color: var(--warn-line);
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+
 .compact-section {
   display: block;
   padding: 0;
@@ -659,7 +683,7 @@ h3 {
 }
 
 .compact-section summary i {
-  margin-left: auto;
+  margin-left: 0;
   color: var(--muted);
   font-size: 17px;
   font-style: normal;
@@ -700,9 +724,26 @@ h3 {
   gap: 10px;
 }
 
+.standalone-field-groups {
+  display: grid;
+  gap: 11px;
+}
+
 .standalone-field[data-field-type="list"],
-.standalone-field[data-field-type="camera-list"] {
+.standalone-field[data-field-type="camera-list"],
+.standalone-path-field {
   grid-column: 1 / -1;
+}
+
+.path-input {
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.limits-note {
+  border-left: 3px solid var(--primary);
+  padding: 6px 9px;
+  background: var(--primary-soft);
 }
 
 .manifest-badge {
@@ -746,27 +787,40 @@ h3 {
   font-family: var(--mono);
 }
 
-.camera-editor-header {
+.section-title .camera-editor-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 10px;
-  margin-bottom: 8px;
+  margin: 0 0 0 auto;
   color: var(--text-soft);
   font-size: 12px;
 }
 
-.camera-add-actions {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 7px;
+.section-title .camera-editor-header + .section-status {
+  margin-left: 0;
+}
+
+.camera-add-select {
+  width: auto;
+  min-width: 148px;
+  min-height: 36px;
+  border-color: var(--primary-line);
+  background-color: var(--primary-soft);
+  color: var(--primary);
+  font-size: 12px;
+  font-weight: 800;
 }
 
 .camera-examples {
   margin: 0 0 8px;
-  font-family: var(--mono);
-  font-size: 9px;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.camera-limit-note {
+  margin: 0 0 8px;
+  color: var(--warn);
 }
 
 .camera-editor {
@@ -774,36 +828,37 @@ h3 {
   gap: 10px;
 }
 
-.camera-group {
-  display: grid;
-  gap: 8px;
+.camera-editor:empty {
+  display: none;
 }
 
-.camera-group-title {
+.camera-row-header {
+  display: flex;
+  grid-column: 1 / -1;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+}
+
+.camera-row-heading {
   display: flex;
   align-items: baseline;
   gap: 8px;
   color: var(--text-soft);
 }
 
-.camera-group-title small {
+.camera-row-heading small {
   color: var(--muted);
   font-family: var(--mono);
   font-size: 9px;
 }
 
-.camera-rows {
-  display: grid;
-  gap: 9px;
-}
-
-.camera-rows:empty::before {
-  border: 1px dashed var(--line);
-  border-radius: 10px;
-  padding: 10px 12px;
-  color: var(--muted);
-  content: attr(data-empty-text);
-  font-size: 11px;
+.camera-row-header .camera-remove {
+  min-height: 31px;
+  padding: 0 11px;
+  color: var(--danger);
 }
 
 .camera-row {
@@ -816,11 +871,8 @@ h3 {
   background: var(--surface-soft);
 }
 
-.camera-row .camera-remove {
+.camera-row label[data-camera-field-name="config-file-path"] {
   grid-column: 1 / -1;
-  justify-self: end;
-  min-height: 32px;
-  color: var(--danger);
 }
 
 .standalone-checkbox {
@@ -846,6 +898,31 @@ label {
 
 label > span {
   overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.field-label {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  overflow: visible;
+  white-space: normal;
+}
+
+.field-label b {
+  min-width: 0;
+  color: var(--text-soft);
+  font-size: 12px;
+}
+
+.field-label small {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -2442,13 +2519,8 @@ button.ghost {
     grid-template-columns: 1fr;
   }
 
-  .camera-editor-header {
-    align-items: flex-start;
-    display: grid;
-  }
-
-  .camera-add-actions {
-    justify-content: flex-start;
+  .camera-add-select {
+    width: 100%;
   }
 
   .perf-metrics {

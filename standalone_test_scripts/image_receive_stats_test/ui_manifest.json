@@ -7,16 +7,16 @@
   "risk": "normal",
   "stop_policy": "immediate",
   "fields": [
-    {"name": "ros_version", "option": "--ros-version", "type": "select", "label": "ROS 版本", "section": "basic", "default": "2", "choices": [{"value": "2", "label": "ROS 2"}, {"value": "1", "label": "ROS 1"}]},
-    {"name": "ros_setup", "option": "--ros-setup", "type": "path", "label": "ROS Setup", "section": "basic", "default": "/opt/ros/humble/setup.bash"},
-    {"name": "driver_setup", "option": "--driver-setup", "type": "path", "label": "Driver Setup", "section": "basic", "default": "", "placeholder": "/path/to/orbbec_camera/install/setup.bash"},
-    {"name": "image_topics", "option": "--image-topic", "type": "list", "label": "图像 Topic（每行一个）", "section": "basic", "default": [], "required": true, "placeholder": "/camera/color/image_raw\n/camera/depth/image_raw"},
-    {"name": "duration", "option": "--duration", "type": "duration", "label": "最长运行时间", "section": "basic", "default": ""},
-    {"name": "warning_interval_sec", "option": "--warning-interval-sec", "type": "number", "label": "告警间隔秒数", "section": "basic", "default": "1.0", "min": 0.001},
-    {"name": "warmup_sec", "option": "--warmup-sec", "type": "number", "label": "预热秒数", "section": "basic", "default": "2.0", "min": 0},
-    {"name": "save_csv", "option": "--save-csv", "type": "boolean", "label": "保存逐帧 CSV", "section": "basic", "default": true},
-    {"name": "queue_size", "option": "--queue-size", "type": "integer", "label": "Queue Size", "section": "advanced", "default": "10", "min": 1},
-    {"name": "buff_size", "option": "--buff-size", "type": "integer", "label": "ROS 1 Buffer MB", "section": "advanced", "default": "16", "min": 1, "when": {"ros_version": "1"}},
-    {"name": "qos", "option": "--qos", "type": "select", "label": "ROS 2 QoS", "section": "advanced", "default": "sensor_data", "choices": ["sensor_data", "default", "reliable", "best_effort"], "when": {"ros_version": "2"}}
+    {"name": "ros_version", "option": "--ros-version", "type": "select", "label": "ROS 版本", "label_en": "ROS Version", "group": "environment", "section": "basic", "default": "2", "choices": [{"value": "2", "label": "ROS 2"}, {"value": "1", "label": "ROS 1"}]},
+    {"name": "ros_setup", "option": "--ros-setup", "type": "path", "label": "ROS 环境脚本", "label_en": "ROS Setup", "group": "environment", "section": "basic", "default": "/opt/ros/humble/setup.bash"},
+    {"name": "driver_setup", "option": "--driver-setup", "type": "path", "label": "驱动环境脚本", "label_en": "Driver Setup", "group": "environment", "section": "basic", "default": "", "placeholder": "/path/to/orbbec_camera/install/setup.bash"},
+    {"name": "image_topics", "option": "--image-topic", "type": "list", "label": "图像话题", "label_en": "Image Topics", "group": "configuration", "section": "basic", "default": [], "required": true, "placeholder": "/camera/color/image_raw\n/camera/depth/image_raw"},
+    {"name": "duration", "option": "--duration", "type": "duration", "label": "最长运行时间", "label_en": "Duration", "group": "limits", "section": "basic", "default": ""},
+    {"name": "warning_interval_sec", "option": "--warning-interval-sec", "type": "number", "label": "告警间隔", "label_en": "Warning Interval", "group": "configuration", "section": "basic", "default": "1.0", "min": 0.001},
+    {"name": "warmup_sec", "option": "--warmup-sec", "type": "number", "label": "预热时间", "label_en": "Warmup Duration", "group": "configuration", "section": "basic", "default": "2.0", "min": 0},
+    {"name": "save_csv", "option": "--save-csv", "type": "boolean", "label": "保存逐帧 CSV", "label_en": "Save Frame CSV", "group": "configuration", "section": "basic", "default": true},
+    {"name": "queue_size", "option": "--queue-size", "type": "integer", "label": "队列大小", "label_en": "Queue Size", "group": "advanced", "section": "advanced", "default": "10", "min": 1},
+    {"name": "buff_size", "option": "--buff-size", "type": "integer", "label": "ROS 1 缓冲区", "label_en": "ROS 1 Buffer MB", "group": "advanced", "section": "advanced", "default": "16", "min": 1, "when": {"ros_version": "1"}},
+    {"name": "qos", "option": "--qos", "type": "select", "label": "ROS 2 服务质量", "label_en": "ROS 2 QoS", "group": "advanced", "section": "advanced", "default": "sensor_data", "choices": ["sensor_data", "default", "reliable", "best_effort"], "when": {"ros_version": "2"}}
   ]
 }

@@ -366,12 +366,12 @@ function formPayload() {
 }
 
 const CAMERA_FIELD_LABELS = {
-  name: "Camera Name",
-  "serial-number": "Serial Number",
-  "usb-port": "USB Port",
-  "device-ip": "Device IP",
-  "device-port": "Device Port",
-  "config-file-path": "Config File Path",
+  name: ["相机名称", "Camera Name"],
+  "serial-number": ["序列号", "Serial Number"],
+  "usb-port": ["USB 端口", "USB Port"],
+  "device-ip": ["设备 IP", "Device IP"],
+  "device-port": ["设备端口", "Device Port"],
+  "config-file-path": ["参数配置 YAML", "Config YAML"],
 };
 const CAMERA_FIELD_PLACEHOLDERS = {
   name: "camera_01",
@@ -382,9 +382,31 @@ const CAMERA_FIELD_PLACEHOLDERS = {
   "config-file-path": "/path/to/camera_config.yaml",
 };
 const CAMERA_FIELDS_BY_KIND = {
-  usb: ["name", "serial-number", "usb-port", "config-file-path"],
-  network: ["name", "device-ip", "device-port", "config-file-path"],
+  usb: ["name", "serial-number", "usb-port"],
+  network: ["name", "device-ip", "device-port"],
 };
+const STANDALONE_GROUPS = [
+  { id: "environment", number: "02", title: "运行环境", subtitle: "Runtime environment" },
+  { id: "configuration", number: "03", title: "测试配置", subtitle: "Test configuration" },
+  { id: "cameras", number: "04", title: "目标相机", subtitle: "Target cameras" },
+  { id: "limits", number: "05", title: "结束条件", subtitle: "Stop conditions" },
+  { id: "advanced", number: "06", title: "高级参数", subtitle: "Advanced options", collapsible: true },
+];
+
+function createFieldLabel(primaryText, secondaryText = "", required = false) {
+  const label = document.createElement("span");
+  label.className = "field-label";
+  if (required) label.classList.add("required-label");
+  const primary = document.createElement("b");
+  primary.textContent = primaryText;
+  label.appendChild(primary);
+  if (secondaryText) {
+    const secondary = document.createElement("small");
+    secondary.textContent = secondaryText;
+    label.appendChild(secondary);
+  }
+  return label;
+}
 
 function choiceParts(choice) {
   if (typeof choice === "object") {
@@ -407,52 +429,53 @@ function cameraHasValues(camera = {}) {
   return Object.values(camera).some((value) => String(value || "").trim());
 }
 
-function addCameraRow(container, kind, camera = {}) {
-  const row = document.createElement("div");
+function addCameraRow(container, kind, camera = {}, field = {}, onRemove = () => {}) {
+  const row = document.createElement("section");
   row.className = "camera-row";
   row.dataset.cameraKind = kind;
-  for (const name of CAMERA_FIELDS_BY_KIND[kind]) {
-    const label = document.createElement("label");
-    const title = document.createElement("span");
-    title.textContent = CAMERA_FIELD_LABELS[name];
-    const input = document.createElement("input");
-    input.type = "text";
-    input.dataset.cameraField = name;
-    input.value = camera[name] || "";
-    input.placeholder = CAMERA_FIELD_PLACEHOLDERS[name] || "";
-    label.append(title, input);
-    row.appendChild(label);
-  }
+  const rowHeader = document.createElement("div");
+  rowHeader.className = "camera-row-header";
+  const heading = document.createElement("div");
+  heading.className = "camera-row-heading";
+  const headingTitle = document.createElement("strong");
+  headingTitle.textContent = kind === "usb" ? "USB 相机" : "网络相机";
+  const headingHint = document.createElement("small");
+  headingHint.textContent = kind === "usb"
+    ? "Serial Number / USB Port"
+    : "Device IP / Device Port";
+  heading.append(headingTitle, headingHint);
   const remove = document.createElement("button");
   remove.type = "button";
   remove.className = "camera-remove";
   remove.textContent = "移除";
   remove.addEventListener("click", () => {
     row.remove();
+    onRemove();
     updateFormReadiness();
   });
-  row.appendChild(remove);
-  container
-    .querySelector(`.camera-group[data-camera-kind="${kind}"] .camera-rows`)
-    .appendChild(row);
-}
-
-function createCameraGroup(kind, titleText, hintText) {
-  const group = document.createElement("section");
-  group.className = "camera-group";
-  group.dataset.cameraKind = kind;
-  const heading = document.createElement("div");
-  heading.className = "camera-group-title";
-  const title = document.createElement("strong");
-  title.textContent = titleText;
-  const hint = document.createElement("small");
-  hint.textContent = hintText;
-  heading.append(title, hint);
-  const rows = document.createElement("div");
-  rows.className = "camera-rows";
-  rows.dataset.emptyText = `尚未添加${titleText}`;
-  group.append(heading, rows);
-  return group;
+  rowHeader.append(heading, remove);
+  row.appendChild(rowHeader);
+  const cameraFields = [...CAMERA_FIELDS_BY_KIND[kind]];
+  if (field.config_file_required) cameraFields.push("config-file-path");
+  for (const name of cameraFields) {
+    const label = document.createElement("label");
+    label.dataset.cameraFieldName = name;
+    const [primary, secondary] = CAMERA_FIELD_LABELS[name];
+    const title = createFieldLabel(primary, secondary, name === "config-file-path");
+    const input = document.createElement("input");
+    input.type = "text";
+    input.dataset.cameraField = name;
+    input.value = camera[name] || "";
+    input.placeholder = CAMERA_FIELD_PLACEHOLDERS[name] || "";
+    if (name === "config-file-path") {
+      input.classList.add("path-input");
+      input.title = input.value;
+      input.addEventListener("input", () => { input.title = input.value; });
+    }
+    label.append(title, input);
+    row.appendChild(label);
+  }
+  container.appendChild(row);
 }
 
 function createStandaloneField(field, value) {
@@ -460,56 +483,69 @@ function createStandaloneField(field, value) {
   wrapper.className = "standalone-field";
   wrapper.dataset.fieldName = field.name;
   wrapper.dataset.fieldType = field.type;
+  wrapper.dataset.fieldGroup = field.group;
   if (field.when) wrapper.dataset.when = JSON.stringify(field.when);
+  if (field.type === "path") wrapper.classList.add("standalone-path-field", "grid-span-2");
 
   if (field.type === "camera-list") {
     wrapper.classList.add("grid-span-2");
     const header = document.createElement("div");
     header.className = "camera-editor-header";
-    const title = document.createElement("strong");
-    title.textContent = field.label;
-    if (field.required) title.classList.add("required-label");
-    const actions = document.createElement("div");
-    actions.className = "camera-add-actions";
-    const addUsb = document.createElement("button");
-    addUsb.type = "button";
-    addUsb.className = "ghost";
-    addUsb.textContent = "＋ 添加 USB 相机";
-    const addNetwork = document.createElement("button");
-    addNetwork.type = "button";
-    addNetwork.className = "ghost";
-    addNetwork.textContent = "＋ 添加网络相机";
-    actions.append(addUsb, addNetwork);
-    header.append(title, actions);
+    const addSelect = document.createElement("select");
+    addSelect.className = "camera-add-select";
+    addSelect.setAttribute("aria-label", "添加相机");
+    for (const [value, text] of [
+      ["", "＋ 添加相机"],
+      ["usb", "USB 相机"],
+      ["network", "网络相机"],
+    ]) {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = text;
+      addSelect.appendChild(option);
+    }
+    header.appendChild(addSelect);
     const editor = document.createElement("div");
     editor.className = "camera-editor";
-    editor.append(
-      createCameraGroup("usb", "USB 相机", "Serial Number / USB Port"),
-      createCameraGroup("network", "网络相机", "Device IP / Device Port")
-    );
     const examples = document.createElement("p");
     examples.className = "field-note camera-examples";
     examples.textContent = field.max_items === 1
-      ? "示例：name=camera_01,serial-number=CV2R1610002F,usb-port=2-1"
-      : "示例 1：name=camera_01,usb-port=2-1；示例 2：name=camera_02,device-ip=192.168.1.10,device-port=8090";
-    wrapper.append(header, examples, editor);
+      ? "可按相机名称、序列号、USB 端口或网络地址定位一台相机。"
+      : "USB 相机使用序列号或 USB 端口定位；网络相机使用设备 IP 和端口定位。";
+    wrapper.append(header);
+    if (field.note) {
+      const note = document.createElement("p");
+      note.className = "field-note camera-limit-note";
+      note.textContent = field.note;
+      wrapper.appendChild(note);
+    }
+    wrapper.append(examples, editor);
+    const maximum = Number(field.max_items);
+    const hasMaximum = Number.isFinite(maximum);
+    const syncCameraAddActions = () => {
+      const reachedMaximum = hasMaximum
+        && editor.querySelectorAll(".camera-row").length >= maximum;
+      header.classList.toggle("is-hidden", reachedMaximum);
+      addSelect.disabled = reachedMaximum;
+    };
+    const appendCamera = (kind, camera = {}) => {
+      if (hasMaximum && editor.querySelectorAll(".camera-row").length >= maximum) return;
+      addCameraRow(editor, kind, camera, field, syncCameraAddActions);
+      syncCameraAddActions();
+    };
     const cameras = Array.isArray(value) ? value.filter(cameraHasValues) : [];
-    cameras.forEach((camera) => addCameraRow(editor, cameraKind(camera), camera));
-    addUsb.addEventListener("click", () => {
-      addCameraRow(editor, "usb");
+    cameras.forEach((camera) => appendCamera(cameraKind(camera), camera));
+    addSelect.addEventListener("change", () => {
+      if (addSelect.value) appendCamera(addSelect.value);
+      addSelect.value = "";
       updateFormReadiness();
     });
-    addNetwork.addEventListener("click", () => {
-      addCameraRow(editor, "network");
-      updateFormReadiness();
-    });
+    syncCameraAddActions();
     return wrapper;
   }
 
   const label = document.createElement("label");
-  const title = document.createElement("span");
-  title.textContent = field.label || field.name;
-  if (field.required) title.classList.add("required-label");
+  const title = createFieldLabel(field.label || field.name, field.label_en, field.required);
   let control;
   if (field.type === "select") {
     control = document.createElement("select");
@@ -545,11 +581,62 @@ function createStandaloneField(field, value) {
       control.placeholder = "300 / 15m / 2h";
     }
   }
+  if (field.type === "path") {
+    control.classList.add("path-input");
+    control.title = control.value;
+    control.addEventListener("input", () => { control.title = control.value; });
+  }
   control.dataset.standaloneInput = field.name;
   if (field.required) control.required = true;
   label.append(title, control);
   wrapper.appendChild(label);
   return wrapper;
+}
+
+function createStandaloneGroup(definition) {
+  const element = document.createElement(definition.collapsible ? "details" : "section");
+  element.className = definition.collapsible
+    ? "form-section compact-section standalone-group"
+    : "form-section standalone-group";
+  element.dataset.standaloneGroup = definition.id;
+  const heading = document.createElement(definition.collapsible ? "summary" : "div");
+  heading.className = "section-title";
+  const number = document.createElement("span");
+  number.textContent = definition.number;
+  const copy = document.createElement("div");
+  const title = document.createElement("b");
+  title.textContent = definition.title;
+  const subtitle = document.createElement("small");
+  subtitle.textContent = definition.subtitle;
+  copy.append(title, subtitle);
+  const status = document.createElement("em");
+  status.className = "section-status";
+  status.textContent = "检查中";
+  heading.append(number, copy, status);
+  if (definition.collapsible) {
+    const arrow = document.createElement("i");
+    arrow.setAttribute("aria-hidden", "true");
+    arrow.textContent = "⌄";
+    heading.appendChild(arrow);
+  }
+  const fields = document.createElement("div");
+  fields.className = "dynamic-fields standalone-group-fields";
+  fields.id = `standalone-${definition.id}-fields`;
+  if (definition.id === "limits") {
+    const note = document.createElement("p");
+    note.className = "field-note limits-note grid-span-2";
+    note.textContent = "满足任一条件即结束；留空表示不限制。";
+    fields.appendChild(note);
+  }
+  if (definition.collapsible) {
+    const content = document.createElement("div");
+    content.className = "section-content";
+    content.appendChild(fields);
+    element.append(heading, content);
+  } else {
+    element.append(heading, fields);
+  }
+  return { element, fields, status };
 }
 
 function standaloneCurrentValues() {
@@ -657,11 +744,11 @@ function renderStandaloneForm(testId = "") {
   const test =
     state.standaloneTests.find((item) => item.id === testId) || state.standaloneTests[0];
   state.standaloneTest = test || null;
-  const basic = $("standaloneBasicFields");
-  const advanced = $("standaloneAdvancedFields");
-  basic.replaceChildren();
-  advanced.replaceChildren();
+  const groupRoot = $("standaloneFieldGroups");
+  const domainField = $("standaloneRosDomainId").closest(".standalone-field");
+  groupRoot.replaceChildren();
   if (!test) {
+    $("standaloneFieldStaging").appendChild(domainField);
     $("standaloneDescription").textContent = "没有找到可用的独立脚本清单。";
     return;
   }
@@ -669,9 +756,35 @@ function renderStandaloneForm(testId = "") {
   $("standaloneDescription").textContent = test.description || "";
   $("standaloneRisk").textContent = test.confirmation || "";
   $("standaloneRisk").classList.toggle("is-hidden", test.risk !== "high");
+  const groups = Object.fromEntries(
+    STANDALONE_GROUPS.map((definition) => {
+      const group = createStandaloneGroup(definition);
+      groupRoot.appendChild(group.element);
+      return [definition.id, group];
+    })
+  );
+  let domainAttached = false;
   for (const field of test.fields || []) {
-    const target = field.section === "advanced" ? advanced : basic;
-    target.appendChild(createStandaloneField(field, test.values?.[field.name]));
+    const group = groups[field.group] || groups.configuration;
+    const fieldNode = createStandaloneField(field, test.values?.[field.name]);
+    group.fields.appendChild(fieldNode);
+    if (field.type === "camera-list") {
+      const cameraActions = fieldNode.querySelector(".camera-editor-header");
+      const groupHeading = group.element.querySelector(".section-title");
+      groupHeading.insertBefore(cameraActions, group.status);
+    }
+    if (field.name === "ros_version") {
+      group.fields.appendChild(domainField);
+      domainAttached = true;
+    }
+  }
+  if (!domainAttached) groups.environment.fields.prepend(domainField);
+  const limitFieldCount = groups.limits.fields.querySelectorAll(".standalone-field").length;
+  groups.limits.fields.querySelector(".limits-note")
+    ?.classList.toggle("is-hidden", limitFieldCount < 2);
+  for (const group of Object.values(groups)) {
+    const hasFields = Boolean(group.fields.querySelector(".standalone-field"));
+    group.element.classList.toggle("is-hidden", !hasFields);
   }
   for (const control of document.querySelectorAll("[data-standalone-input]")) {
     control.addEventListener("change", () => {
@@ -735,10 +848,16 @@ function validationIssue(target, message) {
   return { target, message };
 }
 
+function controlLabel(control, fallback = "字段") {
+  return control.closest("label")?.querySelector(".field-label b")?.textContent
+    || control.closest("label")?.querySelector("span")?.textContent
+    || fallback;
+}
+
 function validateDurationControl(control, { required = false } = {}) {
   const value = control.value.trim();
   if (!value) {
-    return required ? validationIssue(control, `${control.closest("label")?.querySelector("span")?.textContent || "运行时长"}为必填项`) : null;
+    return required ? validationIssue(control, `${controlLabel(control, "运行时长")}为必填项`) : null;
   }
   if (!DURATION_PATTERN.test(value)) {
     return validationIssue(control, "请输入秒数，或使用 s / m / h 后缀，例如 300、15m");
@@ -753,7 +872,7 @@ function validateNumberControl(
   const value = control.value.trim();
   if (!value) return null;
   const number = Number(value);
-  const label = control.closest("label")?.querySelector("span")?.textContent || "数值";
+  const label = controlLabel(control, "数值");
   if (!Number.isFinite(number) || (integer && !Number.isInteger(number))) {
     return validationIssue(control, `${label}必须是${integer ? "整数" : "数字"}`);
   }
@@ -847,7 +966,7 @@ function validateStandaloneForm() {
         rows.forEach((row, index) => {
           const configInput = row.querySelector('[data-camera-field="config-file-path"]');
           if (configInput && !configInput.value.trim()) {
-            errors.push(validationIssue(configInput, `相机 ${index + 1} 必须填写 Config File Path`));
+            errors.push(validationIssue(configInput, `相机 ${index + 1} 必须填写参数配置 YAML`));
           }
         });
       }
@@ -962,9 +1081,11 @@ function serverValidationIssues(error, standalone = false) {
 }
 
 function updateFormReadiness() {
+  const standaloneErrors = validateStandaloneForm();
+  updateStandaloneGroupStatuses(standaloneErrors);
   for (const [workspace, errors, node] of [
     ["framework", validateFrameworkForm(), $("frameworkReadiness")],
-    ["standalone", validateStandaloneForm(), $("standaloneReadiness")],
+    ["standalone", standaloneErrors, $("standaloneReadiness")],
   ]) {
     const ready = errors.length === 0;
     node.classList.toggle("ready", ready);
@@ -973,6 +1094,25 @@ function updateFormReadiness() {
       ? "必填项已完整"
       : `还需完善 ${errors.length} 项`;
     node.title = workspace === "framework" ? "测试框架配置检查" : "独立脚本配置检查";
+  }
+}
+
+function updateStandaloneGroupStatuses(errors) {
+  for (const group of document.querySelectorAll("[data-standalone-group]")) {
+    const visibleFields = [...group.querySelectorAll(".standalone-field")]
+      .filter((field) => !field.classList.contains("is-hidden"));
+    group.classList.toggle("is-hidden", !visibleFields.length);
+    if (!visibleFields.length) continue;
+    const messages = new Set(
+      errors
+        .filter((error) => error.target?.closest?.("[data-standalone-group]") === group)
+        .map((error) => error.message)
+    );
+    const status = group.querySelector(".section-status");
+    const complete = messages.size === 0;
+    status.textContent = complete ? "已完成" : `缺少 ${messages.size} 项`;
+    status.classList.toggle("complete", complete);
+    status.classList.toggle("incomplete", !complete);
   }
 }
 

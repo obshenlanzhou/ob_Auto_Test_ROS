@@ -22,6 +22,7 @@ FIELD_TYPES = {
     "list",
     "camera-list",
 }
+FIELD_GROUPS = {"environment", "configuration", "cameras", "limits", "advanced"}
 CAMERA_FIELDS = (
     "name",
     "serial-number",
@@ -106,6 +107,8 @@ def _validate_manifest(manifest: Dict[str, Any], manifest_path: Path) -> Dict[st
         name = _safe_text(field.get("name"))
         option = _safe_text(field.get("option"))
         field_type = _safe_text(field.get("type"))
+        field_group = _safe_text(field.get("group"))
+        label_en = _safe_text(field.get("label_en"))
         if not name or name in seen_names:
             raise ManifestError(f"{manifest_path}: duplicate or empty field name: {name}")
         if not option.startswith("--") or "_" in option:
@@ -114,6 +117,15 @@ def _validate_manifest(manifest: Dict[str, Any], manifest_path: Path) -> Dict[st
             raise ManifestError(f"{manifest_path}: duplicate option: {option}")
         if field_type not in FIELD_TYPES:
             raise ManifestError(f"{manifest_path}: unsupported field type: {field_type}")
+        if field_group not in FIELD_GROUPS:
+            raise ManifestError(f"{manifest_path}: unsupported field group: {field_group}")
+        expected_section = "advanced" if field_group == "advanced" else "basic"
+        if field.get("section") != expected_section:
+            raise ManifestError(
+                f"{manifest_path}: field {name} group {field_group} must use section {expected_section}"
+            )
+        if not label_en:
+            raise ManifestError(f"{manifest_path}: field {name} requires label_en")
         if field_type == "select" and not field.get("choices"):
             raise ManifestError(f"{manifest_path}: select field {name} has no choices")
         seen_names.add(name)

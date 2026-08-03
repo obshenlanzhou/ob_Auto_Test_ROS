@@ -247,28 +247,15 @@
             <div id="standaloneRisk" class="risk-banner is-hidden" role="alert"></div>
           </section>
 
-          <section class="form-section">
-            <div class="section-title"><span>02</span><div>基础参数<small>Required and common options</small></div></div>
-            <div class="grid two standalone-global-fields">
+          <div id="standaloneFieldStaging" class="is-hidden">
+            <div class="standalone-field standalone-domain-field" data-field-name="ros_domain_id" data-field-type="integer">
               <label>
-                <span>ROS Domain ID</span>
+                <span class="field-label"><b>ROS 域 ID</b><small>ROS Domain ID</small></span>
                 <input id="standaloneRosDomainId" name="ros_domain_id" type="number" min="0" max="232" step="1" placeholder="0（留空表示不设置）" />
               </label>
             </div>
-            <div id="standaloneBasicFields" class="dynamic-fields"></div>
-          </section>
-
-          <details class="form-section compact-section">
-            <summary class="section-title"><span>03</span><div>高级参数<small>Timeouts, logging and tuning</small></div><i aria-hidden="true">⌄</i></summary>
-            <div class="section-content">
-              <div id="standaloneAdvancedFields" class="dynamic-fields"></div>
-            </div>
-          </details>
-
-          <div class="selector-priority">
-            USB 相机可使用 <code>serial-number / usb-port</code> 定位，网络相机使用
-            <code>device-ip / device-port</code>；Camera Name 和 Config File Path 为两类相机的通用参数。
           </div>
+          <div id="standaloneFieldGroups" class="standalone-field-groups"></div>
 
           <div class="form-validation is-hidden" id="standaloneValidation" role="alert"></div>
           <div class="actions">

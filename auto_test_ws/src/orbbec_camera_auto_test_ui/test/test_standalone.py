@@ -53,6 +53,16 @@ def test_all_six_standalone_manifests_load():
         "launch_restart_stream_check",
         "preset_upgrade_stress_test",
     }
+    for manifest in manifests:
+        for field in manifest["fields"]:
+            assert field["group"] in {
+                "environment",
+                "configuration",
+                "cameras",
+                "limits",
+                "advanced",
+            }
+            assert field["label_en"]
 
 
 def test_manifest_options_exist_in_script_help():
@@ -448,15 +458,81 @@ def test_camera_editor_separates_usb_and_network_fields():
         / "app.js"
     ).read_text(encoding="utf-8")
 
-    assert 'usb: ["name", "serial-number", "usb-port", "config-file-path"]' in script
-    assert (
-        'network: ["name", "device-ip", "device-port", "config-file-path"]'
-        in script
+    assert 'usb: ["name", "serial-number", "usb-port"]' in script
+    assert 'network: ["name", "device-ip", "device-port"]' in script
+    assert 'if (field.config_file_required) cameraFields.push("config-file-path")' in script
+    assert 'rowHeader.className = "camera-row-header"' in script
+    assert 'headingTitle.textContent = kind === "usb" ? "USB 相机" : "网络相机"' in script
+    assert '["", "＋ 添加相机"]' in script
+    assert '["usb", "USB 相机"]' in script
+    assert '["network", "网络相机"]' in script
+    assert "rowHeader.append(heading, remove)" in script
+    assert "groupHeading.insertBefore(cameraActions, group.status)" in script
+
+
+def test_launch_restart_camera_editor_enforces_single_camera_with_multi_launch_hint():
+    manifest = manifest_catalog(STANDALONE_ROOT)["launch_restart_stream_check"]
+    cameras = next(
+        field for field in manifest["fields"] if field["name"] == "cameras"
     )
-    assert 'createCameraGroup("usb", "USB 相机"' in script
-    assert 'createCameraGroup("network", "网络相机"' in script
-    assert "＋ 添加 USB 相机" in script
-    assert "＋ 添加网络相机" in script
+    assert cameras["max_items"] == 1
+    assert cameras["note"] == (
+        "仅支持添加一台相机；多相机压测请配置并选择多相机启动 Launch 文件。"
+    )
+
+    script = (
+        PACKAGE_ROOT
+        / "orbbec_camera_auto_test_ui"
+        / "static"
+        / "app.js"
+    ).read_text(encoding="utf-8")
+    assert 'header.classList.toggle("is-hidden", reachedMaximum)' in script
+    assert "addSelect.disabled = reachedMaximum" in script
+    assert "addCameraRow(editor, kind, camera, field, syncCameraAddActions)" in script
+    assert 'note.className = "field-note camera-limit-note"' in script
+
+
+def test_standalone_ui_renders_grouped_sections_and_completion_statuses():
+    template = (
+        PACKAGE_ROOT
+        / "orbbec_camera_auto_test_ui"
+        / "templates"
+        / "index.html"
+    ).read_text(encoding="utf-8")
+    script = (
+        PACKAGE_ROOT
+        / "orbbec_camera_auto_test_ui"
+        / "static"
+        / "app.js"
+    ).read_text(encoding="utf-8")
+
+    assert 'id="standaloneFieldGroups"' in template
+    for group in ("environment", "configuration", "cameras", "limits", "advanced"):
+        assert f'id: "{group}"' in script
+    assert "function createStandaloneGroup(definition)" in script
+    assert "function updateStandaloneGroupStatuses(errors)" in script
+    assert 'status.textContent = complete ? "已完成"' in script
+    assert "满足任一条件即结束；留空表示不限制。" in script
+
+
+def test_standalone_paths_use_full_width_and_bilingual_labels():
+    script = (
+        PACKAGE_ROOT
+        / "orbbec_camera_auto_test_ui"
+        / "static"
+        / "app.js"
+    ).read_text(encoding="utf-8")
+    stylesheet = (
+        PACKAGE_ROOT
+        / "orbbec_camera_auto_test_ui"
+        / "static"
+        / "style.css"
+    ).read_text(encoding="utf-8")
+
+    assert 'wrapper.classList.add("standalone-path-field", "grid-span-2")' in script
+    assert "function createFieldLabel(primaryText, secondaryText" in script
+    assert ".standalone-path-field" in stylesheet
+    assert ".path-input" in stylesheet
 
 
 def test_multi_value_fields_show_at_least_two_examples():

@@ -8,17 +8,17 @@
   "stop_policy": "safe-point",
   "confirmation": "固件升级会写入相机设备。请确认固件与目标设备匹配，并保持供电和连接稳定。",
   "fields": [
-    {"name": "ros_version", "option": "--ros-version", "type": "select", "label": "ROS 版本", "section": "basic", "default": "2", "choices": [{"value": "2", "label": "ROS 2"}, {"value": "1", "label": "ROS 1"}]},
-    {"name": "ros_setup", "option": "--ros-setup", "type": "path", "label": "ROS Setup", "section": "basic", "default": "/opt/ros/humble/setup.bash"},
-    {"name": "driver_setup", "option": "--driver-setup", "type": "path", "label": "Driver Setup", "section": "basic", "default": "", "placeholder": "/path/to/orbbec_camera/install/setup.bash"},
-    {"name": "firmwares", "option": "--firmware", "type": "list", "label": "固件文件（每行一个）", "section": "basic", "default": [], "required": true, "placeholder": "/path/to/firmware_a.bin\n/path/to/firmware_b.bin"},
-    {"name": "cameras", "option": "--camera", "type": "camera-list", "label": "目标相机", "section": "basic", "default": []},
-    {"name": "run_count", "option": "--run-count", "type": "integer", "label": "最大升级次数", "section": "basic", "default": "10", "min": 1},
-    {"name": "duration", "option": "--duration", "type": "duration", "label": "最长运行时间", "section": "basic", "default": ""},
-    {"name": "restart_delay", "option": "--restart-delay", "type": "number", "label": "升级间隔秒数", "section": "advanced", "default": "2", "min": 0},
-    {"name": "reconnect_timeout_sec", "option": "--reconnect-timeout-sec", "type": "integer", "label": "重连超时秒数", "section": "advanced", "default": "120", "min": 1},
-    {"name": "reconnect_poll_ms", "option": "--reconnect-poll-ms", "type": "integer", "label": "重连轮询毫秒", "section": "advanced", "default": "1000", "min": 1},
-    {"name": "sdk_log_level", "option": "--sdk-log-level", "type": "select", "label": "SDK 日志级别", "section": "advanced", "default": "debug", "choices": ["debug", "info", "warn", "error", "fatal", "off", "none"]},
-    {"name": "continue_on_error", "option": "--continue-on-error", "type": "flag", "label": "升级工具遇错继续", "section": "advanced", "default": false}
+    {"name": "ros_version", "option": "--ros-version", "type": "select", "label": "ROS 版本", "label_en": "ROS Version", "group": "environment", "section": "basic", "default": "2", "choices": [{"value": "2", "label": "ROS 2"}, {"value": "1", "label": "ROS 1"}]},
+    {"name": "ros_setup", "option": "--ros-setup", "type": "path", "label": "ROS 环境脚本", "label_en": "ROS Setup", "group": "environment", "section": "basic", "default": "/opt/ros/humble/setup.bash"},
+    {"name": "driver_setup", "option": "--driver-setup", "type": "path", "label": "驱动环境脚本", "label_en": "Driver Setup", "group": "environment", "section": "basic", "default": "", "placeholder": "/path/to/orbbec_camera/install/setup.bash"},
+    {"name": "firmwares", "option": "--firmware", "type": "list", "label": "固件文件", "label_en": "Firmware Files", "group": "configuration", "section": "basic", "default": [], "required": true, "placeholder": "/path/to/firmware_a.bin\n/path/to/firmware_b.bin"},
+    {"name": "cameras", "option": "--camera", "type": "camera-list", "label": "目标相机", "label_en": "Target Cameras", "group": "cameras", "section": "basic", "default": []},
+    {"name": "run_count", "option": "--run-count", "type": "integer", "label": "最大升级次数", "label_en": "Update Count", "group": "limits", "section": "basic", "default": "10", "min": 1},
+    {"name": "duration", "option": "--duration", "type": "duration", "label": "最长运行时间", "label_en": "Duration", "group": "limits", "section": "basic", "default": ""},
+    {"name": "restart_delay", "option": "--restart-delay", "type": "number", "label": "升级间隔", "label_en": "Update Delay", "group": "advanced", "section": "advanced", "default": "2", "min": 0},
+    {"name": "reconnect_timeout_sec", "option": "--reconnect-timeout-sec", "type": "integer", "label": "重连超时", "label_en": "Reconnect Timeout", "group": "advanced", "section": "advanced", "default": "120", "min": 1},
+    {"name": "reconnect_poll_ms", "option": "--reconnect-poll-ms", "type": "integer", "label": "重连轮询间隔", "label_en": "Reconnect Poll Interval", "group": "advanced", "section": "advanced", "default": "1000", "min": 1},
+    {"name": "sdk_log_level", "option": "--sdk-log-level", "type": "select", "label": "SDK 日志级别", "label_en": "SDK Log Level", "group": "advanced", "section": "advanced", "default": "debug", "choices": ["debug", "info", "warn", "error", "fatal", "off", "none"]},
+    {"name": "continue_on_error", "option": "--continue-on-error", "type": "flag", "label": "遇错继续", "label_en": "Continue on Error", "group": "advanced", "section": "advanced", "default": false}
   ]
 }
