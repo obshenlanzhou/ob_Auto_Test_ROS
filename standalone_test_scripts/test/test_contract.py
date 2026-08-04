@@ -71,6 +71,20 @@ def load_protocol(path: Path):
     return module
 
 
+def load_script(path: Path):
+    module_name = f"standalone_script_{path.parent.name}"
+    spec = importlib.util.spec_from_file_location(module_name, path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    sys.path.insert(0, str(path.parent))
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.path.pop(0)
+    return module
+
+
 def script_help(script: Path) -> str:
     completed = subprocess.run(
         [sys.executable, str(script), "--help"],
@@ -281,6 +295,31 @@ def test_invalid_cli_returns_argparse_exit_code():
         timeout=10,
     )
     assert completed.returncode == 2
+
+
+def test_preset_launch_log_match_survives_recent_line_eviction(tmp_path):
+    module = load_script(SCRIPTS["preset_upgrade"])
+    expected = "Loaded device preset: Forklift"
+    lines = [expected, *(f"DEBUG startup line {index}" for index in range(600))]
+    log_file = tmp_path / "camera.launch.log"
+    session = module.LaunchSession(
+        camera_name="camera",
+        command=[],
+        work_dir=tmp_path,
+        env={},
+        log_file=log_file,
+        emit=lambda _message: None,
+    )
+
+    session._lines.extend(lines)
+
+    assert len(session._lines) == 300
+    assert not any(expected in line for line in session._lines)
+    assert not session.has_log_substring(expected)
+
+    log_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    assert session.has_log_substring(expected)
 
 
 def test_camera_launch_stress_defaults_enable_heartbeat_and_firmware_log():

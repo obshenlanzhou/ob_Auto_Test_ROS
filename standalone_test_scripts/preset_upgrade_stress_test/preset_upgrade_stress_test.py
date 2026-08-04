@@ -31,7 +31,7 @@ from _test_protocol import (
 ENV_READY_VAR = "PRESET_UPGRADE_STRESS_TEST_ENV_READY"
 INTERRUPTED = False
 SCRIPT_DIR = Path(__file__).resolve().parent
-TOOL_VERSION = "1.0"
+TOOL_VERSION = "1.1"
 TEST_ID = "preset_upgrade_stress_test"
 DEFAULT_STRESS_LAUNCH_ARGS = {
     "enable_heartbeat": "true",
@@ -317,7 +317,19 @@ class LaunchSession:
 
     def has_log_substring(self, text: str) -> bool:
         with self._lock:
-            return any(text in line for line in self._lines)
+            if any(text in line for line in self._lines):
+                return True
+
+        # DEBUG startup output can evict an earlier match from the bounded
+        # in-memory buffer before the polling loop observes it. The reader
+        # flushes every line to disk, so fall back to the complete launch log.
+        try:
+            with self.log_file.open("r", encoding="utf-8", errors="replace") as log_stream:
+                return any(text in line for line in log_stream)
+        except OSError:
+            # The log may be temporarily unavailable while the launch is
+            # starting. Let the caller retry until its existing timeout.
+            return False
 
     def stop(self, timeout: float = 10.0) -> None:
         if self.process is None or self.process.poll() is not None:
