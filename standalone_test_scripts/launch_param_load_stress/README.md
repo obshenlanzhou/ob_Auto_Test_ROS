@@ -126,11 +126,14 @@ launch_param_load_stress/results/YYYYMMDD_HHMMSS_launch_param_load_stress/
 ├── test_0002/
 │   └── ...
 ├── images/                # Present only when --save-image-count > 0
-│   ├── test_0001/
-│   │   └── camera1/<topic>/image_0001.jpg
-│   └── test_0002/
-│       └── ...
+│   ├── camera_01/color/image_0001.jpg
+│   ├── camera_01/depth/image_0001.jpg
+│   ├── camera_02/ir_left/image_0001.jpg
+│   └── camera_02/ir_right/image_0001.jpg
 ├── summary.md             # Per-run pass/fail summary
 ├── events.jsonl           # Structured lifecycle and progress events
 └── result.json            # Machine-readable result for all runs
 ```
+
+Image numbers continue independently for each camera and stream across test
+cycles. Existing images are never overwritten.

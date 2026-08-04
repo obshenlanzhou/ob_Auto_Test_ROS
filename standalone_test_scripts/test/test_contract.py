@@ -342,3 +342,34 @@ def test_camera_launch_stress_defaults_enable_heartbeat_and_firmware_log():
         launch_args = evaluate_script(SCRIPTS[test_id], expression)
         assert launch_args["enable_heartbeat"] == "false", test_id
         assert launch_args["enable_firmware_log"] == "true", test_id
+
+
+def test_image_saving_uses_stream_directories_and_continuing_indices(tmp_path):
+    topics_and_directories = {
+        "/camera/color/image_raw": "color",
+        "/camera/depth/image_raw": "depth",
+        "/camera/ir/image_raw": "ir",
+        "/camera/left_ir/image_raw": "ir_left",
+        "/camera/right_ir/image_raw": "ir_right",
+        "/camera/left_color/image_raw": "color_left",
+        "/camera/right_color/image_raw": "color_right",
+    }
+    for test_id in ("export_load", "preset_upgrade", "launch_param_load"):
+        module = load_script(SCRIPTS[test_id])
+        output_root = tmp_path / test_id / "images"
+        for topic, directory in topics_and_directories.items():
+            assert module.image_stream_name(topic) == directory
+
+        existing = output_root / "camera_01" / "depth" / "image_0003.jpg"
+        existing.parent.mkdir(parents=True)
+        existing.write_bytes(b"existing")
+        sequence = module.ImagePathSequence(output_root)
+        first = sequence.next_path("/camera_01/depth/image_raw", "camera_01")
+        second = sequence.next_path("/camera_01/depth/image_raw", "camera_01")
+        color = sequence.next_path("/camera_01/color/image_raw", "camera_01")
+        other_camera = sequence.next_path("/camera_02/depth/image_raw", "camera_02")
+
+        assert first == output_root / "camera_01" / "depth" / "image_0004.jpg"
+        assert second == output_root / "camera_01" / "depth" / "image_0005.jpg"
+        assert color == output_root / "camera_01" / "color" / "image_0001.jpg"
+        assert other_camera == output_root / "camera_02" / "depth" / "image_0001.jpg"

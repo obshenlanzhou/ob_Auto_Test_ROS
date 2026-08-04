@@ -127,5 +127,12 @@ preset_upgrade_stress_test/results/YYYYMMDD_HHMMSS_preset_upgrade/
 ├── logs/test_XXXX/<camera>/upgrade.log     # firmware_update_tool output
 ├── logs/test_XXXX/<camera>/<camera>.launch.log  # launch output
 ├── logs/test_XXXX/<camera>/sdk/Log/         # Upgrade-tool and camera SDK debug logs
-└── images/test_XXXX/<camera>/             # Saved JPG images (when enabled)
+└── images/                                # JPG images grouped by camera and stream
+    ├── camera_01/color/image_0001.jpg
+    ├── camera_01/depth/image_0001.jpg
+    ├── camera_02/ir_left/image_0001.jpg
+    └── camera_02/ir_right/image_0001.jpg
 ```
+
+Image numbers continue independently for each camera and stream across test
+cycles. Existing images are never overwritten.

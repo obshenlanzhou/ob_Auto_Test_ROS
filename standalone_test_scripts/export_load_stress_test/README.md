@@ -107,8 +107,15 @@ export_load_stress_test/results/YYYYMMDD_HHMMSS_export_load/
 ├── summary.md       # Final result and per-test pass/fail status
 ├── result.json      # Full machine-readable result
 ├── events.jsonl     # Structured lifecycle and progress events
-├── images/          # Saved JPG images per test/camera/topic
+├── images/          # JPG images grouped by camera and enabled stream
+│   ├── camera_01/color/image_0001.jpg
+│   ├── camera_01/depth/image_0001.jpg
+│   ├── camera_02/ir_left/image_0001.jpg
+│   └── camera_02/ir_right/image_0001.jpg
 ├── exports/         # Exported JSON and failure diffs per test/camera
 ├── logs/test_XXXX/<camera>/<camera>.launch.log  # Per-test ROS launch log
 └── logs/test_XXXX/<camera>/sdk/Log/<camera>/  # Per-test camera SDK debug logs
 ```
+
+Image numbers continue independently for each camera and stream across test
+cycles. Existing images are never overwritten.

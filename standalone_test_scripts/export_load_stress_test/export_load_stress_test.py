@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shlex
 import signal
 import subprocess
@@ -28,7 +29,7 @@ from _test_protocol import (
 
 ENV_READY_VAR = "EXPORT_LOAD_STRESS_TEST_ENV_READY"
 INTERRUPTED = False
-TOOL_VERSION = "1.0"
+TOOL_VERSION = "1.1"
 TEST_ID = "export_load_stress_test"
 DEFAULT_STRESS_LAUNCH_ARGS = {
     "enable_heartbeat": "true",
@@ -116,6 +117,58 @@ def sanitize_path_part(value: str) -> str:
     if not text:
         return "root"
     return "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in text)
+
+
+STREAM_DIRECTORY_NAMES = {
+    "color": "color",
+    "depth": "depth",
+    "ir": "ir",
+    "left_ir": "ir_left",
+    "right_ir": "ir_right",
+    "left_color": "color_left",
+    "right_color": "color_right",
+}
+IMAGE_FILE_PATTERN = re.compile(r"^image_(\d+)\.jpg$", re.IGNORECASE)
+
+
+def image_stream_name(topic: str) -> str:
+    """Return the stable image directory name represented by a ROS topic."""
+    parts = [part for part in topic.strip().split("/") if part]
+    for part in reversed(parts):
+        if part in STREAM_DIRECTORY_NAMES:
+            return STREAM_DIRECTORY_NAMES[part]
+    for index, part in enumerate(parts):
+        if part.startswith("image") and index > 0:
+            return sanitize_path_part(parts[index - 1])
+    return sanitize_path_part(parts[-1] if parts else topic)
+
+
+class ImagePathSequence:
+    """Allocate non-overwriting paths per camera and stream."""
+
+    def __init__(self, output_root: Path) -> None:
+        self.output_root = output_root
+        self._next_indices: Dict[tuple[str, str], int] = {}
+
+    def next_path(self, topic: str, camera_name: str) -> Path:
+        stream_name = image_stream_name(topic)
+        safe_camera_name = sanitize_path_part(camera_name or "unknown_camera")
+        sequence_key = (safe_camera_name, stream_name)
+        stream_dir = ensure_dir(self.output_root / safe_camera_name / stream_name)
+        next_index = self._next_indices.get(sequence_key)
+        if next_index is None:
+            existing_indices = [
+                int(match.group(1))
+                for path in stream_dir.iterdir()
+                if path.is_file() and (match := IMAGE_FILE_PATTERN.match(path.name))
+            ]
+            next_index = max(existing_indices, default=0) + 1
+        target = stream_dir / f"image_{next_index:04d}.jpg"
+        while target.exists():
+            next_index += 1
+            target = stream_dir / f"image_{next_index:04d}.jpg"
+        self._next_indices[sequence_key] = next_index + 1
+        return target
 
 
 def launch_value(value: Any) -> str:
@@ -615,6 +668,7 @@ class JpgImageSaver:
         self.subscriptions = []
         self._bridge = None
         self._cv2 = None
+        self._image_paths = ImagePathSequence(output_root)
 
         for topic in topics:
             topic_kind = self.harness.resolve_image_topic_kind(topic)
@@ -643,10 +697,9 @@ class JpgImageSaver:
         self._cv2 = cv2
         return self._bridge, self._cv2
 
-    def _target_path(self, topic_name: str, index: int) -> Path:
+    def _target_path(self, topic_name: str) -> Path:
         camera_name = self.topic_cameras.get(topic_name, "unknown_camera")
-        topic_dir = sanitize_path_part(topic_name)
-        return self.output_root / sanitize_path_part(camera_name) / topic_dir / f"image_{index:04d}.jpg"
+        return self._image_paths.next_path(topic_name, camera_name)
 
     def _write_jpg(self, topic_name: str, message: Any, target_path: Path) -> None:
         topic_kind = self.metadata[topic_name].get("topic_kind", "raw")
@@ -679,8 +732,7 @@ class JpgImageSaver:
         saved_files = self.saved[topic_name]
         if len(saved_files) >= self.count_per_topic:
             return
-        index = len(saved_files) + 1
-        target_path = self._target_path(topic_name, index)
+        target_path = self._target_path(topic_name)
         self._write_jpg(topic_name, message, target_path)
         saved_files.append(str(target_path))
         self.metadata[topic_name].update(
@@ -1291,7 +1343,7 @@ def run(args) -> int:
                     harness=harness,
                     topics=image_topics,
                     topic_cameras=topic_cameras,
-                    output_root=results_dir / "images" / test_name,
+                    output_root=results_dir / "images",
                     count_per_topic=save_image_count,
                     timeout=save_image_timeout,
                     jpg_quality=jpg_quality,

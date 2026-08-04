@@ -105,8 +105,14 @@ export_load_stress_test/results/YYYYMMDD_HHMMSS_export_load/
 ├── summary.md       # 最终结果和每次压测通过/失败状态
 ├── result.json      # 完整机器可读结果
 ├── events.jsonl     # 结构化生命周期和进度事件
-├── images/          # 每次压测/每台相机/每个 topic 的 JPG 图像
+├── images/          # 按相机及已启用图像流归类的 JPG 图像
+│   ├── camera_01/color/image_0001.jpg
+│   ├── camera_01/depth/image_0001.jpg
+│   ├── camera_02/ir_left/image_0001.jpg
+│   └── camera_02/ir_right/image_0001.jpg
 ├── exports/         # 每次压测/每台相机的导出 JSON 和失败 diff
 ├── logs/test_XXXX/<camera>/<camera>.launch.log  # 每轮 ROS launch 日志
 └── logs/test_XXXX/<camera>/sdk/Log/<camera>/  # 每轮相机 SDK debug 日志
 ```
+
+每台相机的每个流独立编号，并在后续压测轮次继续递增；已有图片不会被覆盖。

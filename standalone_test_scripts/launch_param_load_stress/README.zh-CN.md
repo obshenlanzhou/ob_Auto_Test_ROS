@@ -120,11 +120,13 @@ launch_param_load_stress/results/YYYYMMDD_HHMMSS_launch_param_load_stress/
 ├── test_0002/
 │   └── ...
 ├── images/                # 仅在 --save-image-count > 0 时生成
-│   ├── test_0001/
-│   │   └── camera1/<topic>/image_0001.jpg
-│   └── test_0002/
-│       └── ...
+│   ├── camera_01/color/image_0001.jpg
+│   ├── camera_01/depth/image_0001.jpg
+│   ├── camera_02/ir_left/image_0001.jpg
+│   └── camera_02/ir_right/image_0001.jpg
 ├── summary.md             # 每轮通过/失败汇总
 ├── events.jsonl           # 结构化生命周期和进度事件
 └── result.json            # 所有轮次的机器可读结果
 ```
+
+每台相机的每个流独立编号，并在后续压测轮次继续递增；已有图片不会被覆盖。

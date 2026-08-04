@@ -123,5 +123,11 @@ preset_upgrade_stress_test/results/YYYYMMDD_HHMMSS_preset_upgrade/
 ├── logs/test_XXXX/<camera>/upgrade.log     # firmware_update_tool 输出
 ├── logs/test_XXXX/<camera>/<camera>.launch.log  # launch 输出
 ├── logs/test_XXXX/<camera>/sdk/Log/         # 升级工具及相机 SDK debug 日志
-└── images/test_XXXX/<camera>/             # 保存的 JPG 图像（启用存图时）
+└── images/                                # 按相机及已启用图像流归类的 JPG 图像
+    ├── camera_01/color/image_0001.jpg
+    ├── camera_01/depth/image_0001.jpg
+    ├── camera_02/ir_left/image_0001.jpg
+    └── camera_02/ir_right/image_0001.jpg
 ```
+
+每台相机的每个流独立编号，并在后续压测轮次继续递增；已有图片不会被覆盖。

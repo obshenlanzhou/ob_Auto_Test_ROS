@@ -38,7 +38,7 @@ else:
 
 ENV_READY_VAR = "LAUNCH_PARAM_LOAD_STRESS_ENV_READY"
 INTERRUPTED = False
-TOOL_VERSION = "1.0"
+TOOL_VERSION = "1.1"
 TEST_ID = "launch_param_load_stress"
 DEFAULT_STRESS_LAUNCH_ARGS = {
     "enable_heartbeat": "true",
@@ -700,6 +700,58 @@ def sanitize_path_part(value: str) -> str:
     return "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in text)
 
 
+STREAM_DIRECTORY_NAMES = {
+    "color": "color",
+    "depth": "depth",
+    "ir": "ir",
+    "left_ir": "ir_left",
+    "right_ir": "ir_right",
+    "left_color": "color_left",
+    "right_color": "color_right",
+}
+IMAGE_FILE_PATTERN = re.compile(r"^image_(\d+)\.jpg$", re.IGNORECASE)
+
+
+def image_stream_name(topic: str) -> str:
+    """Return the stable image directory name represented by a ROS topic."""
+    parts = [part for part in topic.strip().split("/") if part]
+    for part in reversed(parts):
+        if part in STREAM_DIRECTORY_NAMES:
+            return STREAM_DIRECTORY_NAMES[part]
+    for index, part in enumerate(parts):
+        if part.startswith("image") and index > 0:
+            return sanitize_path_part(parts[index - 1])
+    return sanitize_path_part(parts[-1] if parts else topic)
+
+
+class ImagePathSequence:
+    """Allocate non-overwriting paths per camera and stream."""
+
+    def __init__(self, output_root: Path) -> None:
+        self.output_root = output_root
+        self._next_indices: Dict[tuple[str, str], int] = {}
+
+    def next_path(self, topic: str, camera_name: str) -> Path:
+        stream_name = image_stream_name(topic)
+        safe_camera_name = sanitize_path_part(camera_name or "unknown_camera")
+        sequence_key = (safe_camera_name, stream_name)
+        stream_dir = ensure_dir(self.output_root / safe_camera_name / stream_name)
+        next_index = self._next_indices.get(sequence_key)
+        if next_index is None:
+            existing_indices = [
+                int(match.group(1))
+                for path in stream_dir.iterdir()
+                if path.is_file() and (match := IMAGE_FILE_PATTERN.match(path.name))
+            ]
+            next_index = max(existing_indices, default=0) + 1
+        target = stream_dir / f"image_{next_index:04d}.jpg"
+        while target.exists():
+            next_index += 1
+            target = stream_dir / f"image_{next_index:04d}.jpg"
+        self._next_indices[sequence_key] = next_index + 1
+        return target
+
+
 class RosImageHarness:
     def __init__(self, ros_version: str, node_name: str, queue_size: int = 10) -> None:
         self.ros_version = str(ros_version)
@@ -791,18 +843,21 @@ class ImageCaptureMonitor:
         self,
         *,
         harness: RosImageHarness,
+        camera_name: str,
         topics: List[str],
         output_root: Path,
         save_images_count: int,
         jpg_quality: int,
     ) -> None:
         self.harness = harness
+        self.camera_name = camera_name
         self.save_images_count = save_images_count
         self.jpg_quality = jpg_quality
         self.output_root = output_root
         self.state: Dict[str, Dict[str, Any]] = {}
         self._bridge = None
         self._cv2 = None
+        self._image_paths = ImagePathSequence(output_root)
         for topic in topics:
             self.state[topic] = {"saved_files": [], "first_at": None}
             harness.create_subscription(
@@ -847,8 +902,7 @@ class ImageCaptureMonitor:
             return
         if len(item["saved_files"]) >= self.save_images_count:
             return
-        topic_dir = self.output_root / sanitize_path_part(topic)
-        target = topic_dir / f"image_{len(item['saved_files']) + 1:04d}.jpg"
+        target = self._image_paths.next_path(topic, self.camera_name)
         self._write_jpg(message, target)
         item["saved_files"].append(str(target))
 
@@ -891,6 +945,7 @@ def save_topic_images(
         with RosImageHarness(ros_version, node_name) as harness:
             monitor = ImageCaptureMonitor(
                 harness=harness,
+                camera_name=camera_name,
                 topics=enabled_topics,
                 output_root=output_root,
                 save_images_count=save_images_count,
@@ -1205,7 +1260,7 @@ def _check_one_camera(
             ros_version=ros_version,
             camera_name=camera_name,
             yaml_params=yaml_params,
-            output_root=images_dir / sanitize_path_part(camera_name),
+            output_root=images_dir,
             save_images_count=save_images_count,
             jpg_quality=jpg_quality,
             timeout=topic_timeout,
@@ -1370,7 +1425,7 @@ def run(args) -> int:
                     wait_for_launch_start(session, startup_timeout, emit=emit)
 
                 # Check each camera
-                images_dir = results_dir / "images" / test_name if save_images_count > 0 else None
+                images_dir = results_dir / "images" if save_images_count > 0 else None
                 for camera, session, yaml_params in zip(cameras, sessions, yaml_params_list):
                     emit(f"checking camera: {camera.name}")
                     cam = _check_one_camera(
