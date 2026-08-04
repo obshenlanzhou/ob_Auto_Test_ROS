@@ -32,7 +32,7 @@ from _test_protocol import (
 ENV_READY_VAR = "PRESET_UPGRADE_STRESS_TEST_ENV_READY"
 INTERRUPTED = False
 SCRIPT_DIR = Path(__file__).resolve().parent
-TOOL_VERSION = "1.2"
+TOOL_VERSION = "1.3"
 TEST_ID = "preset_upgrade_stress_test"
 DEFAULT_STRESS_LAUNCH_ARGS = {
     "enable_heartbeat": "true",
@@ -40,10 +40,6 @@ DEFAULT_STRESS_LAUNCH_ARGS = {
 }
 DEFAULT_PRESET_A_PATH = SCRIPT_DIR / "config" / "g336x_K_High_Confidence_0.0.2.bin"
 DEFAULT_PRESET_B_PATH = SCRIPT_DIR / "config" / "g336x_K_High_Accuracy_0.0.2.bin"
-DEFAULT_IMAGE_TOPIC_TEMPLATES = [
-    "/{camera}/color/image_raw",
-    "/{camera}/depth/image_raw",
-]
 DEFAULT_LAUNCH = {
     "1": "gemini_330_series.launch",
     "2": "gemini_330_series.launch.py",
@@ -476,6 +472,17 @@ class RosImageHarness:
         self.subscriptions.append(sub)
         return sub
 
+    def get_topic_names_and_types(self) -> Dict[str, List[str]]:
+        if self.ros_version == "2":
+            return {
+                topic_name: list(type_names)
+                for topic_name, type_names in self.node.get_topic_names_and_types()
+            }
+        return {
+            topic_name: [type_name]
+            for topic_name, type_name in self._rospy.get_published_topics(namespace="/")
+        }
+
     def destroy_subscription(self, subscription) -> None:
         if self.ros_version == "2":
             self.node.destroy_subscription(subscription)
@@ -512,6 +519,59 @@ class RosImageHarness:
                     subscription.unregister()
                 except Exception:
                     pass
+
+
+def camera_for_topic(topic: str, camera_names: List[str]) -> Optional[str]:
+    normalized_topic = "/" + topic.strip("/")
+    for camera_name in sorted(camera_names, key=len, reverse=True):
+        camera_prefix = "/" + camera_name.strip("/")
+        if normalized_topic.startswith(camera_prefix + "/"):
+            return camera_name
+    return None
+
+
+def discover_image_topics(
+    *,
+    harness: RosImageHarness,
+    camera_names: List[str],
+    sessions: List[LaunchSession],
+    timeout: float,
+    settle_seconds: float = 1.0,
+) -> tuple[List[str], Dict[str, str]]:
+    """Discover stable raw image topics within every configured camera namespace."""
+    image_types = {"sensor_msgs/msg/Image", "sensor_msgs/Image"}
+    deadline = time.monotonic() + timeout
+    last_topics: List[str] = []
+    unchanged_since: Optional[float] = None
+    latest_topic_cameras: Dict[str, str] = {}
+    while time.monotonic() < deadline:
+        for session in sessions:
+            session.assert_running()
+        topic_cameras: Dict[str, str] = {}
+        for topic, type_names in harness.get_topic_names_and_types().items():
+            if not any(type_name in image_types for type_name in type_names):
+                continue
+            camera_name = camera_for_topic(topic, camera_names)
+            if camera_name is not None:
+                topic_cameras[topic] = camera_name
+        topics = sorted(topic_cameras)
+        now = time.monotonic()
+        if topics != last_topics:
+            last_topics = topics
+            latest_topic_cameras = topic_cameras
+            unchanged_since = now
+        covered_cameras = set(latest_topic_cameras.values())
+        if (
+            topics
+            and covered_cameras == set(camera_names)
+            and unchanged_since is not None
+            and now - unchanged_since >= settle_seconds
+        ):
+            return topics, latest_topic_cameras
+        harness.spin_once(0.1)
+    missing = sorted(set(camera_names) - set(latest_topic_cameras.values()))
+    detail = f"; no image topics for: {', '.join(missing)}" if missing else ""
+    raise TimeoutError(f"image topic discovery timed out after {timeout:.1f}s{detail}")
 
 
 def _valid_image(message: Any) -> bool:
@@ -916,7 +976,8 @@ def run(args) -> int:
     presets = normalize_preset_specs(args)
     launch_file = select_launch_file(args)
     base_launch_args = build_base_launch_args(args)
-    image_topic_templates = args.image_topic or DEFAULT_IMAGE_TOPIC_TEMPLATES
+    image_topic_templates = [topic.strip() for topic in args.image_topic if topic.strip()]
+    auto_discover_image_topics = not image_topic_templates
     topics = [
         expand_camera_template(topic_template.strip(), camera.name)
         for camera in cameras
@@ -967,7 +1028,10 @@ def run(args) -> int:
     emit(f"results dir: {results_dir}")
     emit(f"run count: {run_count if run_count is not None else 'duration-limited'}")
     emit(f"cameras: {', '.join(camera.name for camera in cameras)}")
-    emit(f"monitor topics: {', '.join(topics)}")
+    if auto_discover_image_topics:
+        emit("monitor topics: auto-discover all published image streams")
+    else:
+        emit(f"monitor topics: {', '.join(topics)}")
     emit(f"save images per topic: {save_images_count}")
     start_monotonic = time.monotonic()
     deadline = (
@@ -1131,6 +1195,18 @@ def run(args) -> int:
                         if not ok:
                             raise RuntimeError(f"{session.camera_name}: {message}")
 
+                    if auto_discover_image_topics:
+                        topics, topic_cameras = discover_image_topics(
+                            harness=harness,
+                            camera_names=[camera.name for camera in cameras],
+                            sessions=sessions,
+                            timeout=stream_timeout,
+                        )
+                        result["image_topics"] = sorted(
+                            set(result["image_topics"]) | set(topics)
+                        )
+                        emit(f"{test_name}: discovered image topics: {', '.join(topics)}")
+
                     ok, image_snapshot, image_message = wait_for_images(
                         sessions=sessions,
                         harness=harness,
@@ -1291,7 +1367,10 @@ def parse_args():
         "--image-topic",
         action="append",
         default=[],
-        help="Image topic to monitor/save; can repeat. Supports {camera}.",
+        help=(
+            "Image topic to monitor/save; can repeat and supports {camera}. "
+            "When omitted, all published image streams under each camera are discovered."
+        ),
     )
     parser.add_argument("--queue-size", type=int, default=10)
     parser.add_argument("--results-dir", default="")

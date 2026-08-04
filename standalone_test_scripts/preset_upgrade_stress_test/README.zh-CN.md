@@ -74,19 +74,13 @@ python3 ./preset_upgrade_stress_test/preset_upgrade_stress_test.py \
 | `--duration` | `300` | 最长运行时间，支持 `300`、`15m`、`2h` |
 | `--save-image-count` | `1` | 每轮每个 topic 保存的图片数（`0` = 不存图） |
 | `--jpg-quality` | `95` | 保存图片的 JPEG 压缩质量（1–100） |
-| `--image-topic` | color + depth | 监控的 topic，可重复传入；`{camera}` 自动展开为各相机名 |
+| `--image-topic` | 自动发现 | 指定后只监控并保存这些 topic，可重复传入并支持 `{camera}` |
 | `--launch-arg` | — | 额外 launch 参数（如 `enable_left_ir=true`），可重复传入 |
 | `--restart-delay` | `2` | launch 关闭后、切换到下一份 preset 前的等待秒数（`0` = 不额外等待） |
 | `--sdk-log-level` | `debug` | preset 升级工具和相机 launch 的 SDK 日志级别 |
 
-默认监控 topic：
-
-```text
-/{camera}/color/image_raw
-/{camera}/depth/image_raw
-```
-
-监控非默认流时，同时传入 `--image-topic` 和对应的 `--launch-arg`：
+默认自动发现每个相机命名空间下所有已发布的 `sensor_msgs/Image` 图像流。
+需要限制存图范围时，同时传入 `--image-topic` 和对应的 `--launch-arg`：
 
 ```bash
 --image-topic /{camera}/left_ir/image_raw \

@@ -62,17 +62,11 @@ python3 ./export_load_stress_test/export_load_stress_test.py \
 | `--duration` | 空 | 可选的最长运行时间；任一已配置上限先达到即结束 |
 | `--sdk-log-level` | `debug` | Orbbec SDK 日志级别 |
 | `--save-image-count` | `1` | 每轮每个 topic 保存的图片数（`0` = 不存图） |
-| `--image-topic` | color + depth | 监控和存图的 topic，可重复传入 |
+| `--image-topic` | 自动发现 | 指定后只监控并保存这些 topic，可重复传入 |
 | `--config-json` | 见配置文件 | 交替使用的 JSON 文件，可重复传入 |
 
-默认监控 topic：
-
-```text
-/{camera}/color/image_raw
-/{camera}/depth/image_raw
-```
-
-重复传入 `--image-topic` 可增加其他流：
+默认自动发现每个相机命名空间下所有已发布的 `sensor_msgs/Image` 图像流。
+重复传入 `--image-topic` 后，将只监控并保存显式指定的流：
 
 ```bash
 --image-topic /{camera}/color/image_raw \

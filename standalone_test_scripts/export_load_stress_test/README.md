@@ -64,17 +64,12 @@ python3 ./export_load_stress_test/export_load_stress_test.py \
 | `--duration` | empty | Optional maximum wall time; the first configured limit reached stops the run |
 | `--sdk-log-level` | `debug` | Orbbec SDK log level |
 | `--save-image-count` | `1` | Images saved per topic per test (`0` = disabled) |
-| `--image-topic` | color + depth | Topics to monitor and save; repeatable |
+| `--image-topic` | auto-discovered | When specified, only these topics are monitored and saved; repeatable |
 | `--config-json` | see Config File | JSON files to alternate; repeatable |
 
-Default monitored topics:
-
-```text
-/{camera}/color/image_raw
-/{camera}/depth/image_raw
-```
-
-Pass `--image-topic` repeatedly to monitor additional streams:
+By default, every published `sensor_msgs/Image` stream under each configured
+camera namespace is discovered. Pass `--image-topic` repeatedly to restrict
+monitoring and saving to an explicit set:
 
 ```bash
 --image-topic /{camera}/color/image_raw \

@@ -15,6 +15,7 @@
     {"name": "run_count", "option": "--run-count", "type": "integer", "label": "最大循环次数", "label_en": "Run Count", "group": "limits", "section": "basic", "default": "1", "min": 1},
     {"name": "duration", "option": "--duration", "type": "duration", "label": "最长运行时间", "label_en": "Duration", "group": "limits", "section": "basic", "default": ""},
     {"name": "save_image_count", "option": "--save-image-count", "type": "integer", "label": "每话题存图数", "label_en": "Images per Topic", "group": "configuration", "section": "basic", "default": "1", "min": 0},
+    {"name": "image_topics", "option": "--image-topic", "type": "list", "label": "存图话题", "label_en": "Image Topics", "group": "configuration", "section": "basic", "default": [], "placeholder": "留空则自动发现全部图像流\n/{camera}/color/image_raw"},
     {"name": "launch_package", "option": "--launch-package", "type": "text", "label": "Launch 包", "label_en": "Launch Package", "group": "advanced", "section": "advanced", "default": "orbbec_camera"},
     {"name": "launch_args", "option": "--launch-arg", "type": "list", "label": "附加 Launch 参数", "label_en": "Launch Arguments", "group": "advanced", "section": "advanced", "default": ["enable_heartbeat=true", "enable_firmware_log=true"], "placeholder": "enable_heartbeat=true\nenable_firmware_log=true"},
     {"name": "sdk_log_level", "option": "--sdk-log-level", "type": "select", "label": "SDK 日志级别", "label_en": "SDK Log Level", "group": "advanced", "section": "advanced", "default": "debug", "choices": ["debug", "info", "warn", "error", "fatal", "none"]},

@@ -83,10 +83,14 @@ python3 ./launch_param_load_stress/launch_param_load_stress.py \
 | `--startup-timeout SECS` | `30` | 等待设备初始化完成的最大秒数 |
 | `--topic-timeout SECS` | `20` | 等待每个已启用流 topic 的最大秒数 |
 | `--service-timeout SECS` | `15` | 每次参数/service 查询的最大秒数 |
-| `--save-image-count N` | `1` | 每台相机每个已启用流保存的图片数（`0` = 不存图） |
+| `--save-image-count N` | `1` | 每台相机每个选中流保存的图片数（`0` = 不存图） |
+| `--image-topic` | 自动发现 | 指定后只保存这些 topic，可重复传入并支持 `{camera}` |
 | `--jpg-quality Q` | `80` | 保存图片的 JPEG 压缩质量（1–100） |
 | `--skip-topic-check` | — | 跳过图像 topic 验证 |
 | `--skip-service-check` | — | 跳过 getter service 验证 |
+
+默认自动发现每个相机命名空间下所有已发布的 `sensor_msgs/Image` 图像流。
+传入一个或多个 `--image-topic` 后，将只保存显式指定的 topic。
 
 ### 配置文件
 

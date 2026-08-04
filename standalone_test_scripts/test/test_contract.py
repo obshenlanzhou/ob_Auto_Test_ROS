@@ -373,3 +373,52 @@ def test_image_saving_uses_stream_directories_and_continuing_indices(tmp_path):
         assert second == output_root / "camera_01" / "depth" / "image_0005.jpg"
         assert color == output_root / "camera_01" / "color" / "image_0001.jpg"
         assert other_camera == output_root / "camera_02" / "depth" / "image_0001.jpg"
+
+
+def test_default_image_discovery_finds_all_raw_streams_per_camera():
+    topic_types = {
+        "/camera_01/color/image_raw": ["sensor_msgs/msg/Image"],
+        "/camera_01/depth/image_raw": ["sensor_msgs/msg/Image"],
+        "/camera_01/left_ir/image_raw": ["sensor_msgs/msg/Image"],
+        "/camera_02/right_ir/image_raw": ["sensor_msgs/Image"],
+        "/camera_01/color/image_raw/compressed": ["sensor_msgs/msg/CompressedImage"],
+        "/unrelated/image_raw": ["sensor_msgs/msg/Image"],
+    }
+
+    class FakeHarness:
+        def get_topic_names_and_types(self):
+            return topic_types
+
+        def spin_once(self, _timeout):
+            pass
+
+    class FakeSession:
+        def assert_running(self):
+            pass
+
+    expected_topics = [
+        "/camera_01/color/image_raw",
+        "/camera_01/depth/image_raw",
+        "/camera_01/left_ir/image_raw",
+        "/camera_02/right_ir/image_raw",
+    ]
+    for test_id in ("export_load", "preset_upgrade"):
+        module = load_script(SCRIPTS[test_id])
+        topics, topic_cameras = module.discover_image_topics(
+            harness=FakeHarness(),
+            camera_names=["camera_01", "camera_02"],
+            sessions=[FakeSession(), FakeSession()],
+            timeout=0.1,
+            settle_seconds=0.0,
+        )
+        assert topics == expected_topics
+        assert topic_cameras["/camera_01/left_ir/image_raw"] == "camera_01"
+        assert topic_cameras["/camera_02/right_ir/image_raw"] == "camera_02"
+
+    module = load_script(SCRIPTS["launch_param_load"])
+    assert module.discover_image_topics(
+        harness=FakeHarness(),
+        camera_name="camera_01",
+        timeout=0.1,
+        settle_seconds=0.0,
+    ) == expected_topics[:3]

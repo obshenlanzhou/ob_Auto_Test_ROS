@@ -85,10 +85,15 @@ python3 ./launch_param_load_stress/launch_param_load_stress.py \
 | `--startup-timeout SECS` | `30` | Max wait for device initialization |
 | `--topic-timeout SECS` | `20` | Max wait for each enabled stream topic |
 | `--service-timeout SECS` | `15` | Max wait for each param/service query |
-| `--save-image-count N` | `1` | Images saved per enabled topic per camera (`0` = disabled) |
+| `--save-image-count N` | `1` | Images saved per selected topic per camera (`0` = disabled) |
+| `--image-topic` | auto-discovered | When specified, only these topics are saved; repeatable, supports `{camera}` |
 | `--jpg-quality Q` | `80` | JPEG quality for saved images (1–100) |
 | `--skip-topic-check` | — | Skip image topic verification |
 | `--skip-service-check` | — | Skip getter service verification |
+
+By default, image saving discovers every published `sensor_msgs/Image` stream
+under each configured camera namespace. Supplying one or more `--image-topic`
+values restricts saving to exactly those topics.
 
 ### Config File
 

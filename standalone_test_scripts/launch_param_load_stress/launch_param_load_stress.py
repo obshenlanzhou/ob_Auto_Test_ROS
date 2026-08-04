@@ -38,7 +38,7 @@ else:
 
 ENV_READY_VAR = "LAUNCH_PARAM_LOAD_STRESS_ENV_READY"
 INTERRUPTED = False
-TOOL_VERSION = "1.1"
+TOOL_VERSION = "1.2"
 TEST_ID = "launch_param_load_stress"
 DEFAULT_STRESS_LAUNCH_ARGS = {
     "enable_heartbeat": "true",
@@ -801,6 +801,17 @@ class RosImageHarness:
         self.subscriptions.append(sub)
         return sub
 
+    def get_topic_names_and_types(self) -> Dict[str, List[str]]:
+        if self.ros_version == "2":
+            return {
+                topic_name: list(type_names)
+                for topic_name, type_names in self.node.get_topic_names_and_types()
+            }
+        return {
+            topic_name: [type_name]
+            for topic_name, type_name in self._rospy.get_published_topics(namespace="/")
+        }
+
     def spin_once(self, timeout_sec: float) -> None:
         if self.ros_version == "2":
             self._rclpy.spin_once(self.node, timeout_sec=timeout_sec)
@@ -829,6 +840,42 @@ class RosImageHarness:
                     sub.unregister()
                 except Exception:
                     pass
+
+
+def discover_image_topics(
+    *,
+    harness: RosImageHarness,
+    camera_name: str,
+    timeout: float,
+    settle_seconds: float = 1.0,
+) -> List[str]:
+    """Discover stable raw image topics within one camera namespace."""
+    image_types = {"sensor_msgs/msg/Image", "sensor_msgs/Image"}
+    camera_prefix = "/" + camera_name.strip("/") + "/"
+    deadline = time.monotonic() + timeout
+    last_topics: List[str] = []
+    unchanged_since: Optional[float] = None
+    while time.monotonic() < deadline:
+        topics = sorted(
+            topic
+            for topic, type_names in harness.get_topic_names_and_types().items()
+            if ("/" + topic.strip("/")).startswith(camera_prefix)
+            and any(type_name in image_types for type_name in type_names)
+        )
+        now = time.monotonic()
+        if topics != last_topics:
+            last_topics = topics
+            unchanged_since = now
+        if (
+            topics
+            and unchanged_since is not None
+            and now - unchanged_since >= settle_seconds
+        ):
+            return topics
+        harness.spin_once(0.1)
+    raise TimeoutError(
+        f"image topic discovery for {camera_name} timed out after {timeout:.1f}s"
+    )
 
 
 def _valid_image(message: Any) -> bool:
@@ -925,28 +972,36 @@ def save_topic_images(
     *,
     ros_version: str,
     camera_name: str,
-    yaml_params: Dict[str, Any],
+    image_topic_templates: List[str],
     output_root: Path,
     save_images_count: int,
     jpg_quality: int,
     timeout: float,
     emit: StatusLogger,
-) -> List[str]:
-    enabled_topics = [
-        topic_template.format(camera=camera_name)
-        for key, topic_template in STREAM_TOPIC_MAP.items()
-        if key in yaml_params and bool(normalize_value(yaml_params[key]))
-    ]
-    if not enabled_topics:
-        return []
+) -> tuple[List[str], List[str]]:
     emit(f"[IMAGE] saving up to {save_images_count} image(s) per topic for {camera_name}")
     node_name = f"launch_param_load_stress_{camera_name}".replace("-", "_")
     try:
         with RosImageHarness(ros_version, node_name) as harness:
+            if image_topic_templates:
+                image_topics = [
+                    topic_template.replace("{camera}", camera_name).replace(
+                        "${camera}", camera_name
+                    )
+                    for topic_template in image_topic_templates
+                ]
+                emit(f"[IMAGE] configured topics for {camera_name}: {', '.join(image_topics)}")
+            else:
+                image_topics = discover_image_topics(
+                    harness=harness,
+                    camera_name=camera_name,
+                    timeout=timeout,
+                )
+                emit(f"[IMAGE] discovered topics for {camera_name}: {', '.join(image_topics)}")
             monitor = ImageCaptureMonitor(
                 harness=harness,
                 camera_name=camera_name,
-                topics=enabled_topics,
+                topics=image_topics,
                 output_root=output_root,
                 save_images_count=save_images_count,
                 jpg_quality=jpg_quality,
@@ -956,10 +1011,10 @@ def save_topic_images(
                 harness.spin_once(0.1)
             saved = monitor.saved_files()
             emit(f"[IMAGE] saved {len(saved)} image(s) for {camera_name}")
-            return saved
+            return saved, image_topics
     except Exception as exc:  # noqa: BLE001
         emit(f"[IMAGE][WARN] image saving failed for {camera_name}: {exc}")
-        return []
+        return [], []
 
 
 def list_services(ros_version: str, env: Dict[str, str], timeout: float) -> set[str]:
@@ -1212,6 +1267,7 @@ def _check_one_camera(
     skip_topic_check: bool,
     skip_service_check: bool,
     save_images_count: int,
+    image_topic_templates: List[str],
     jpg_quality: int,
     images_dir: Optional[Path],
     emit: StatusLogger,
@@ -1221,6 +1277,7 @@ def _check_one_camera(
         "param_checks": [],
         "topic_checks": [],
         "service_checks": [],
+        "image_topics": [],
         "saved_images": [],
     }
     cam["param_checks"] = check_params(
@@ -1256,10 +1313,10 @@ def _check_one_camera(
             emit=emit,
         )
     if save_images_count > 0 and images_dir is not None:
-        cam["saved_images"] = save_topic_images(
+        cam["saved_images"], cam["image_topics"] = save_topic_images(
             ros_version=ros_version,
             camera_name=camera_name,
-            yaml_params=yaml_params,
+            image_topic_templates=image_topic_templates,
             output_root=images_dir,
             save_images_count=save_images_count,
             jpg_quality=jpg_quality,
@@ -1333,6 +1390,7 @@ def run(args) -> int:
         parse_duration(args.duration, 0.0) if str(args.duration or "").strip() else None
     )
     save_images_count = args.save_image_count
+    image_topic_templates = [topic.strip() for topic in args.image_topic if topic.strip()]
     jpg_quality = args.jpg_quality
 
     run_id = datetime.now().strftime("%Y%m%d_%H%M%S_launch_param_load_stress")
@@ -1351,6 +1409,8 @@ def run(args) -> int:
         "launch_package": args.launch_package,
         "launch_file": args.launch_file,
         "sdk_log_level": args.sdk_log_level,
+        "image_topic_mode": "explicit" if image_topic_templates else "auto-discover",
+        "configured_image_topics": image_topic_templates,
         "notes": [declaration_note],
         "run_count": run_count,
         "duration_limit_seconds": duration_seconds,
@@ -1365,6 +1425,10 @@ def run(args) -> int:
     emit(f"cameras: {', '.join(c.name for c in cameras)}")
     emit(f"run count: {run_count}")
     emit(f"SDK log level: {args.sdk_log_level}")
+    if image_topic_templates:
+        emit(f"save image topics: {', '.join(image_topic_templates)}")
+    else:
+        emit("save image topics: auto-discover all published image streams")
 
     test_start_monotonic = time.monotonic()
     deadline = (
@@ -1440,6 +1504,7 @@ def run(args) -> int:
                         skip_topic_check=args.skip_topic_check,
                         skip_service_check=args.skip_service_check,
                         save_images_count=save_images_count,
+                        image_topic_templates=image_topic_templates,
                         jpg_quality=jpg_quality,
                         images_dir=images_dir,
                         emit=emit,
@@ -1579,11 +1644,20 @@ def parse_args():
     parser.add_argument("--skip-topic-check", action="store_true")
     parser.add_argument("--skip-service-check", action="store_true")
     parser.add_argument(
+        "--image-topic",
+        action="append",
+        default=[],
+        help=(
+            "Image topic to save; can repeat and supports {camera}. "
+            "When omitted, all published image streams under each camera are discovered."
+        ),
+    )
+    parser.add_argument(
         "--save-image-count",
         type=int,
         default=1,
         metavar="N",
-        help="Save N images per enabled stream topic per camera (0 = disabled)",
+        help="Save N images per selected stream topic per camera (0 = disabled)",
     )
     parser.add_argument(
         "--jpg-quality",

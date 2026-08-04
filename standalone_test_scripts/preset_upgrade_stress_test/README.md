@@ -77,20 +77,14 @@ python3 ./preset_upgrade_stress_test/preset_upgrade_stress_test.py \
 | `--duration` | `300` | Maximum wall time; supports `300`, `15m`, and `2h` |
 | `--save-image-count` | `1` | Images saved per topic per test (`0` = disabled) |
 | `--jpg-quality` | `95` | JPEG quality for saved images (1–100) |
-| `--image-topic` | color + depth | Topics to monitor; repeatable, `{camera}` expands to each camera name |
+| `--image-topic` | auto-discovered | When specified, only these topics are monitored and saved; repeatable, supports `{camera}` |
 | `--launch-arg` | — | Extra launch argument (e.g. `enable_left_ir=true`); repeatable |
 | `--restart-delay` | `2` | Delay in seconds after launch stops and before switching presets (`0` disables the extra delay) |
 | `--sdk-log-level` | `debug` | SDK log level for the preset upgrade tool and camera launch |
 
-Default monitored topics:
-
-```text
-/{camera}/color/image_raw
-/{camera}/depth/image_raw
-```
-
-To monitor non-default streams, pass both `--image-topic` and the matching
-`--launch-arg`:
+By default, every published `sensor_msgs/Image` stream under each configured
+camera namespace is discovered. To restrict the selection, pass
+`--image-topic` together with any matching `--launch-arg` values:
 
 ```bash
 --image-topic /{camera}/left_ir/image_raw \
