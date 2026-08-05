@@ -76,6 +76,7 @@ python3 ./preset_upgrade_stress_test/preset_upgrade_stress_test.py \
 | `--jpg-quality` | `95` | 保存图片的 JPEG 压缩质量（1–100） |
 | `--image-topic` | 自动发现 | 指定后只监控并保存这些 topic，可重复传入并支持 `{camera}` |
 | `--launch-arg` | — | 额外 launch 参数（如 `enable_left_ir=true`），可重复传入 |
+| `--launch-start-interval` | `2` | 各相机 launch 之间的启动间隔秒数（`0` = 所有相机同时启动） |
 | `--restart-delay` | `2` | launch 关闭后、切换到下一份 preset 前的等待秒数（`0` = 不额外等待） |
 | `--sdk-log-level` | `debug` | preset 升级工具和相机 launch 的 SDK 日志级别 |
 

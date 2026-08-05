@@ -58,6 +58,7 @@ python3 ./export_load_stress_test/export_load_stress_test.py \
 | `--launch-file` | `gemini_330_series_sdk_json.launch.py` | launch 文件名或路径 |
 | `--camera` | 空 | 相机配置，可重复传入；格式见上文 |
 | `--launch-arg` | — | 额外的 launch 参数（如 `enable_ir=true`），可重复传入，格式 `KEY=VALUE` 或 `KEY:=VALUE` |
+| `--launch-start-interval` | `2` | 各相机 launch 之间的启动间隔秒数（`0` = 所有相机同时启动） |
 | `--run-count` | `10` | 导入导出最大轮次数 |
 | `--duration` | 空 | 可选的最长运行时间；任一已配置上限先达到即结束 |
 | `--sdk-log-level` | `debug` | Orbbec SDK 日志级别 |

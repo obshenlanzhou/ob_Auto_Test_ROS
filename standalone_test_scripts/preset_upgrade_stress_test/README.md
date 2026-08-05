@@ -79,6 +79,7 @@ python3 ./preset_upgrade_stress_test/preset_upgrade_stress_test.py \
 | `--jpg-quality` | `95` | JPEG quality for saved images (1–100) |
 | `--image-topic` | auto-discovered | When specified, only these topics are monitored and saved; repeatable, supports `{camera}` |
 | `--launch-arg` | — | Extra launch argument (e.g. `enable_left_ir=true`); repeatable |
+| `--launch-start-interval` | `2` | Delay in seconds between starting each camera launch (`0` starts all cameras at once) |
 | `--restart-delay` | `2` | Delay in seconds after launch stops and before switching presets (`0` disables the extra delay) |
 | `--sdk-log-level` | `debug` | SDK log level for the preset upgrade tool and camera launch |
 

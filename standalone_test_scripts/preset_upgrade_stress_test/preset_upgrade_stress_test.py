@@ -972,6 +972,7 @@ def run(args) -> int:
     restart_delay = float(args.restart_delay)
     if restart_delay < 0:
         raise ValueError("--restart-delay must be >= 0")
+    launch_start_interval = parse_duration(args.launch_start_interval, 2.0)
 
     presets = normalize_preset_specs(args)
     launch_file = select_launch_file(args)
@@ -1181,9 +1182,11 @@ def run(args) -> int:
                         )
                     active_sessions = sessions
 
-                    for session in sessions:
+                    for index, session in enumerate(sessions):
                         emit(f"{test_name}: start launch for {session.camera_name}")
                         session.start()
+                        if index < len(sessions) - 1:
+                            time.sleep(launch_start_interval)
 
                     for index, session in enumerate(sessions):
                         ok, message = wait_for_launch_log(
@@ -1358,6 +1361,11 @@ def parse_args():
     parser.add_argument("--save-image-count", type=int, default=1, help="Images to save per topic; 0 disables saving")
     parser.add_argument("--jpg-quality", type=int, default=95, help="JPG quality, 1-100")
     parser.add_argument("--restart-delay", default="2", help="Delay seconds after stopping launch")
+    parser.add_argument(
+        "--launch-start-interval",
+        default="2",
+        help="Delay in seconds between starting each camera launch (default: 2)",
+    )
     parser.add_argument(
         "--sdk-log-level",
         choices=("debug", "info", "warn", "error", "fatal", "off", "none"),

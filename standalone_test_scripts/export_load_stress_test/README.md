@@ -60,6 +60,7 @@ python3 ./export_load_stress_test/export_load_stress_test.py \
 | `--launch-file` | `gemini_330_series_sdk_json.launch.py` | Launch filename or path |
 | `--camera` | empty | Camera specification; repeatable, using the format shown above |
 | `--launch-arg` | — | Extra launch argument (e.g. `enable_ir=true`); repeatable, format `KEY=VALUE` or `KEY:=VALUE` |
+| `--launch-start-interval` | `2` | Delay in seconds between starting each camera launch (`0` starts all cameras at once) |
 | `--run-count` | `10` | Maximum number of import/export cycles |
 | `--duration` | empty | Optional maximum wall time; the first configured limit reached stops the run |
 | `--sdk-log-level` | `debug` | Orbbec SDK log level |

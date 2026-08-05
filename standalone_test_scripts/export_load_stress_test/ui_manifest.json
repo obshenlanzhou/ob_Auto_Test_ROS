@@ -24,6 +24,7 @@
     {"name": "stream_timeout", "option": "--stream-timeout", "type": "duration", "label": "出流超时", "label_en": "Stream Timeout", "group": "advanced", "section": "advanced", "default": "60"},
     {"name": "max_gap_seconds", "option": "--max-gap-seconds", "type": "duration", "label": "最大帧间隔", "label_en": "Maximum Frame Gap", "group": "advanced", "section": "advanced", "default": "1.5"},
     {"name": "restart_delay", "option": "--restart-delay", "type": "number", "label": "循环间隔", "label_en": "Cycle Delay", "group": "advanced", "section": "advanced", "default": "2", "min": 0},
+    {"name": "launch_start_interval", "option": "--launch-start-interval", "type": "number", "label": "相机启动间隔", "label_en": "Launch Start Interval", "group": "advanced", "section": "advanced", "default": "2", "min": 0},
     {"name": "queue_size", "option": "--queue-size", "type": "integer", "label": "队列大小", "label_en": "Queue Size", "group": "advanced", "section": "advanced", "default": "10", "min": 1},
     {"name": "save_image_timeout", "option": "--save-image-timeout", "type": "duration", "label": "存图超时", "label_en": "Image Save Timeout", "group": "advanced", "section": "advanced", "default": "30"},
     {"name": "jpg_quality", "option": "--jpg-quality", "type": "integer", "label": "JPG 质量", "label_en": "JPG Quality", "group": "advanced", "section": "advanced", "default": "95", "min": 1, "max": 100},

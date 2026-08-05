@@ -1208,6 +1208,7 @@ def run(args) -> int:
     stream_timeout = parse_duration(args.stream_timeout, 60.0)
     max_gap_seconds = parse_duration(args.max_gap_seconds, 1.5)
     restart_delay = parse_duration(args.restart_delay, 2.0)
+    launch_start_interval = parse_duration(args.launch_start_interval, 2.0)
     service_timeout = parse_duration(args.service_timeout, 30.0)
     save_image_count = int(args.save_image_count)
     if save_image_count < 0:
@@ -1360,9 +1361,11 @@ def run(args) -> int:
                     )
                 active_sessions = sessions
 
-                for session in sessions:
+                for index, session in enumerate(sessions):
                     emit(f"{test_name}: start launch for {session.camera_name}")
                     session.start()
+                    if index < len(sessions) - 1:
+                        time.sleep(launch_start_interval)
 
                 if auto_discover_image_topics:
                     image_topics, topic_cameras = discover_image_topics(
@@ -1605,6 +1608,11 @@ def parse_args():
     parser.add_argument("--stream-timeout", default="60")
     parser.add_argument("--max-gap-seconds", default="1.5")
     parser.add_argument("--restart-delay", default="2")
+    parser.add_argument(
+        "--launch-start-interval",
+        default="2",
+        help="Delay in seconds between starting each camera launch (default: 2)",
+    )
     parser.add_argument("--queue-size", type=int, default=10)
     parser.add_argument(
         "--save-image-count",

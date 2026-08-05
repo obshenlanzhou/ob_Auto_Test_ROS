@@ -1383,6 +1383,7 @@ def run(args) -> int:
     declaration_filter_enabled = bool(supported_params)
 
     startup_timeout = parse_duration(args.startup_timeout, 30.0)
+    launch_start_interval = parse_duration(args.launch_start_interval, 2.0)
     topic_timeout = parse_duration(args.topic_timeout, 20.0)
     service_timeout = parse_duration(args.service_timeout, 15.0)
     run_count = args.run_count
@@ -1457,7 +1458,7 @@ def run(args) -> int:
             sessions: List[LaunchSession] = []
             try:
                 # Start all camera launches
-                for camera in cameras:
+                for index, camera in enumerate(cameras):
                     sdk_log_file_name = f"{camera.name}.log"
                     launch_args = _build_camera_launch_args(common_launch_args, camera, shared_config_path)
                     launch_args["log_level"] = args.sdk_log_level
@@ -1482,6 +1483,8 @@ def run(args) -> int:
                     emit(f"launch {camera.name}: " + " ".join(shlex.quote(a) for a in command))
                     session.start()
                     sessions.append(session)
+                    if index < len(cameras) - 1:
+                        time.sleep(launch_start_interval)
 
                 # Wait for each camera to be ready
                 for camera, session in zip(cameras, sessions):
@@ -1631,6 +1634,11 @@ def parse_args():
         help="Orbbec SDK file log level (default: debug)",
     )
     parser.add_argument("--startup-timeout", default="30", help="Wait time before checks, supports seconds, 1m")
+    parser.add_argument(
+        "--launch-start-interval",
+        default="2",
+        help="Delay in seconds between starting each camera launch (default: 2)",
+    )
     parser.add_argument("--topic-timeout", default="20", help="Max wait time for each enabled stream topic")
     parser.add_argument("--service-timeout", default="15", help="Max wait time for each param/service command")
     parser.add_argument("--run-count", type=int, default=1, metavar="N",

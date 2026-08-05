@@ -77,6 +77,7 @@ python3 ./launch_param_load_stress/launch_param_load_stress.py \
 | `--launch-file` | 必填 | launch 文件名或路径 |
 | `--camera` | 必填 | 包含 `config-file-path` 的相机配置，可重复传入 |
 | `--launch-arg` | — | 额外的 launch 参数（如 `enable_depth=true`），可重复传入，格式 `KEY=VALUE` 或 `KEY:=VALUE` |
+| `--launch-start-interval SECS` | `2` | 各相机 launch 之间的启动间隔秒数（`0` = 所有相机同时启动） |
 | `--sdk-log-level` | `debug` | SDK 文件日志级别，可选 `debug/info/warn/error/fatal/none` |
 | `--run-count N` | `1` | 完整启动→检查→停止的最大循环次数 |
 | `--duration` | 空 | 可选的最长运行时间；任一已配置上限先达到即结束 |
