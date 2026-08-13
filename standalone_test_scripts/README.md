@@ -35,6 +35,11 @@ standalone_test_scripts/
 │   ├── README.zh-CN.md
 │   ├── launch_restart_stream_check.py
 │   └── results/                  # Generated at runtime
+├── stream_toggle_stress_test/
+│   ├── README.md
+│   ├── README.zh-CN.md
+│   ├── stream_toggle_stress_test.py
+│   └── results/                  # Generated at runtime
 ├── launch_param_load_stress/
 │   ├── README.md
 │   ├── README.zh-CN.md
@@ -104,6 +109,7 @@ not import the Web UI package.
 | Script directory | Purpose | Details |
 | --- | --- | --- |
 | [launch_restart_stream_check](launch_restart_stream_check/README.md) | Repeatedly restart a launch file and check image stream recovery | Launch restart stream stability stress test |
+| [stream_toggle_stress_test](stream_toggle_stress_test/README.md) | Toggle each selected image stream and verify global recovery | ROS1/ROS2 single- and multi-camera per-stream stress test with JPG evidence |
 | [launch_param_load_stress](launch_param_load_stress/README.md) | Stress-test launch parameter loading via `config_file_path` | Verifies ROS parameters, image topics, and getter services; supports multi-camera and repeated runs |
 | [export_load_stress_test](export_load_stress_test/README.md) | Alternate JSON import/export and compare parameters | Config JSON import/export consistency stress test |
 | [preset_upgrade_stress_test](preset_upgrade_stress_test/README.md) | Alternately update optional depth presets and verify streams | Optional depth preset upgrade stress test |
