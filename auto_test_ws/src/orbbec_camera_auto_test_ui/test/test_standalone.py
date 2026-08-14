@@ -31,9 +31,9 @@ from orbbec_camera_auto_test_ui.run_manager import (  # noqa: E402
 )
 
 
-def test_all_six_standalone_manifests_load():
+def test_all_seven_standalone_manifests_load():
     manifests = load_manifests(STANDALONE_ROOT)
-    assert len(manifests) == 6
+    assert len(manifests) == 7
     assert {item["id"] for item in manifests} == {
         "export_load_stress_test",
         "firmware_update_stress_test",
@@ -41,6 +41,7 @@ def test_all_six_standalone_manifests_load():
         "launch_param_load_stress",
         "launch_restart_stream_check",
         "preset_upgrade_stress_test",
+        "stream_toggle_stress_test",
     }
     manifests_with_launch_args = {
         manifest["id"]
@@ -52,6 +53,7 @@ def test_all_six_standalone_manifests_load():
         "launch_param_load_stress",
         "launch_restart_stream_check",
         "preset_upgrade_stress_test",
+        "stream_toggle_stress_test",
     }
     for manifest in manifests:
         for field in manifest["fields"]:

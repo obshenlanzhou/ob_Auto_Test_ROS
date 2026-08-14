@@ -28,6 +28,9 @@ SCRIPTS = {
     "preset_upgrade": ROOT
     / "preset_upgrade_stress_test"
     / "preset_upgrade_stress_test.py",
+    "stream_toggle": ROOT
+    / "stream_toggle_stress_test"
+    / "stream_toggle_stress_test.py",
 }
 PROTOCOLS = [script.parent / "_test_protocol.py" for script in SCRIPTS.values()]
 RESULT_KEYS = {
@@ -336,6 +339,10 @@ def test_camera_launch_stress_defaults_enable_heartbeat_and_firmware_log():
         "preset_upgrade": (
             'module.build_base_launch_args(type("Args", (), '
             '{"launch_arg": ["enable_heartbeat=false"]})())'
+        ),
+        "stream_toggle": (
+            'module.merge_launch_arg_overrides(module.DEFAULT_STRESS_LAUNCH_ARGS, '
+            '["enable_heartbeat=false"])'
         ),
     }
     for test_id, expression in expressions.items():
