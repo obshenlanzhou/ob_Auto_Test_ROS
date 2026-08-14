@@ -42,9 +42,9 @@ profile 校验，例如 `MJPG`、`RGB888`、`YUYV`、`Y8`、`Y16`。由于多个
 
 ```text
 关闭目标流
-  → 目标流连续 2 秒无图像，同时全部其他目标流连续稳定 5 秒
+  → 保持关流 4 秒：目标流持续无图像，同时全部其他目标流持续稳定
   → 重新开启目标流
-  → 全部目标流连续稳定 5 秒
+  → 开流并连续预览、验证全部目标流 4 秒
   → 保存当前目标流图像
 ```
 
@@ -52,9 +52,9 @@ profile 校验，例如 `MJPG`、`RGB888`、`YUYV`、`Y8`、`Y16`。由于多个
 
 ```text
 依次调用所有目标相机的 set_streams_enable(false)
-  → 全部目标图像流连续 2 秒无图像
+  → 保持关流 4 秒，全部目标图像流持续无图像
   → 依次调用 set_streams_enable(true)
-  → 全部目标图像流连续稳定 5 秒
+  → 开流并连续预览、验证全部目标图像流 4 秒
   → 为每路目标流保存图像
 ```
 
@@ -186,6 +186,10 @@ python3 ./stream_toggle_stress_test/stream_toggle_stress_test.py \
 ROS encoding 必须不同。不在 A/B 配置中的其他目标流不会改变 profile，但仍参与全局
 稳定性检查。
 
+`--stream-off-seconds` 和 `--stream-on-preview-seconds` 分别控制关流保持时间、开流后的
+预览验证时间，默认均为 4 秒，可独立配置任意正数，裸数字单位为秒。旧参数
+`--stop-stable-seconds`、`--stable-seconds` 仍分别作为兼容别名。
+
 ## 循环、重试与停止
 
 逐路模式的一个完整循环表示所有目标流各完成一次“关闭→验证→开启→验证→存图”；
@@ -213,15 +217,15 @@ ROS encoding 必须不同。不在 A/B 配置中的其他目标流不会改变 p
 | `--camera` | 空 | 单相机 launch 参数，最多一个 |
 | `--image-topic` | 自动发现 | 严格指定目标原始图像流，可重复传入 |
 | `--toggle-mode` | `individual` | `individual` 逐路开关（ROS1/ROS2）；`all` 整体开关（当前仅 ROS2） |
-| `--switch-stream-profile` | `0` | `0` 不切换；`1` 在 A/B 两组分辨率和帧率间交替切换 |
+| `--switch-stream-profile` | `0` | `0` 不切换；`1` 在 A/B 两组分辨率、帧率和格式间交替切换 |
 | `--stream-profile-a` | 空 | A 组配置，格式 `TOPIC=WIDTHxHEIGHT@FPS[:FORMAT]`，可重复传入 |
 | `--stream-profile-b` | 空 | B 组配置，格式同上，话题集合必须与 A 组相同 |
 | `--duration` | `300` | 最长运行时间，支持 `15m`、`2h` |
 | `--run-count` | 空 | 最大完整循环数 |
 | `--topic-discovery-timeout` | `30` | 话题/服务发现最长等待时间 |
 | `--topic-discovery-settle` | `2` | 自动发现无新增目标的静默窗口 |
-| `--stop-stable-seconds` | `2` | 目标流无图像的停流确认窗口 |
-| `--stable-seconds` | `5` | 恢复后连续稳定出流时间 |
+| `--stream-off-seconds` | `4` | 关流保持与连续验证时间，裸数字单位为秒；兼容别名 `--stop-stable-seconds` |
+| `--stream-on-preview-seconds` | `4` | 开流后的预览与连续稳定验证时间；兼容别名 `--stable-seconds` |
 | `--stream-timeout` | `20` | 每个关闭/开启状态验证超时 |
 | `--max-gap-seconds` | `1.5` | 稳定窗口内最大帧接收间隔 |
 | `--service-timeout` | `15` | 单次 toggle 服务调用超时 |

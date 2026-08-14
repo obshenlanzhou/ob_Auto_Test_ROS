@@ -30,7 +30,7 @@ from _test_protocol import (
 
 ENV_READY_VAR = "STREAM_TOGGLE_STRESS_TEST_ENV_READY"
 INTERRUPTED = False
-TOOL_VERSION = "1.2"
+TOOL_VERSION = "1.3"
 TEST_ID = "stream_toggle_stress_test"
 DEFAULT_STRESS_LAUNCH_ARGS = {
     "enable_heartbeat": "true",
@@ -1697,6 +1697,8 @@ def build_summary(result: Dict[str, Any]) -> str:
         f"{'enabled' if result.get('profile_switch_enabled') else 'disabled'}",
         f"- Initial profile set: {result.get('initial_profile_set', 'disabled')}",
         f"- Last active profile set: {result.get('active_profile_set', '') or 'none'}",
+        f"- Stream off seconds: {result.get('stream_off_seconds', 4)}",
+        f"- Stream on/preview seconds: {result.get('stream_on_preview_seconds', 4)}",
         f"- Completed cycles: {result.get('completed_cycles', 0)}",
         f"- Completed stream operations: {result.get('completed_operations', 0)}",
         f"- Service retry warnings: {len(result.get('warnings', []))}",
@@ -1840,8 +1842,8 @@ def validate_args(args) -> Dict[str, Any]:
         "duration": parse_duration(args.duration, 300.0),
         "discovery_timeout": parse_duration(args.topic_discovery_timeout, 30.0),
         "discovery_settle": parse_duration(args.topic_discovery_settle, 2.0),
-        "stop_stable": parse_duration(args.stop_stable_seconds, 2.0),
-        "stable": parse_duration(args.stable_seconds, 5.0),
+        "stream_off": parse_duration(args.stream_off_seconds, 4.0),
+        "stream_on_preview": parse_duration(args.stream_on_preview_seconds, 4.0),
         "stream_timeout": parse_duration(args.stream_timeout, 20.0),
         "max_gap": parse_duration(args.max_gap_seconds, 1.5),
         "service_timeout": parse_duration(args.service_timeout, 15.0),
@@ -1898,6 +1900,8 @@ def run(args) -> int:
         "toggle_mode": args.toggle_mode,
         "profile_switch_enabled": config["profile_switch_enabled"],
         "profile_fps_tolerance": config["profile_fps_tolerance"],
+        "stream_off_seconds": config["stream_off"],
+        "stream_on_preview_seconds": config["stream_on_preview"],
         "stream_profile_sets": {
             label: [asdict(spec) for spec in specs]
             for label, specs in config["profile_sets"].items()
@@ -1994,7 +1998,7 @@ def run(args) -> int:
                 session=session,
                 harness=harness,
                 monitor=monitor,
-                stable_seconds=config["stable"],
+                stable_seconds=config["stream_on_preview"],
                 max_gap_seconds=config["max_gap"],
                 timeout=config["stream_timeout"],
             )
@@ -2055,7 +2059,7 @@ def run(args) -> int:
                             cycle_index=cycle_index,
                             service_timeout=config["service_timeout"],
                             retry_delay=config["service_retry_delay"],
-                            stable_seconds=config["stable"],
+                            stable_seconds=config["stream_on_preview"],
                             max_gap_seconds=config["max_gap"],
                             fps_tolerance_ratio=config["profile_fps_tolerance"],
                             stream_timeout=config["stream_timeout"],
@@ -2133,7 +2137,7 @@ def run(args) -> int:
                             session=session,
                             harness=harness,
                             monitor=monitor,
-                            stop_stable_seconds=config["stop_stable"],
+                            stop_stable_seconds=config["stream_off"],
                             timeout=config["stream_timeout"],
                         )
 
@@ -2174,7 +2178,7 @@ def run(args) -> int:
                             session=session,
                             harness=harness,
                             monitor=monitor,
-                            stable_seconds=config["stable"],
+                            stable_seconds=config["stream_on_preview"],
                             max_gap_seconds=config["max_gap"],
                             timeout=config["stream_timeout"],
                         )
@@ -2303,8 +2307,8 @@ def run(args) -> int:
                             harness=harness,
                             monitor=monitor,
                             target_topic=target.topic,
-                            stop_stable_seconds=config["stop_stable"],
-                            stable_seconds=config["stable"],
+                            stop_stable_seconds=config["stream_off"],
+                            stable_seconds=config["stream_off"],
                             max_gap_seconds=config["max_gap"],
                             timeout=config["stream_timeout"],
                         )
@@ -2343,7 +2347,7 @@ def run(args) -> int:
                             session=session,
                             harness=harness,
                             monitor=monitor,
-                            stable_seconds=config["stable"],
+                            stable_seconds=config["stream_on_preview"],
                             max_gap_seconds=config["max_gap"],
                             timeout=config["stream_timeout"],
                         )
@@ -2572,8 +2576,20 @@ def parse_args(argv: Optional[Sequence[str]] = None):
     parser.add_argument("--run-count", type=int, default=None)
     parser.add_argument("--topic-discovery-timeout", default="30")
     parser.add_argument("--topic-discovery-settle", default="2")
-    parser.add_argument("--stop-stable-seconds", default="2")
-    parser.add_argument("--stable-seconds", default="5")
+    parser.add_argument(
+        "--stream-off-seconds",
+        "--stop-stable-seconds",
+        dest="stream_off_seconds",
+        default="4",
+        help="Seconds to keep and verify the selected stream(s) off",
+    )
+    parser.add_argument(
+        "--stream-on-preview-seconds",
+        "--stable-seconds",
+        dest="stream_on_preview_seconds",
+        default="4",
+        help="Seconds to preview and continuously verify streams after enabling",
+    )
     parser.add_argument("--stream-timeout", default="20")
     parser.add_argument("--max-gap-seconds", default="1.5")
     parser.add_argument("--service-timeout", default="15")

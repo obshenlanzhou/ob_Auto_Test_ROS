@@ -135,6 +135,41 @@ def test_toggle_mode_defaults_to_individual_and_accepts_all():
     )
 
 
+def test_stream_off_and_on_preview_times_default_to_four_and_keep_legacy_aliases():
+    module = load_script()
+
+    defaults = module.validate_args(module.parse_args(["--launch-file", "test.launch.py"]))
+    configured = module.validate_args(
+        module.parse_args(
+            [
+                "--launch-file",
+                "test.launch.py",
+                "--stream-off-seconds",
+                "2.5",
+                "--stream-on-preview-seconds",
+                "7",
+            ]
+        )
+    )
+    legacy = module.parse_args(
+        [
+            "--launch-file",
+            "test.launch.py",
+            "--stop-stable-seconds",
+            "3",
+            "--stable-seconds",
+            "8",
+        ]
+    )
+
+    assert defaults["stream_off"] == 4.0
+    assert defaults["stream_on_preview"] == 4.0
+    assert configured["stream_off"] == 2.5
+    assert configured["stream_on_preview"] == 7.0
+    assert legacy.stream_off_seconds == "3"
+    assert legacy.stream_on_preview_seconds == "8"
+
+
 def test_stream_profile_parser_supports_nested_namespace_and_camera_placeholder():
     module = load_script()
 

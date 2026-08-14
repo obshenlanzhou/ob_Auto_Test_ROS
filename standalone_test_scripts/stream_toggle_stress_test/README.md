@@ -46,9 +46,9 @@ In individual mode, each target stream runs this transaction:
 
 ```text
 disable target
-  → target stays quiet for 2 s while every other selected stream is stable for 5 s
+  → keep it off for 4 s while it stays quiet and every other selected stream stays stable
   → enable target
-  → every selected stream is stable for 5 s
+  → preview and continuously verify every selected stream for 4 s
   → save an image from the restored target
 ```
 
@@ -56,9 +56,9 @@ In all mode, each cycle runs this transaction:
 
 ```text
 call set_streams_enable(false) for every target camera
-  → every target image stream stays quiet for 2 s
+  → keep streams off for 4 s while every target image stream stays quiet
   → call set_streams_enable(true) for every target camera
-  → every target image stream is stable for 5 s
+  → preview and continuously verify every target image stream for 4 s
   → save an image from every target stream
 ```
 
@@ -193,6 +193,11 @@ Configured profile topics must be selected target streams. For each camera, at l
 resolution, FPS, or observable ROS encoding must differ between A and B. Other selected streams
 keep their profiles but remain part of global stability checks.
 
+`--stream-off-seconds` and `--stream-on-preview-seconds` independently control the off-state dwell
+and post-enable preview/verification time. Both default to 4 seconds and accept any positive
+duration; a bare number is seconds. Legacy `--stop-stable-seconds` and `--stable-seconds` remain as
+aliases, respectively.
+
 ## Cycles, retries, and stopping
 
 In individual mode, one complete cycle toggles and verifies every target stream once. In all mode,
@@ -224,15 +229,15 @@ second:
 | `--camera` | empty | Single-camera launch arguments; at most one |
 | `--image-topic` | auto | Strict raw-image target; repeatable |
 | `--toggle-mode` | `individual` | `individual` per-stream toggles (ROS1/ROS2); `all` whole-camera toggles (currently ROS2 only) |
-| `--switch-stream-profile` | `0` | `0` keeps launch profiles; `1` alternates resolution/FPS sets A and B |
+| `--switch-stream-profile` | `0` | `0` keeps launch profiles; `1` alternates resolution/FPS/format sets A and B |
 | `--stream-profile-a` | empty | Set-A entry as `TOPIC=WIDTHxHEIGHT@FPS[:FORMAT]`; repeatable |
 | `--stream-profile-b` | empty | Set-B entry in the same format and with the same topics as set A |
 | `--duration` | `300` | Maximum duration; supports `15m` and `2h` |
 | `--run-count` | empty | Maximum completed cycles |
 | `--topic-discovery-timeout` | `30` | Topic/service discovery timeout |
 | `--topic-discovery-settle` | `2` | No-new-target discovery window |
-| `--stop-stable-seconds` | `2` | Target quiet confirmation window |
-| `--stable-seconds` | `5` | Continuous recovery stability window |
+| `--stream-off-seconds` | `4` | Off-state dwell and verification; bare values are seconds; alias `--stop-stable-seconds` |
+| `--stream-on-preview-seconds` | `4` | Post-enable preview and stability verification; alias `--stable-seconds` |
 | `--stream-timeout` | `20` | Disabled/enabled state timeout |
 | `--max-gap-seconds` | `1.5` | Maximum receive gap in a stable window |
 | `--service-timeout` | `15` | Toggle service-call timeout |
