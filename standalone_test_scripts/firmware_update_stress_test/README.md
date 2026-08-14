@@ -80,7 +80,7 @@ are `name`, `serial-number`, `usb-port`, `device-ip`, `device-port`, and
 | `--ros-setup` | `$ORBBEC_ROS_SETUP` or empty | Path to the ROS environment setup script |
 | `--driver-setup` | `$ORBBEC_CAMERA_SETUP` or empty | Path to the Orbbec driver environment setup script |
 | `--firmware` | required | Firmware image path; repeat to cycle files in order |
-| `--run-count` | `10` | Maximum number of update command invocations |
+| `--run-count` | empty | Maximum number of update command invocations |
 | `--duration` | empty | Optional maximum wall time; supports `300`, `15m`, `2h` |
 | `--restart-delay` | `2` | Delay seconds between update commands |
 | `--camera` | default camera | Camera target specification; repeatable |
@@ -88,6 +88,9 @@ are `name`, `serial-number`, `usb-port`, `device-ip`, `device-port`, and
 | `--reconnect-poll-ms` | `1000` | Passed to `firmware_update_tool` |
 | `--sdk-log-level` | `debug` | Passed to `firmware_update_tool` |
 | `--continue-on-error` | disabled | Passed to `firmware_update_tool` |
+
+At least one of `--run-count` and `--duration` is required. Both may be supplied; the first limit
+reached stops the test.
 
 Compatible selectors in a camera specification may be combined. Multiple
 serial numbers are sent as one firmware-tool batch; USB and network selectors

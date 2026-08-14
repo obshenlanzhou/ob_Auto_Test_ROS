@@ -71,13 +71,15 @@ python3 ./preset_upgrade_stress_test/preset_upgrade_stress_test.py \
 | `--preset-a-name` | `K High Confidence` | preset A 对应的 `device_preset` 名称 |
 | `--preset-b-name` | `K High Accuracy` | preset B 对应的 `device_preset` 名称 |
 | `--run-count` | 空 | 可选的升级最大轮次数 |
-| `--duration` | `300` | 最长运行时间，支持 `300`、`15m`、`2h` |
+| `--duration` | 空 | 最长运行时间，支持 `300`、`15m`、`2h` |
 | `--save-image-count` | `1` | 每轮每个 topic 保存的图片数（`0` = 不存图） |
 | `--image-topic` | 自动发现 | 指定后只监控并保存这些 `Image` 或 `CompressedImage` topic，可重复传入并支持 `{camera}` |
 | `--launch-arg` | — | 额外 launch 参数（如 `enable_left_ir=true`），可重复传入 |
 | `--launch-start-interval` | `2` | 各相机 launch 之间的启动间隔秒数（`0` = 所有相机同时启动） |
 | `--restart-delay` | `2` | launch 关闭后、切换到下一份 preset 前的等待秒数（`0` = 不额外等待） |
 | `--sdk-log-level` | `debug` | preset 升级工具和相机 launch 的 SDK 日志级别 |
+
+`--run-count` 和 `--duration` 至少传入一个，也可以同时传入；同时传入时，任一条件先达到即结束。
 
 默认自动发现每个相机命名空间下所有已发布的 `sensor_msgs/Image` 图像流。
 需要限制存图范围时，同时传入 `--image-topic` 和对应的 `--launch-arg`：

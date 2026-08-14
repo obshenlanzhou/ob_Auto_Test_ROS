@@ -61,12 +61,15 @@ python3 ./export_load_stress_test/export_load_stress_test.py \
 | `--camera` | empty | Camera specification; repeatable, using the format shown above |
 | `--launch-arg` | — | Extra launch argument (e.g. `enable_ir=true`); repeatable, format `KEY=VALUE` or `KEY:=VALUE` |
 | `--launch-start-interval` | `2` | Delay in seconds between starting each camera launch (`0` starts all cameras at once) |
-| `--run-count` | `10` | Maximum number of import/export cycles |
+| `--run-count` | empty | Maximum number of import/export cycles |
 | `--duration` | empty | Optional maximum wall time; the first configured limit reached stops the run |
 | `--sdk-log-level` | `debug` | Orbbec SDK log level |
 | `--save-image-count` | `1` | Images saved per topic per test (`0` = disabled) |
 | `--image-topic` | auto-discovered | Explicit `Image` or `CompressedImage` topic to monitor and save; repeatable |
 | `--config-json` | see Config File | JSON files to alternate; repeatable |
+
+At least one of `--run-count` and `--duration` is required. Both may be supplied; the first limit
+reached stops the test.
 
 By default, every published `sensor_msgs/Image` stream under each configured
 camera namespace is discovered. Pass `--image-topic` repeatedly to restrict

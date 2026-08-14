@@ -79,7 +79,7 @@ python3 ./launch_param_load_stress/launch_param_load_stress.py \
 | `--launch-arg` | — | 额外的 launch 参数（如 `enable_depth=true`），可重复传入，格式 `KEY=VALUE` 或 `KEY:=VALUE` |
 | `--launch-start-interval SECS` | `2` | 各相机 launch 之间的启动间隔秒数（`0` = 所有相机同时启动） |
 | `--sdk-log-level` | `debug` | SDK 文件日志级别，可选 `debug/info/warn/error/fatal/none` |
-| `--run-count N` | `1` | 完整启动→检查→停止的最大循环次数 |
+| `--run-count N` | 空 | 完整启动→检查→停止的最大循环次数 |
 | `--duration` | 空 | 可选的最长运行时间；任一已配置上限先达到即结束 |
 | `--startup-timeout SECS` | `30` | 等待设备初始化完成的最大秒数 |
 | `--topic-timeout SECS` | `20` | 等待每个已启用流 topic 的最大秒数 |
@@ -88,6 +88,8 @@ python3 ./launch_param_load_stress/launch_param_load_stress.py \
 | `--image-topic` | 自动发现 | 指定后只保存这些 `Image` 或 `CompressedImage` topic，可重复传入并支持 `{camera}` |
 | `--skip-topic-check` | — | 跳过图像 topic 验证 |
 | `--skip-service-check` | — | 跳过 getter service 验证 |
+
+`--run-count` 和 `--duration` 至少传入一个，也可以同时传入；同时传入时，任一条件先达到即结束。
 
 默认自动发现每个相机命名空间下所有已发布的 `sensor_msgs/Image` 图像流。
 传入一个或多个 `--image-topic` 后，将只保存显式指定的 topic。

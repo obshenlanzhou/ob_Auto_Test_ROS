@@ -6,6 +6,9 @@
   "script": "export_load_stress_test.py",
   "risk": "normal",
   "stop_policy": "immediate",
+  "required_any": [
+    {"fields": ["duration", "run_count"], "message": "压测时间和压测次数至少填写一项"}
+  ],
   "fields": [
     {"name": "ros_version", "option": "--ros-version", "type": "select", "label": "ROS 版本", "label_en": "ROS Version", "group": "environment", "section": "basic", "default": "2", "choices": [{"value": "2", "label": "ROS 2"}, {"value": "1", "label": "ROS 1"}]},
     {"name": "ros_setup", "option": "--ros-setup", "type": "path", "label": "ROS 环境脚本", "label_en": "ROS Setup", "group": "environment", "section": "basic", "default": "/opt/ros/humble/setup.bash"},
@@ -13,8 +16,8 @@
     {"name": "launch_file", "option": "--launch-file", "type": "path", "label": "Launch 文件", "label_en": "Launch File", "group": "configuration", "section": "basic", "default": "gemini_330_series_sdk_json.launch.py"},
     {"name": "config_jsons", "option": "--config-json", "type": "list", "label": "配置 JSON", "label_en": "Config JSON Files", "group": "configuration", "section": "basic", "default": [], "placeholder": "/path/to/Gemini_336L_1.json\n/path/to/Gemini_336L_2.json"},
     {"name": "cameras", "option": "--camera", "type": "camera-list", "label": "目标相机", "label_en": "Target Cameras", "group": "cameras", "section": "basic", "default": []},
-    {"name": "run_count", "option": "--run-count", "type": "integer", "label": "最大循环次数", "label_en": "Run Count", "group": "limits", "section": "basic", "default": "10", "min": 1},
-    {"name": "duration", "option": "--duration", "type": "duration", "label": "最长运行时间", "label_en": "Duration", "group": "limits", "section": "basic", "default": ""},
+    {"name": "run_count", "option": "--run-count", "type": "integer", "label": "最大循环次数", "label_en": "Run Count", "group": "limits", "section": "basic", "default": "", "min": 1, "placeholder": "10", "note": "与最长运行时间至少填写一项，可同时填写。"},
+    {"name": "duration", "option": "--duration", "type": "duration", "label": "最长运行时间", "label_en": "Duration", "group": "limits", "section": "basic", "default": "", "placeholder": "300", "note": "与最大循环次数至少填写一项，可同时填写。"},
     {"name": "image_topics", "option": "--image-topic", "type": "list", "label": "图像话题模板", "label_en": "Image Topic Templates", "group": "configuration", "section": "basic", "default": [], "placeholder": "留空则自动发现全部原始图像流\n/{camera}/color/image_raw\n/{camera}/color/image_raw/compressed", "note": "Image 保存像素无损 PNG；CompressedImage 的 data 原始字节保存为 JPG。压缩话题必须显式指定。"},
     {"name": "save_image_count", "option": "--save-image-count", "type": "integer", "label": "每话题存图数", "label_en": "Images per Topic", "group": "configuration", "section": "basic", "default": "1", "min": 0},
     {"name": "launch_package", "option": "--launch-package", "type": "text", "label": "Launch 包", "label_en": "Launch Package", "group": "advanced", "section": "advanced", "default": "orbbec_camera"},

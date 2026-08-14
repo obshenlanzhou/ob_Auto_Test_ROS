@@ -138,12 +138,16 @@ def test_toggle_mode_defaults_to_individual_and_accepts_all():
 def test_stream_off_and_on_preview_times_default_to_four_and_keep_legacy_aliases():
     module = load_script()
 
-    defaults = module.validate_args(module.parse_args(["--launch-file", "test.launch.py"]))
+    defaults = module.validate_args(
+        module.parse_args(["--launch-file", "test.launch.py", "--run-count", "1"])
+    )
     configured = module.validate_args(
         module.parse_args(
             [
                 "--launch-file",
                 "test.launch.py",
+                "--run-count",
+                "1",
                 "--stream-off-seconds",
                 "2.5",
                 "--stream-on-preview-seconds",
@@ -178,6 +182,8 @@ def test_save_image_topics_accept_raw_and_matching_compressed_sources():
             [
                 "--launch-file",
                 "test.launch.py",
+                "--run-count",
+                "1",
                 "--image-topic",
                 "/camera/color/image_raw",
                 "--save-image-topic",
@@ -219,6 +225,8 @@ def test_stream_profile_switch_requires_two_different_matching_sets():
     common = [
         "--launch-file",
         "test.launch.py",
+        "--run-count",
+        "1",
         "--switch-stream-profile",
         "1",
         "--stream-profile-a",
@@ -265,6 +273,8 @@ def test_stream_profile_switch_requires_two_different_matching_sets():
             [
                 "--launch-file",
                 "test.launch.py",
+                "--run-count",
+                "1",
                 "--switch-stream-profile",
                 "1",
                 "--stream-profile-a",
@@ -282,6 +292,8 @@ def test_stream_profile_switch_requires_two_different_matching_sets():
                 [
                     "--launch-file",
                     "test.launch.py",
+                    "--run-count",
+                    "1",
                     "--switch-stream-profile",
                     "1",
                     "--stream-profile-a",
@@ -537,7 +549,14 @@ def test_single_camera_args_are_injected_only_when_provided():
 def test_camera_placeholder_requires_single_camera():
     module = load_script()
     args = module.parse_args(
-        ["--launch-file", "test.launch.py", "--image-topic", "/{camera}/color/image_raw"]
+        [
+            "--launch-file",
+            "test.launch.py",
+            "--run-count",
+            "1",
+            "--image-topic",
+            "/{camera}/color/image_raw",
+        ]
     )
     with pytest.raises(ValueError, match="placeholder requires one --camera"):
         module.validate_args(args)
@@ -546,6 +565,8 @@ def test_camera_placeholder_requires_single_camera():
         [
             "--launch-file",
             "test.launch.py",
+            "--run-count",
+            "1",
             "--camera",
             "name=camera_01",
             "--image-topic",
@@ -555,6 +576,45 @@ def test_camera_placeholder_requires_single_camera():
     assert module.validate_args(args)["explicit_topics"] == [
         "/camera_01/color/image_raw"
     ]
+
+
+def test_duration_and_run_count_default_empty_and_require_at_least_one():
+    module = load_script()
+    defaults = module.parse_args(["--launch-file", "test.launch.py"])
+
+    assert defaults.duration == ""
+    assert defaults.run_count is None
+    with pytest.raises(
+        ValueError, match="at least one of --duration or --run-count is required"
+    ):
+        module.validate_args(defaults)
+
+    duration_only = module.validate_args(
+        module.parse_args(
+            ["--launch-file", "test.launch.py", "--duration", "15m"]
+        )
+    )
+    count_only = module.validate_args(
+        module.parse_args(
+            ["--launch-file", "test.launch.py", "--run-count", "10"]
+        )
+    )
+    both = module.validate_args(
+        module.parse_args(
+            [
+                "--launch-file",
+                "test.launch.py",
+                "--duration",
+                "1h",
+                "--run-count",
+                "20",
+            ]
+        )
+    )
+
+    assert duration_only["duration"] == 900.0
+    assert count_only["duration"] is None
+    assert both["duration"] == 3600.0
 
 
 def test_toggle_retries_once_and_reports_degraded_success():

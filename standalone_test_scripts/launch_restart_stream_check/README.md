@@ -78,11 +78,15 @@ python3 ./launch_restart_stream_check/launch_restart_stream_check.py \
 | `--image-topic` | auto-discovered | Image topic to monitor; repeatable |
 | `--launch-arg` | — | Extra launch argument (e.g. `enable_ir=true`); repeatable, format `KEY=VALUE` or `KEY:=VALUE` |
 | `--sdk-log-level` | `debug` | Orbbec SDK log level |
-| `--duration` | `300` | Total run time; supports seconds, `30m`, `2h`, and similar formats |
+| `--duration` | empty | Total run time; supports seconds, `30m`, `2h`, and similar formats |
+| `--run-count` | empty | Maximum completed restart cycles |
 | `--stable-seconds` | `5` | Continuous receive time required for a stream to be considered stable |
 | `--stream-timeout` | `20` | Seconds to wait for a stream to become stable per restart |
 | `--max-gap-seconds` | `1.5` | Maximum allowed gap between consecutive frames |
 | `--restart-delay` | `2` | Seconds to wait between stop and next start |
+
+At least one of `--run-count` and `--duration` is required. Both may be supplied; the first limit
+reached stops the test.
 
 ## Result Files
 

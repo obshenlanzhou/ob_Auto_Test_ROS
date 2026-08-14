@@ -6,14 +6,17 @@
   "script": "launch_restart_stream_check.py",
   "risk": "normal",
   "stop_policy": "immediate",
+  "required_any": [
+    {"fields": ["duration", "run_count"], "message": "压测时间和压测次数至少填写一项"}
+  ],
   "fields": [
     {"name": "ros_version", "option": "--ros-version", "type": "select", "label": "ROS 版本", "label_en": "ROS Version", "group": "environment", "section": "basic", "default": "2", "choices": [{"value": "2", "label": "ROS 2"}, {"value": "1", "label": "ROS 1"}]},
     {"name": "ros_setup", "option": "--ros-setup", "type": "path", "label": "ROS 环境脚本", "label_en": "ROS Setup", "group": "environment", "section": "basic", "default": "/opt/ros/humble/setup.bash"},
     {"name": "driver_setup", "option": "--driver-setup", "type": "path", "label": "驱动环境脚本", "label_en": "Driver Setup", "group": "environment", "section": "basic", "default": "", "placeholder": "/path/to/orbbec_camera/install/setup.bash"},
     {"name": "launch_file", "option": "--launch-file", "type": "path", "label": "Launch 文件", "label_en": "Launch File", "group": "configuration", "section": "basic", "default": "", "placeholder": "gemini_330_series.launch.py"},
     {"name": "cameras", "option": "--camera", "type": "camera-list", "label": "目标相机", "label_en": "Target Camera", "group": "cameras", "section": "basic", "default": [], "max_items": 1, "note": "仅支持添加一台相机；多相机压测请配置并选择多相机启动 Launch 文件。"},
-    {"name": "duration", "option": "--duration", "type": "duration", "label": "最长运行时间", "label_en": "Duration", "group": "limits", "section": "basic", "default": "300"},
-    {"name": "run_count", "option": "--run-count", "type": "integer", "label": "最大循环次数", "label_en": "Run Count", "group": "limits", "section": "basic", "default": "", "min": 1, "placeholder": "10"},
+    {"name": "duration", "option": "--duration", "type": "duration", "label": "最长运行时间", "label_en": "Duration", "group": "limits", "section": "basic", "default": "", "placeholder": "300", "note": "与最大循环次数至少填写一项，可同时填写。"},
+    {"name": "run_count", "option": "--run-count", "type": "integer", "label": "最大循环次数", "label_en": "Run Count", "group": "limits", "section": "basic", "default": "", "min": 1, "placeholder": "10", "note": "与最长运行时间至少填写一项，可同时填写。"},
     {"name": "image_topics", "option": "--image-topic", "type": "list", "label": "图像话题", "label_en": "Image Topics", "group": "configuration", "section": "basic", "default": [], "placeholder": "/{camera}/color/image_raw\n/{camera}/depth/image_raw"},
     {"name": "launch_package", "option": "--launch-package", "type": "text", "label": "Launch 包", "label_en": "Launch Package", "group": "advanced", "section": "advanced", "default": "orbbec_camera"},
     {"name": "launch_args", "option": "--launch-arg", "type": "list", "label": "附加 Launch 参数", "label_en": "Launch Arguments", "group": "advanced", "section": "advanced", "default": ["enable_heartbeat=true", "enable_firmware_log=true"], "placeholder": "enable_heartbeat=true\nenable_firmware_log=true"},

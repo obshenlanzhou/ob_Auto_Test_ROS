@@ -33,7 +33,7 @@ DEFAULT_CAMERA_LAUNCH = {
 }
 ENV_READY_VAR = "LAUNCH_RESTART_STREAM_CHECK_ENV_READY"
 INTERRUPTED = False
-TOOL_VERSION = "1.0"
+TOOL_VERSION = "1.1"
 TEST_ID = "launch_restart_stream_check"
 DEFAULT_STRESS_LAUNCH_ARGS = {
     "enable_heartbeat": "true",
@@ -651,16 +651,23 @@ def run(args) -> int:
     launch_args["log_level"] = args.sdk_log_level
     launch_args["log_file_name"] = f"{template_camera_name}.log"
 
-    duration_seconds = parse_duration(args.duration, 300.0)
+    duration_text = str(args.duration or "").strip()
+    run_count = args.run_count
+    if not duration_text and run_count is None:
+        raise ValueError("at least one of --duration or --run-count is required")
+    duration_seconds = parse_duration(duration_text, 0.0) if duration_text else None
     stable_seconds = parse_duration(args.stable_seconds, 5.0)
     stream_timeout = parse_duration(args.stream_timeout, 20.0)
     topic_discovery_timeout = parse_duration(args.topic_discovery_timeout, 15.0)
     max_gap_seconds = parse_duration(args.max_gap_seconds, 1.5)
     restart_delay = float(args.restart_delay)
-    run_count = args.run_count
     if run_count is not None and run_count <= 0:
         raise ValueError("--run-count must be > 0")
-    deadline = time.monotonic() + duration_seconds
+    deadline = (
+        time.monotonic() + duration_seconds
+        if duration_seconds is not None
+        else None
+    )
 
     command = build_launch_command(
         ros_version=args.ros_version,
@@ -683,6 +690,7 @@ def run(args) -> int:
         "image_topics": explicit_topics,
         "discovered_image_topics": [],
         "duration_seconds": duration_seconds,
+        "run_count": run_count,
         "stable_seconds_required": stable_seconds,
         "stream_timeout_seconds": stream_timeout,
         "max_gap_seconds": max_gap_seconds,
@@ -696,7 +704,11 @@ def run(args) -> int:
     emit(f"tool version: {TOOL_VERSION}")
     emit(f"results dir: {results_dir}")
     emit("launch command: " + " ".join(shlex.quote(item) for item in command))
-    emit(f"planned duration: {duration_seconds:.1f}s")
+    emit(
+        f"planned duration: {duration_seconds:.1f}s"
+        if duration_seconds is not None
+        else "planned duration: unlimited"
+    )
     if auto_discover_topics:
         emit("monitor topics: auto discover on first launch")
     else:
@@ -713,7 +725,7 @@ def run(args) -> int:
     keep_launch_running = False
     try:
         with RosImageHarness(args.ros_version, "launch_restart_stream_check", args.queue_size) as harness:
-            while time.monotonic() < deadline:
+            while deadline is None or time.monotonic() < deadline:
                 if run_count is not None and attempt_index >= run_count:
                     break
                 attempt_index += 1
@@ -818,9 +830,12 @@ def run(args) -> int:
                 active_session = None
                 current_attempt = None
 
-                if time.monotonic() >= deadline:
+                if deadline is not None and time.monotonic() >= deadline:
                     break
-                time.sleep(min(restart_delay, max(deadline - time.monotonic(), 0.0)))
+                if deadline is None:
+                    time.sleep(restart_delay)
+                else:
+                    time.sleep(min(restart_delay, max(deadline - time.monotonic(), 0.0)))
     except KeyboardInterrupt:
         if result.get("manual_confirmation_required"):
             emit("manual check finished by user")
@@ -886,7 +901,7 @@ def run(args) -> int:
     return 1
 
 
-def parse_args():
+def parse_args(argv=None):
     parser = argparse.ArgumentParser(
         description="Repeatedly restart a ROS launch file and verify image streams recover.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -939,7 +954,7 @@ def parse_args():
         default="15",
         help="Max wait time for auto image topic discovery during the first launch attempt",
     )
-    parser.add_argument("--duration", default="300", help="Total test duration, supports seconds, 15m, 2h")
+    parser.add_argument("--duration", default="", help="Optional total test duration; supports seconds, 15m, 2h")
     parser.add_argument(
         "--run-count",
         type=int,
@@ -957,7 +972,10 @@ def parse_args():
         action="version",
         version="%(prog)s {}".format(TOOL_VERSION),
     )
-    return parser.parse_args()
+    args = parser.parse_args(argv)
+    if not str(args.duration or "").strip() and args.run_count is None:
+        parser.error("at least one of --duration or --run-count is required")
+    return args
 
 
 def main() -> None:

@@ -6,6 +6,9 @@
   "script": "stream_toggle_stress_test.py",
   "risk": "normal",
   "stop_policy": "immediate",
+  "required_any": [
+    {"fields": ["duration", "run_count"], "message": "压测时间和压测次数至少填写一项"}
+  ],
   "fields": [
     {"name": "ros_version", "option": "--ros-version", "type": "select", "label": "ROS 版本", "label_en": "ROS Version", "group": "environment", "section": "basic", "default": "2", "choices": [{"value": "2", "label": "ROS 2"}, {"value": "1", "label": "ROS 1"}]},
     {"name": "ros_setup", "option": "--ros-setup", "type": "path", "label": "ROS 环境脚本", "label_en": "ROS Setup", "group": "environment", "section": "basic", "default": "/opt/ros/humble/setup.bash"},
@@ -20,8 +23,8 @@
     {"name": "stream_profile_b", "option": "--stream-profile-b", "type": "list", "label": "图像配置 B", "label_en": "Image Profile Set B", "group": "configuration", "section": "basic", "default": [], "placeholder": "/camera/color/image_raw=640x480@15:RGB888\n/camera/depth/image_raw=320x240@15:Y16", "note": "必须与配置 A 包含相同话题；每台相机的分辨率、帧率或可观测 ROS encoding 至少一项不同。"},
     {"name": "stream_on_preview_seconds", "option": "--stream-on-preview-seconds", "type": "duration", "label": "开流+预览时间", "label_en": "Stream On and Preview Time", "group": "configuration", "section": "basic", "default": "4", "note": "开流后持续预览并验证出流，单位秒，可配置任意正数。"},
     {"name": "stream_off_seconds", "option": "--stream-off-seconds", "type": "duration", "label": "关流时间", "label_en": "Stream Off Time", "group": "configuration", "section": "basic", "default": "4", "note": "保持并验证关流状态，单位秒，可配置任意正数。"},
-    {"name": "duration", "option": "--duration", "type": "duration", "label": "最长运行时间", "label_en": "Duration", "group": "limits", "section": "basic", "default": "300"},
-    {"name": "run_count", "option": "--run-count", "type": "integer", "label": "最大完整循环数", "label_en": "Run Count", "group": "limits", "section": "basic", "default": "", "min": 1, "placeholder": "10"},
+    {"name": "duration", "option": "--duration", "type": "duration", "label": "最长运行时间", "label_en": "Duration", "group": "limits", "section": "basic", "default": "", "placeholder": "300", "note": "与最大完整循环数至少填写一项，可同时填写。"},
+    {"name": "run_count", "option": "--run-count", "type": "integer", "label": "最大完整循环数", "label_en": "Run Count", "group": "limits", "section": "basic", "default": "", "min": 1, "placeholder": "10", "note": "与最长运行时间至少填写一项，可同时填写。"},
     {"name": "save_image_count", "option": "--save-image-count", "type": "integer", "label": "每路每循环存图数", "label_en": "Images per Stream", "group": "configuration", "section": "basic", "default": 1, "min": 0},
     {"name": "launch_package", "option": "--launch-package", "type": "text", "label": "Launch 包", "label_en": "Launch Package", "group": "advanced", "section": "advanced", "default": "orbbec_camera"},
     {"name": "launch_args", "option": "--launch-arg", "type": "list", "label": "附加 Launch 参数", "label_en": "Launch Arguments", "group": "advanced", "section": "advanced", "default": ["enable_heartbeat=true", "enable_firmware_log=true"], "placeholder": "enable_heartbeat=true\nenable_firmware_log=true"},

@@ -32,7 +32,7 @@ from _test_protocol import (
 ENV_READY_VAR = "PRESET_UPGRADE_STRESS_TEST_ENV_READY"
 INTERRUPTED = False
 SCRIPT_DIR = Path(__file__).resolve().parent
-TOOL_VERSION = "1.4"
+TOOL_VERSION = "1.5"
 TEST_ID = "preset_upgrade_stress_test"
 DEFAULT_STRESS_LAUNCH_ARGS = {
     "enable_heartbeat": "true",
@@ -958,13 +958,16 @@ def run(args) -> int:
     ]
 
     run_count = args.run_count
+    duration_text = str(args.duration or "").strip()
+    if not duration_text and run_count is None:
+        raise ValueError("at least one of --duration or --run-count is required")
     if run_count is not None and run_count <= 0:
         raise ValueError("--run-count must be > 0")
     save_images_count = int(args.save_image_count)
     if save_images_count < 0:
         raise ValueError("--save-image-count must be >= 0")
     duration_seconds = (
-        parse_duration(args.duration, 0.0) if str(args.duration or "").strip() else None
+        parse_duration(duration_text, 0.0) if duration_text else None
     )
     stream_timeout = parse_duration(args.stream_timeout, 30.0)
     preset_log_timeout = parse_duration(args.preset_log_timeout, 20.0)
@@ -1315,7 +1318,7 @@ def run(args) -> int:
     return 1
 
 
-def parse_args():
+def parse_args(argv=None):
     parser = argparse.ArgumentParser(
         description="Alternately update Orbbec optional depth presets and verify launch streams.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -1352,7 +1355,7 @@ def parse_args():
     parser.add_argument("--preset-b-path", default=str(DEFAULT_PRESET_B_PATH))
     parser.add_argument("--preset-b-name", default="K High Accuracy")
     parser.add_argument("--run-count", type=int, default=None, help="Optional maximum preset rounds")
-    parser.add_argument("--duration", default="300", help="Maximum wall time; supports 300, 15m, 2h")
+    parser.add_argument("--duration", default="", help="Optional maximum wall time; supports 300, 15m, 2h")
     parser.add_argument("--stream-timeout", default="30", help="Max wait time for image streams per preset")
     parser.add_argument("--preset-log-timeout", default="20", help="Max wait time for Loaded device preset log")
     parser.add_argument("--save-image-count", type=int, default=1, help="Images to save per topic; 0 disables saving")
@@ -1383,7 +1386,10 @@ def parse_args():
         action="version",
         version="%(prog)s {}".format(TOOL_VERSION),
     )
-    return parser.parse_args()
+    args = parser.parse_args(argv)
+    if not str(args.duration or "").strip() and args.run_count is None:
+        parser.error("at least one of --duration or --run-count is required")
+    return args
 
 
 def main() -> None:

@@ -29,7 +29,7 @@ from _test_protocol import (
 
 ENV_READY_VAR = "EXPORT_LOAD_STRESS_TEST_ENV_READY"
 INTERRUPTED = False
-TOOL_VERSION = "1.3"
+TOOL_VERSION = "1.4"
 TEST_ID = "export_load_stress_test"
 DEFAULT_STRESS_LAUNCH_ARGS = {
     "enable_heartbeat": "true",
@@ -1049,6 +1049,7 @@ def build_summary(result: Dict[str, Any]) -> str:
         if status != "passed":
             failed_tests.append(test)
 
+    planned_runs = result.get("run_count")
     lines = [
         "# Export Load Stress Test",
         "",
@@ -1058,7 +1059,7 @@ def build_summary(result: Dict[str, Any]) -> str:
         f"- Status: {result.get('status', '')}",
         f"- Tool version: {result.get('tool_version', '')}",
         f"- Passed tests: {result.get('passed_tests', 0)}",
-        f"- Planned runs: {result.get('run_count', 0)}",
+        f"- Planned runs: {planned_runs if planned_runs is not None else 'duration-limited'}",
         f"- Completed tests: {len(tests)}",
         f"- Failed tests: {len(failed_tests)}",
         f"- Elapsed seconds: {float(result.get('elapsed_seconds', 0.0) or 0.0):.1f}",
@@ -1182,11 +1183,14 @@ def run(args) -> int:
     config_jsons = normalize_config_paths(args.config_json)
     cameras = [parse_camera_spec(raw) for raw in (args.camera or ["name=camera"])]
     common_launch_args = build_common_launch_args(args.launch_arg)
-    run_count = int(args.run_count)
-    if run_count <= 0:
+    run_count = args.run_count
+    duration_text = str(args.duration or "").strip()
+    if not duration_text and run_count is None:
+        raise ValueError("at least one of --duration or --run-count is required")
+    if run_count is not None and run_count <= 0:
         raise ValueError("--run-count must be > 0")
     duration_seconds = (
-        parse_duration(args.duration, 0.0) if str(args.duration or "").strip() else None
+        parse_duration(duration_text, 0.0) if duration_text else None
     )
 
     stable_seconds = parse_duration(args.stable_seconds, 5.0)
@@ -1247,7 +1251,7 @@ def run(args) -> int:
     emit(f"tool version: {TOOL_VERSION}")
     emit(f"results dir: {results_dir}")
     emit("test started", event="phase", phase="starting")
-    emit(f"run count: {run_count}")
+    emit(f"run count: {run_count if run_count is not None else 'duration-limited'}")
     emit(f"cameras: {', '.join(camera.name for camera in cameras)}")
     emit(f"config JSON cycle: {', '.join(str(path) for path in config_jsons)}")
     if auto_discover_image_topics:
@@ -1271,7 +1275,7 @@ def run(args) -> int:
     try:
         with RosHarness(args.ros_version, "export_load_stress_test", args.queue_size) as harness:
             test_index = 0
-            while test_index < run_count:
+            while run_count is None or test_index < run_count:
                 if deadline is not None and time.monotonic() >= deadline:
                     break
                 test_index += 1
@@ -1463,7 +1467,7 @@ def run(args) -> int:
                 test_payload["ended_at"] = datetime.now().isoformat(timespec="seconds")
                 result["passed_tests"] += 1
                 current_test = None
-                if test_index < run_count and (
+                if (run_count is None or test_index < run_count) and (
                     deadline is None or time.monotonic() < deadline
                 ):
                     time.sleep(restart_delay)
@@ -1530,7 +1534,7 @@ def run(args) -> int:
     return 1
 
 
-def parse_args():
+def parse_args(argv=None):
     parser = argparse.ArgumentParser(
         description=(
             "Repeatedly load config JSON files through single-camera launches, "
@@ -1569,7 +1573,9 @@ def parse_args():
             "device-port, config-file-path."
         ),
     )
-    parser.add_argument("--run-count", type=int, default=10, help="Maximum complete test cycles")
+    parser.add_argument(
+        "--run-count", type=int, default=None, help="Optional maximum complete test cycles"
+    )
     parser.add_argument(
         "--duration",
         default="",
@@ -1611,7 +1617,10 @@ def parse_args():
         action="version",
         version="%(prog)s {}".format(TOOL_VERSION),
     )
-    return parser.parse_args()
+    args = parser.parse_args(argv)
+    if not str(args.duration or "").strip() and args.run_count is None:
+        parser.error("at least one of --duration or --run-count is required")
+    return args
 
 
 def main() -> None:

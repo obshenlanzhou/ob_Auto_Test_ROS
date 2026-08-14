@@ -81,7 +81,7 @@ python3 ./launch_param_load_stress/launch_param_load_stress.py \
 | `--camera` | required | Camera specification with `config-file-path`; repeatable |
 | `--launch-arg` | — | Extra launch argument (e.g. `enable_depth=true`); repeatable, format `KEY=VALUE` or `KEY:=VALUE` |
 | `--launch-start-interval SECS` | `2` | Delay in seconds between starting each camera launch (`0` starts all cameras at once) |
-| `--run-count N` | `1` | Maximum number of full launch–check–stop cycles |
+| `--run-count N` | empty | Maximum number of full launch–check–stop cycles |
 | `--duration` | empty | Optional maximum wall time; the first configured limit reached stops the run |
 | `--startup-timeout SECS` | `30` | Max wait for device initialization |
 | `--topic-timeout SECS` | `20` | Max wait for each enabled stream topic |
@@ -90,6 +90,9 @@ python3 ./launch_param_load_stress/launch_param_load_stress.py \
 | `--image-topic` | auto-discovered | Explicit `Image` or `CompressedImage` topic to save; repeatable, supports `{camera}` |
 | `--skip-topic-check` | — | Skip image topic verification |
 | `--skip-service-check` | — | Skip getter service verification |
+
+At least one of `--run-count` and `--duration` is required. Both may be supplied; the first limit
+reached stops the test.
 
 By default, image saving discovers every published `sensor_msgs/Image` stream
 under each configured camera namespace. Supplying one or more `--image-topic`

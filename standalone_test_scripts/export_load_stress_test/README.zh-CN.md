@@ -59,12 +59,14 @@ python3 ./export_load_stress_test/export_load_stress_test.py \
 | `--camera` | 空 | 相机配置，可重复传入；格式见上文 |
 | `--launch-arg` | — | 额外的 launch 参数（如 `enable_ir=true`），可重复传入，格式 `KEY=VALUE` 或 `KEY:=VALUE` |
 | `--launch-start-interval` | `2` | 各相机 launch 之间的启动间隔秒数（`0` = 所有相机同时启动） |
-| `--run-count` | `10` | 导入导出最大轮次数 |
+| `--run-count` | 空 | 导入导出最大轮次数 |
 | `--duration` | 空 | 可选的最长运行时间；任一已配置上限先达到即结束 |
 | `--sdk-log-level` | `debug` | Orbbec SDK 日志级别 |
 | `--save-image-count` | `1` | 每轮每个 topic 保存的图片数（`0` = 不存图） |
 | `--image-topic` | 自动发现 | 指定后只监控并保存这些 `Image` 或 `CompressedImage` topic，可重复传入 |
 | `--config-json` | 见配置文件 | 交替使用的 JSON 文件，可重复传入 |
+
+`--run-count` 和 `--duration` 至少传入一个，也可以同时传入；同时传入时，任一条件先达到即结束。
 
 默认自动发现每个相机命名空间下所有已发布的 `sensor_msgs/Image` 图像流。
 重复传入 `--image-topic` 后，将只监控并保存显式指定的流：

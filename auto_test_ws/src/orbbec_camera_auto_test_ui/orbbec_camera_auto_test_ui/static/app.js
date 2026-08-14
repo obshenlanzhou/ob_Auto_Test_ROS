@@ -1001,6 +1001,21 @@ function validateStandaloneForm() {
       }
     }
   }
+  const currentValues = standaloneCurrentValues();
+  for (const requirement of state.standaloneTest.required_any || []) {
+    const names = Array.isArray(requirement.fields) ? requirement.fields : [];
+    const complete = names.some((name) => {
+      const value = currentValues[name];
+      return value !== "" && value !== null && value !== undefined && value !== false
+        && (!Array.isArray(value) || value.length > 0);
+    });
+    if (!complete) {
+      const firstField = document.querySelector(
+        `.standalone-field[data-field-name="${names[0] || ""}"]`
+      );
+      errors.push(validationIssue(firstField, requirement.message || "请至少填写一项限制条件"));
+    }
+  }
   return errors;
 }
 

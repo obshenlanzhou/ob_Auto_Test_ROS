@@ -67,6 +67,19 @@ REMOVED_OPTIONS = {
     "--disable_csv",
     "--jpg-quality",
 }
+LIMITED_STRESS_SCRIPTS = {
+    "export_load": [],
+    "firmware_update": [],
+    "launch_param_load": [
+        "--launch-file",
+        "test.launch.py",
+        "--camera",
+        "name=camera,config-file-path=/tmp/camera.yaml",
+    ],
+    "launch_restart": [],
+    "preset_upgrade": [],
+    "stream_toggle": ["--launch-file", "test.launch.py"],
+}
 
 
 def load_protocol(path: Path):
@@ -121,6 +134,41 @@ def evaluate_script(script: Path, expression: str):
     )
     assert completed.returncode == 0, completed.stderr
     return json.loads(completed.stdout.strip().splitlines()[-1])
+
+
+@pytest.mark.parametrize("script_name", LIMITED_STRESS_SCRIPTS)
+def test_stress_scripts_require_duration_or_run_count(script_name):
+    script = SCRIPTS[script_name]
+    completed = subprocess.run(
+        [sys.executable, str(script), *LIMITED_STRESS_SCRIPTS[script_name]],
+        cwd=str(script.parent),
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+
+    assert completed.returncode != 0
+    assert "at least one of --duration or --run-count is required" in completed.stderr
+
+
+@pytest.mark.parametrize("script_name", LIMITED_STRESS_SCRIPTS)
+def test_stress_script_limit_arguments_accept_either_or_both(script_name):
+    module = load_script(SCRIPTS[script_name])
+    base = LIMITED_STRESS_SCRIPTS[script_name]
+
+    duration_only = module.parse_args([*base, "--duration", "15m"])
+    count_only = module.parse_args([*base, "--run-count", "10"])
+    both = module.parse_args(
+        [*base, "--duration", "1h", "--run-count", "20"]
+    )
+
+    assert duration_only.duration == "15m"
+    assert duration_only.run_count is None
+    assert count_only.duration == ""
+    assert count_only.run_count == 10
+    assert both.duration == "1h"
+    assert both.run_count == 20
 
 
 def test_protocol_copies_are_identical():

@@ -76,11 +76,14 @@ python3 ./launch_restart_stream_check/launch_restart_stream_check.py \
 | `--image-topic` | 自动发现 | 监控的图像 topic，可重复传入 |
 | `--launch-arg` | — | 额外的 launch 参数（如 `enable_ir=true`），可重复传入，格式 `KEY=VALUE` 或 `KEY:=VALUE` |
 | `--sdk-log-level` | `debug` | Orbbec SDK 日志级别 |
-| `--duration` | `300` | 总运行时长，支持秒数、`30m`、`2h` 等格式 |
+| `--duration` | 空 | 总运行时长，支持秒数、`30m`、`2h` 等格式 |
+| `--run-count` | 空 | 最大完整重启循环数 |
 | `--stable-seconds` | `5` | 判定流稳定所需的持续接收时间（秒） |
 | `--stream-timeout` | `20` | 每次重启后等待流稳定的最大秒数 |
 | `--max-gap-seconds` | `1.5` | 相邻两帧接收间隔的最大容许值（秒） |
 | `--restart-delay` | `2` | 关闭 launch 后到下次启动的等待秒数 |
+
+`--run-count` 和 `--duration` 至少传入一个，也可以同时传入；同时传入时，任一条件先达到即结束。
 
 ## 结果文件
 

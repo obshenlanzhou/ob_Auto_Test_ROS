@@ -30,7 +30,7 @@ from _test_protocol import (
 
 ENV_READY_VAR = "STREAM_TOGGLE_STRESS_TEST_ENV_READY"
 INTERRUPTED = False
-TOOL_VERSION = "1.4"
+TOOL_VERSION = "1.5"
 TEST_ID = "stream_toggle_stress_test"
 DEFAULT_STRESS_LAUNCH_ARGS = {
     "enable_heartbeat": "true",
@@ -1870,6 +1870,13 @@ def build_summary(result: Dict[str, Any]) -> str:
 def validate_args(args) -> Dict[str, Any]:
     if not args.launch_file:
         raise ValueError("--launch-file is required")
+    duration_text = str(args.duration or "").strip()
+    run_count = args.run_count
+    if not duration_text and run_count is None:
+        raise ValueError("at least one of --duration or --run-count is required")
+    if run_count is not None and run_count <= 0:
+        raise ValueError("--run-count must be > 0")
+    duration = parse_duration(duration_text, 0.0) if duration_text else None
     if len(args.camera) > 1:
         raise ValueError("stream toggle stress test accepts at most one --camera")
     camera = parse_camera(args.camera[0]) if args.camera else None
@@ -1984,9 +1991,6 @@ def validate_args(args) -> Dict[str, Any]:
                     "sensor_msgs/Image; change resolution/FPS or use formats with different "
                     "ROS encodings"
                 )
-    run_count = args.run_count
-    if run_count is not None and run_count <= 0:
-        raise ValueError("--run-count must be > 0")
     if args.save_image_count < 0:
         raise ValueError("--save-image-count must be >= 0")
     if args.queue_size <= 0:
@@ -2001,7 +2005,7 @@ def validate_args(args) -> Dict[str, Any]:
         "camera": camera,
         "explicit_topics": explicit_topics,
         "save_image_topics": save_image_topics,
-        "duration": parse_duration(args.duration, 300.0),
+        "duration": duration,
         "discovery_timeout": parse_duration(args.topic_discovery_timeout, 30.0),
         "discovery_settle": parse_duration(args.topic_discovery_settle, 2.0),
         "stream_off": parse_duration(args.stream_off_seconds, 4.0),
@@ -2102,7 +2106,11 @@ def run(args) -> int:
     groups_may_be_disabled = False
     monitor: Optional[StreamMonitor] = None
     test_started_monotonic = time.monotonic()
-    deadline = test_started_monotonic + config["duration"]
+    deadline = (
+        test_started_monotonic + config["duration"]
+        if config["duration"] is not None
+        else None
+    )
 
     try:
         if args.save_image_count > 0:
@@ -2208,7 +2216,11 @@ def run(args) -> int:
             while not stop_requested:
                 if args.run_count is not None and cycle_index >= args.run_count:
                     break
-                if cycle_index > 0 and time.monotonic() >= deadline:
+                if (
+                    cycle_index > 0
+                    and deadline is not None
+                    and time.monotonic() >= deadline
+                ):
                     break
                 cycle_index += 1
                 cycle = {
@@ -2438,7 +2450,11 @@ def run(args) -> int:
                     )
                     continue
                 for target_index, target in enumerate(targets, start=1):
-                    if cycle_index > 1 and time.monotonic() >= deadline:
+                    if (
+                        cycle_index > 1
+                        and deadline is not None
+                        and time.monotonic() >= deadline
+                    ):
                         cycle["status"] = "partial"
                         stop_requested = True
                         break
@@ -2769,8 +2785,17 @@ def parse_args(argv: Optional[Sequence[str]] = None):
         metavar="TOPIC=WIDTHxHEIGHT@FPS[:FORMAT]",
         help="Profile-set B entry with optional SDK format; repeat for streams/cameras",
     )
-    parser.add_argument("--duration", default="300")
-    parser.add_argument("--run-count", type=int, default=None)
+    parser.add_argument(
+        "--duration",
+        default="",
+        help="Maximum duration; at least one of --duration or --run-count is required",
+    )
+    parser.add_argument(
+        "--run-count",
+        type=int,
+        default=None,
+        help="Maximum completed cycles; at least one of --duration or --run-count is required",
+    )
     parser.add_argument("--topic-discovery-timeout", default="30")
     parser.add_argument("--topic-discovery-settle", default="2")
     parser.add_argument(

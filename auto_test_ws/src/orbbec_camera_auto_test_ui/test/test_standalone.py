@@ -95,6 +95,7 @@ def test_camera_fields_build_launch_style_specs(tmp_path):
         manifest,
         {
             "ros_version": "2",
+            "run_count": "1",
             "cameras": [
                 {
                     "name": "camera_01",
@@ -137,6 +138,46 @@ def test_launch_param_manifest_requires_camera_config_file():
         },
     )
     assert any("config-file-path" in error for error in errors)
+
+
+def test_stream_toggle_manifest_requires_duration_or_run_count(tmp_path):
+    manifest = manifest_catalog(STANDALONE_ROOT)["stream_toggle_stress_test"]
+
+    values, errors = validate_request(manifest, {})
+    assert values["duration"] == ""
+    assert values["run_count"] == ""
+    assert "压测时间和压测次数至少填写一项" in errors
+
+    duration_args, _ = build_command(manifest, {"duration": "15m"}, tmp_path)
+    count_args, _ = build_command(manifest, {"run_count": "10"}, tmp_path)
+    both_args, _ = build_command(
+        manifest, {"duration": "1h", "run_count": "20"}, tmp_path
+    )
+
+    assert duration_args[duration_args.index("--duration") + 1] == "15m"
+    assert "--run-count" not in duration_args
+    assert count_args[count_args.index("--run-count") + 1] == "10"
+    assert "--duration" not in count_args
+    assert "--duration" in both_args and "--run-count" in both_args
+
+
+def test_all_stress_manifests_require_duration_or_run_count():
+    manifests = manifest_catalog(STANDALONE_ROOT)
+    test_ids = {
+        "export_load_stress_test",
+        "firmware_update_stress_test",
+        "launch_param_load_stress",
+        "launch_restart_stream_check",
+        "preset_upgrade_stress_test",
+        "stream_toggle_stress_test",
+    }
+
+    for test_id in test_ids:
+        manifest = manifests[test_id]
+        values, errors = validate_request(manifest, {})
+        assert values["duration"] == ""
+        assert values["run_count"] == ""
+        assert "压测时间和压测次数至少填写一项" in errors
 
 
 def test_result_contract_rejects_missing_and_accepts_complete_result(tmp_path):

@@ -115,9 +115,10 @@ decode or validate compressed data; it writes `CompressedImage.data` directly to
 | `--stream-on-preview-seconds` | `4` | Preview and verification time after enabling |
 | `--save-image-count` | `1` | Files per save topic per cycle; `0` disables saving |
 | `--run-count` | empty | Maximum completed cycles |
-| `--duration` | `300` | Maximum duration; supports `15m` and `2h` |
+| `--duration` | empty | Maximum duration; supports `15m` and `2h` |
 
-When both `--run-count` and `--duration` are supplied, the first limit reached stops the test.
+At least one of `--run-count` and `--duration` is required. Both may be supplied; the first limit
+reached stops the test.
 
 ## Result files
 

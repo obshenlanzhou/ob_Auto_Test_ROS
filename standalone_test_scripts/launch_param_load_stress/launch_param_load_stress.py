@@ -37,7 +37,7 @@ else:
 
 ENV_READY_VAR = "LAUNCH_PARAM_LOAD_STRESS_ENV_READY"
 INTERRUPTED = False
-TOOL_VERSION = "1.3"
+TOOL_VERSION = "1.4"
 TEST_ID = "launch_param_load_stress"
 DEFAULT_STRESS_LAUNCH_ARGS = {
     "enable_heartbeat": "true",
@@ -1224,7 +1224,8 @@ def _summary_camera_section(cam: Dict[str, Any]) -> List[str]:
 def build_summary(result: Dict[str, Any]) -> str:
     command = result.get("command", [])
     command_text = " ".join(shlex.quote(str(item)) for item in command) if command else ""
-    run_count = result.get("run_count", 1)
+    run_count = result.get("run_count")
+    run_limit_label = run_count if run_count is not None else "duration"
     runs_passed = result.get("runs_passed", 0)
     runs = result.get("runs", [])
     lines = [
@@ -1255,7 +1256,7 @@ def build_summary(result: Dict[str, Any]) -> str:
     for run in result.get("runs", []):
         run_idx = run.get("run", "?")
         run_status = run.get("status", "")
-        lines.append(f"## Run {run_idx}/{run_count} — {run_status}")
+        lines.append(f"## Run {run_idx}/{run_limit_label} — {run_status}")
         if run.get("error"):
             lines += ["", f"**Error:** {run['error']}", ""]
             continue
@@ -1397,8 +1398,11 @@ def run(args) -> int:
     topic_timeout = parse_duration(args.topic_timeout, 20.0)
     service_timeout = parse_duration(args.service_timeout, 15.0)
     run_count = args.run_count
+    duration_text = str(args.duration or "").strip()
+    if not duration_text and run_count is None:
+        raise ValueError("at least one of --duration or --run-count is required")
     duration_seconds = (
-        parse_duration(args.duration, 0.0) if str(args.duration or "").strip() else None
+        parse_duration(duration_text, 0.0) if duration_text else None
     )
     save_images_count = args.save_image_count
     image_topic_templates = [topic.strip() for topic in args.image_topic if topic.strip()]
@@ -1433,7 +1437,7 @@ def run(args) -> int:
     emit(f"tool version: {TOOL_VERSION}")
     emit(f"results dir: {results_dir}")
     emit(f"cameras: {', '.join(c.name for c in cameras)}")
-    emit(f"run count: {run_count}")
+    emit(f"run count: {run_count if run_count is not None else 'duration-limited'}")
     emit(f"SDK log level: {args.sdk_log_level}")
     if image_topic_templates:
         emit(f"save image topics: {', '.join(image_topic_templates)}")
@@ -1448,14 +1452,14 @@ def run(args) -> int:
     )
     try:
         run_index = 0
-        while run_index < run_count:
+        while run_count is None or run_index < run_count:
             if deadline is not None and time.monotonic() >= deadline:
                 break
             if INTERRUPTED:
                 break
             run_index += 1
             emit(
-                f"--- run {run_index}/{run_count} ---",
+                f"--- run {run_index}/{run_count if run_count is not None else 'duration'} ---",
                 event="progress",
                 current=run_index,
                 total=run_count,
@@ -1542,7 +1546,11 @@ def run(args) -> int:
             result["runs"].append(run_result)
             if run_result["status"] == "passed":
                 result["runs_passed"] += 1
-            emit(f"run {run_index}/{run_count}: {run_result['status']}")
+            emit(
+                f"run {run_index}/"
+                f"{run_count if run_count is not None else 'duration'}: "
+                f"{run_result['status']}"
+            )
             if INTERRUPTED:
                 break
 
@@ -1589,7 +1597,7 @@ def run(args) -> int:
     return 1
 
 
-def parse_args():
+def parse_args(argv=None):
     parser = argparse.ArgumentParser(
         description="Stress-test Orbbec camera launch parameter loading via config_file_path.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -1649,8 +1657,8 @@ def parse_args():
     )
     parser.add_argument("--topic-timeout", default="20", help="Max wait time for each enabled stream topic")
     parser.add_argument("--service-timeout", default="15", help="Max wait time for each param/service command")
-    parser.add_argument("--run-count", type=int, default=1, metavar="N",
-                        help="Maximum complete test cycles")
+    parser.add_argument("--run-count", type=int, default=None, metavar="N",
+                        help="Optional maximum complete test cycles")
     parser.add_argument(
         "--duration",
         default="",
@@ -1680,13 +1688,15 @@ def parse_args():
         action="version",
         version="%(prog)s {}".format(TOOL_VERSION),
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if not args.show_verification_map:
         if not args.launch_file:
             parser.error("--launch-file is required unless --show-verification-map is used")
         if not args.camera:
             parser.error("at least one --camera with config-file-path is required")
-        if args.run_count < 1:
+        if not str(args.duration or "").strip() and args.run_count is None:
+            parser.error("at least one of --duration or --run-count is required")
+        if args.run_count is not None and args.run_count < 1:
             parser.error("--run-count must be >= 1")
         if args.save_image_count < 0:
             parser.error("--save-image-count must be >= 0")

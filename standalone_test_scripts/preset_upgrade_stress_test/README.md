@@ -74,13 +74,16 @@ python3 ./preset_upgrade_stress_test/preset_upgrade_stress_test.py \
 | `--preset-a-name` | `K High Confidence` | `device_preset` name corresponding to preset A |
 | `--preset-b-name` | `K High Accuracy` | `device_preset` name corresponding to preset B |
 | `--run-count` | empty | Optional maximum number of upgrade cycles |
-| `--duration` | `300` | Maximum wall time; supports `300`, `15m`, and `2h` |
+| `--duration` | empty | Maximum wall time; supports `300`, `15m`, and `2h` |
 | `--save-image-count` | `1` | Images saved per topic per test (`0` = disabled) |
 | `--image-topic` | auto-discovered | Explicit `Image` or `CompressedImage` topic to monitor and save; repeatable, supports `{camera}` |
 | `--launch-arg` | — | Extra launch argument (e.g. `enable_left_ir=true`); repeatable |
 | `--launch-start-interval` | `2` | Delay in seconds between starting each camera launch (`0` starts all cameras at once) |
 | `--restart-delay` | `2` | Delay in seconds after launch stops and before switching presets (`0` disables the extra delay) |
 | `--sdk-log-level` | `debug` | SDK log level for the preset upgrade tool and camera launch |
+
+At least one of `--run-count` and `--duration` is required. Both may be supplied; the first limit
+reached stops the test.
 
 By default, every published `sensor_msgs/Image` stream under each configured
 camera namespace is discovered. To restrict the selection, pass
