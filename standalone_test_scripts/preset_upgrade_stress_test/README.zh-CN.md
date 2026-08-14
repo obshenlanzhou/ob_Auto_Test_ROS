@@ -73,8 +73,7 @@ python3 ./preset_upgrade_stress_test/preset_upgrade_stress_test.py \
 | `--run-count` | 空 | 可选的升级最大轮次数 |
 | `--duration` | `300` | 最长运行时间，支持 `300`、`15m`、`2h` |
 | `--save-image-count` | `1` | 每轮每个 topic 保存的图片数（`0` = 不存图） |
-| `--jpg-quality` | `95` | 保存图片的 JPEG 压缩质量（1–100） |
-| `--image-topic` | 自动发现 | 指定后只监控并保存这些 topic，可重复传入并支持 `{camera}` |
+| `--image-topic` | 自动发现 | 指定后只监控并保存这些 `Image` 或 `CompressedImage` topic，可重复传入并支持 `{camera}` |
 | `--launch-arg` | — | 额外 launch 参数（如 `enable_left_ir=true`），可重复传入 |
 | `--launch-start-interval` | `2` | 各相机 launch 之间的启动间隔秒数（`0` = 所有相机同时启动） |
 | `--restart-delay` | `2` | launch 关闭后、切换到下一份 preset 前的等待秒数（`0` = 不额外等待） |
@@ -89,6 +88,10 @@ python3 ./preset_upgrade_stress_test/preset_upgrade_stress_test.py \
 --launch-arg enable_left_ir=true \
 --launch-arg enable_right_ir=true
 ```
+
+`sensor_msgs/Image` 以像素值无损的 PNG 保存（固定无损压缩级别 1），16 位深度值保持不变；
+`sensor_msgs/CompressedImage` 不解码、不校验，直接将消息 `data` 原始字节保存为 `.jpg`。
+自动发现只选择 `Image`，压缩话题必须显式指定。
 
 ### 配置文件
 
@@ -118,11 +121,11 @@ preset_upgrade_stress_test/results/YYYYMMDD_HHMMSS_preset_upgrade/
 ├── logs/test_XXXX/<camera>/upgrade.log     # firmware_update_tool 输出
 ├── logs/test_XXXX/<camera>/<camera>.launch.log  # launch 输出
 ├── logs/test_XXXX/<camera>/sdk/Log/         # 升级工具及相机 SDK debug 日志
-└── images/                                # 按相机及已启用图像流归类的 JPG 图像
-    ├── camera_01/color/image_0001.jpg
-    ├── camera_01/depth/image_0001.jpg
-    ├── camera_02/ir_left/image_0001.jpg
-    └── camera_02/ir_right/image_0001.jpg
+└── images/                                # raw PNG 和 CompressedImage 原始 JPG
+    ├── camera_01/color/image_0001.png
+    ├── camera_01/color/image_0002.jpg
+    ├── camera_01/depth/image_0001.png
+    └── camera_02/ir_left/image_0001.png
 ```
 
 每台相机的每个流独立编号，并在后续压测轮次继续递增；已有图片不会被覆盖。

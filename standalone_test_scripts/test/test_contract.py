@@ -6,6 +6,9 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -62,6 +65,7 @@ REMOVED_OPTIONS = {
     "--buff_size",
     "--save_csv",
     "--disable_csv",
+    "--jpg-quality",
 }
 
 
@@ -376,10 +380,79 @@ def test_image_saving_uses_stream_directories_and_continuing_indices(tmp_path):
         color = sequence.next_path("/camera_01/color/image_raw", "camera_01")
         other_camera = sequence.next_path("/camera_02/depth/image_raw", "camera_02")
 
-        assert first == output_root / "camera_01" / "depth" / "image_0004.jpg"
-        assert second == output_root / "camera_01" / "depth" / "image_0005.jpg"
-        assert color == output_root / "camera_01" / "color" / "image_0001.jpg"
-        assert other_camera == output_root / "camera_02" / "depth" / "image_0001.jpg"
+        assert first == output_root / "camera_01" / "depth" / "image_0004.png"
+        assert second == output_root / "camera_01" / "depth" / "image_0005.png"
+        assert color == output_root / "camera_01" / "color" / "image_0001.png"
+        assert other_camera == output_root / "camera_02" / "depth" / "image_0001.png"
+        compressed = sequence.next_path(
+            "/camera_01/color/image_raw/compressed", "camera_01", ".jpg"
+        )
+        assert compressed == output_root / "camera_01" / "color" / "image_0002.jpg"
+
+
+def test_all_image_savers_preserve_uint16_png_and_compressed_bytes(tmp_path):
+    cv2 = pytest.importorskip("cv2")
+    np = pytest.importorskip("numpy")
+    pixels = np.array([[0, 1, 1024], [4096, 32768, 65535]], dtype=np.uint16)
+    raw_message = SimpleNamespace(
+        width=3,
+        height=2,
+        encoding="16UC1",
+        step=6,
+        is_bigendian=0,
+        data=pixels.tobytes(),
+    )
+    compressed_message = SimpleNamespace(data=b"not-validated-compressed-payload")
+
+    class FakeBridge:
+        def imgmsg_to_cv2(self, _message, desired_encoding):
+            assert desired_encoding == "passthrough"
+            return pixels.copy()
+
+    for test_id in ("export_load", "preset_upgrade", "launch_param_load"):
+        module = load_script(SCRIPTS[test_id])
+        topic = "/camera_01/depth/image_raw"
+        raw_path = tmp_path / test_id / "raw.png"
+        compressed_path = tmp_path / test_id / "compressed.jpg"
+
+        if test_id == "export_load":
+            saver = object.__new__(module.ImageSaver)
+            saver.metadata = {topic: {"topic_kind": "raw"}}
+            saver._bridge = FakeBridge()
+            saver._cv2 = cv2
+            saver._write_image(topic, raw_message, raw_path)
+            saver.metadata[topic]["topic_kind"] = "compressed"
+            saver._write_image(topic, compressed_message, compressed_path)
+        else:
+            saver = object.__new__(module.ImageCaptureMonitor)
+            saver.state = {topic: {"topic_kind": "raw"}}
+            saver._bridge = FakeBridge()
+            saver._cv2 = cv2
+            saver._write_image(topic, raw_message, raw_path)
+            saver.state[topic]["topic_kind"] = "compressed"
+            saver._write_image(topic, compressed_message, compressed_path)
+
+        decoded = cv2.imread(str(raw_path), cv2.IMREAD_UNCHANGED)
+        assert decoded.dtype == np.uint16
+        assert np.array_equal(decoded, pixels)
+        assert compressed_path.read_bytes() == compressed_message.data
+
+    module = load_script(SCRIPTS["stream_toggle"])
+    writer = module.ImageWriter(tmp_path / "stream_toggle")
+    writer.bridge = FakeBridge()
+    writer.cv2 = cv2
+    raw_target = module.save_image_target_from_topic(
+        "/camera_01/depth/image_raw"
+    )
+    compressed_target = module.save_image_target_from_topic(
+        "/camera_01/depth/image_raw/compressed"
+    )
+    raw_record = writer.write(raw_target, raw_message)
+    compressed_record = writer.write(compressed_target, compressed_message)
+    decoded = cv2.imread(raw_record["path"], cv2.IMREAD_UNCHANGED)
+    assert decoded.dtype == np.uint16
+    assert np.array_equal(decoded, pixels)
+    assert Path(compressed_record["path"]).read_bytes() == compressed_message.data
 
 
 def test_default_image_discovery_finds_all_raw_streams_per_camera():
@@ -429,3 +502,26 @@ def test_default_image_discovery_finds_all_raw_streams_per_camera():
         timeout=0.1,
         settle_seconds=0.0,
     ) == expected_topics[:3]
+
+
+def test_explicit_compressed_topics_resolve_to_compressed_message_type():
+    topic_types = {
+        "/camera/color/image_raw": ["sensor_msgs/msg/Image"],
+        "/camera/color/image_raw/compressed": [
+            "sensor_msgs/msg/CompressedImage"
+        ],
+    }
+    for test_id in ("export_load", "preset_upgrade", "launch_param_load"):
+        module = load_script(SCRIPTS[test_id])
+        harness_type = (
+            module.RosHarness if test_id == "export_load" else module.RosImageHarness
+        )
+        harness = object.__new__(harness_type)
+        harness.get_topic_names_and_types = lambda: topic_types
+
+        assert harness.resolve_image_topic_kind(
+            "/camera/color/image_raw"
+        ) == "raw"
+        assert harness.resolve_image_topic_kind(
+            "/camera/color/image_raw/compressed"
+        ) == "compressed"

@@ -87,14 +87,17 @@ python3 ./launch_param_load_stress/launch_param_load_stress.py \
 | `--topic-timeout SECS` | `20` | Max wait for each enabled stream topic |
 | `--service-timeout SECS` | `15` | Max wait for each param/service query |
 | `--save-image-count N` | `1` | Images saved per selected topic per camera (`0` = disabled) |
-| `--image-topic` | auto-discovered | When specified, only these topics are saved; repeatable, supports `{camera}` |
-| `--jpg-quality Q` | `80` | JPEG quality for saved images (1–100) |
+| `--image-topic` | auto-discovered | Explicit `Image` or `CompressedImage` topic to save; repeatable, supports `{camera}` |
 | `--skip-topic-check` | — | Skip image topic verification |
 | `--skip-service-check` | — | Skip getter service verification |
 
 By default, image saving discovers every published `sensor_msgs/Image` stream
 under each configured camera namespace. Supplying one or more `--image-topic`
 values restricts saving to exactly those topics.
+Raw `Image` messages are saved as pixel-lossless PNG files at fixed lossless compression level 1
+and retain 16-bit depth values.
+`CompressedImage` messages are not decoded or validated; their `data` bytes are written directly
+to `.jpg`. Auto-discovery does not include compressed topics.
 
 ### Config File
 
@@ -132,10 +135,10 @@ launch_param_load_stress/results/YYYYMMDD_HHMMSS_launch_param_load_stress/
 ├── test_0002/
 │   └── ...
 ├── images/                # Present only when --save-image-count > 0
-│   ├── camera_01/color/image_0001.jpg
-│   ├── camera_01/depth/image_0001.jpg
-│   ├── camera_02/ir_left/image_0001.jpg
-│   └── camera_02/ir_right/image_0001.jpg
+│   ├── camera_01/color/image_0001.png
+│   ├── camera_01/color/image_0002.jpg
+│   ├── camera_01/depth/image_0001.png
+│   └── camera_02/ir_left/image_0001.png
 ├── summary.md             # Per-run pass/fail summary
 ├── events.jsonl           # Structured lifecycle and progress events
 └── result.json            # Machine-readable result for all runs

@@ -170,6 +170,30 @@ def test_stream_off_and_on_preview_times_default_to_four_and_keep_legacy_aliases
     assert legacy.stream_on_preview_seconds == "8"
 
 
+def test_save_image_topics_accept_raw_and_matching_compressed_sources():
+    module = load_script()
+
+    config = module.validate_args(
+        module.parse_args(
+            [
+                "--launch-file",
+                "test.launch.py",
+                "--image-topic",
+                "/camera/color/image_raw",
+                "--save-image-topic",
+                "/camera/color/image_raw",
+                "--save-image-topic",
+                "/camera/color/image_raw/compressed",
+            ]
+        )
+    )
+
+    assert config["save_image_topics"] == [
+        "/camera/color/image_raw",
+        "/camera/color/image_raw/compressed",
+    ]
+
+
 def test_stream_profile_parser_supports_nested_namespace_and_camera_placeholder():
     module = load_script()
 
@@ -643,7 +667,10 @@ def test_all_disabled_state_requires_every_target_to_be_quiet(monkeypatch):
 
 def test_image_paths_are_per_camera_stream_and_never_overwrite(tmp_path):
     module = load_script()
-    target = module.stream_target_from_topic("/camera_01/depth/image_raw")
+    target = module.save_image_target_from_topic("/camera_01/depth/image_raw")
+    compressed = module.save_image_target_from_topic(
+        "/camera_01/depth/image_raw/compressed"
+    )
     existing = tmp_path / "camera_01" / "depth" / "image_0003.jpg"
     existing.parent.mkdir(parents=True)
     existing.write_bytes(b"existing")
@@ -651,11 +678,42 @@ def test_image_paths_are_per_camera_stream_and_never_overwrite(tmp_path):
     sequence = module.ImagePathSequence(tmp_path)
 
     assert sequence.next_path(target) == (
-        tmp_path / "camera_01" / "depth" / "image_0004.jpg"
+        tmp_path / "camera_01" / "depth" / "image_0004.png"
     )
-    assert sequence.next_path(target) == (
+    assert sequence.next_path(compressed) == (
         tmp_path / "camera_01" / "depth" / "image_0005.jpg"
     )
+
+
+def test_save_image_topics_map_strictly_to_selected_raw_streams():
+    module = load_script()
+    targets = [module.stream_target_from_topic("/camera_01/color/image_raw")]
+    topic_types = {
+        "/camera_01/color/image_raw": ["sensor_msgs/msg/Image"],
+        "/camera_01/color/image_raw/compressed": [
+            "sensor_msgs/msg/CompressedImage"
+        ],
+    }
+
+    mapped = module.build_save_image_targets(
+        targets,
+        [
+            "/camera_01/color/image_raw",
+            "/camera_01/color/image_raw/compressed",
+        ],
+        topic_types,
+    )
+
+    assert [item.topic_kind for item in mapped[targets[0].topic]] == [
+        "raw",
+        "compressed",
+    ]
+    with pytest.raises(RuntimeError, match="does not match a selected stream"):
+        module.build_save_image_targets(
+            targets,
+            ["/camera_01/depth/image_raw/compressed"],
+            topic_types,
+        )
 
 
 def test_stream_monitor_tracks_quiet_stability_and_max_gap(monkeypatch):

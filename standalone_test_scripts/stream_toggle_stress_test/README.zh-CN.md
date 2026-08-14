@@ -15,7 +15,7 @@ English: [README.md](README.md)
 | 流配置切换 | 分辨率、帧率、出流格式 | 可配置 A、B 两组 profile，在完整循环开始时交替切换 |
 | 开关时间 | 独立可配置 | 开流+预览时间和关流时间默认均为 4 秒，单位秒 |
 | 出流验证 | 支持 | 验证停流、恢复稳定性、最大帧间隔、分辨率、实测帧率和 ROS encoding |
-| 循环存图 | 支持 | 每路流验证完成后立即保存该路图像，存图数量和超时可配置 |
+| 循环存图 | raw PNG、压缩原图 JPG | 每路验证完成后立即保存；每路可配置一个或多个存图话题 |
 | 服务重试 | 支持 | 服务首次调用失败时重试一次；重试成功仍记录为警告 |
 | 运行上限 | 时长、循环次数 | 可单独或同时配置，任一上限到达即结束 |
 
@@ -74,8 +74,8 @@ profile 校验，例如 `MJPG`、`RGB888`、`YUYV`、`Y8`、`Y16`。由于多个
 ```
 
 多相机服务调用按相机命名空间确定性排序；每台相机的一次服务调用会整体开关该 launch
-中为该相机启用的所有流。显式 `--image-topic` 控制验证和存图清单，但整体服务仍会影响
-该相机所有已启用流。
+中为该相机启用的所有流。显式 `--image-topic` 控制验证清单，`--save-image-topic` 控制
+存图清单，但整体服务仍会影响该相机所有已启用流。
 
 驱动开关一路流时会重建相机 pipeline，因此工具会监控多相机 launch 中全部选中流，
 检查同一相机及其他相机是否受到连带影响。逐路模式按相机命名空间、流名排序，一次只
@@ -186,6 +186,20 @@ python3 ./stream_toggle_stress_test/stream_toggle_stress_test.py \
 `sensor_msgs/Image`，且对应 `toggle_<stream>` 服务必须存在，否则前置检查失败。
 `{camera}` 占位符仅在传入单个 `--camera` 时可用。
 
+未传 `--save-image-topic` 时，每路默认保存其目标 `image_raw`。需要同时保存原始图和
+压缩图时，可为同一路重复指定 raw 话题及其严格对应的 `/compressed` 话题：
+
+```bash
+--image-topic /camera_01/color/image_raw \
+--save-image-topic /camera_01/color/image_raw \
+--save-image-topic /camera_01/color/image_raw/compressed
+```
+
+`sensor_msgs/Image` 以像素值无损的 PNG 保存（固定无损压缩级别 1），16 位深度值保持不变；
+`sensor_msgs/CompressedImage` 不解码、不校验，直接将消息 `data` 原始字节保存为 `.jpg`。
+压缩存图话题必须是已选目标 raw 话题追加 `/compressed`，且必须显式指定；自动发现只
+选择原始图。`--save-image-count` 对每个存图话题分别生效。
+
 多相机切换 profile 时，A、B 两组必须包含完全相同的话题集合；每台相机的一组配置会
 在一次 `/<camera_name>/set_stream_profile` 请求中批量提交。例如：
 
@@ -231,6 +245,7 @@ ROS encoding 必须不同。不在 A/B 配置中的其他目标流不会改变 p
 | `--launch-arg` | — | 附加 launch 参数，可重复传入 |
 | `--camera` | 空 | 单相机 launch 参数，最多一个 |
 | `--image-topic` | 自动发现 | 严格指定目标原始图像流，可重复传入 |
+| `--save-image-topic` | 目标 raw 话题 | 存图来源，可重复指定目标 raw 话题及其 `/compressed` 话题 |
 | `--toggle-mode` | `individual` | `individual` 逐路开关（ROS1/ROS2）；`all` 整体开关（当前仅 ROS2） |
 | `--switch-stream-profile` | `0` | `0` 不切换；`1` 在 A/B 两组分辨率、帧率和格式间交替切换 |
 | `--stream-profile-a` | 空 | A 组配置，格式 `TOPIC=WIDTHxHEIGHT@FPS[:FORMAT]`，可重复传入 |
@@ -246,15 +261,14 @@ ROS encoding 必须不同。不在 A/B 配置中的其他目标流不会改变 p
 | `--service-timeout` | `15` | 单次 toggle 服务调用超时 |
 | `--service-retry-delay` | `1` | 首次服务失败后的重试等待时间 |
 | `--profile-fps-tolerance` | `0.15` | profile 验证允许的实测帧率相对偏差，范围 0–1，最小绝对容差为 1 FPS |
-| `--save-image-count` | `1` | 每路每循环保存 JPG 数量，`0` 为关闭 |
+| `--save-image-count` | `1` | 每个存图话题每循环保存数量，`0` 为关闭 |
 | `--save-image-timeout` | `30` | 每路存图最长等待时间 |
-| `--jpg-quality` | `95` | JPG 质量，1–100 |
 | `--sdk-log-level` | `debug` | 单相机 launch 的 SDK 日志级别；多相机由 launch 预配置 |
 | `--queue-size` | `10` | 图像订阅队列大小 |
 | `--results-dir` | 自动生成 | 自定义结果目录 |
 
-启用存图需要 `cv_bridge` 和 OpenCV；脚本会在启动 launch 前检查依赖。可通过
-`--save-image-count 0` 禁用存图。
+保存 raw PNG 需要 `cv_bridge` 和 OpenCV；只保存 `CompressedImage` 原始字节时不需要
+图像解码。可通过 `--save-image-count 0` 禁用存图。
 
 ## 结果文件
 
@@ -264,9 +278,9 @@ stream_toggle_stress_test/results/YYYYMMDD_HHMMSS_stream_toggle/
 │   ├── camera.launch.log       # 整次运行的连续 launch 日志
 │   └── sdk/                    # Orbbec SDK 日志目录
 ├── images/
-│   ├── camera_01/color/image_0001.jpg
-│   ├── camera_01/depth/image_0001.jpg
-│   └── camera_02/color/image_0001.jpg
+│   ├── camera_01/color/image_0001.png
+│   ├── camera_01/color/image_0002.jpg
+│   └── camera_02/depth/image_0001.png
 ├── summary.md
 ├── events.jsonl
 └── result.json

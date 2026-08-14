@@ -85,13 +85,14 @@ python3 ./launch_param_load_stress/launch_param_load_stress.py \
 | `--topic-timeout SECS` | `20` | 等待每个已启用流 topic 的最大秒数 |
 | `--service-timeout SECS` | `15` | 每次参数/service 查询的最大秒数 |
 | `--save-image-count N` | `1` | 每台相机每个选中流保存的图片数（`0` = 不存图） |
-| `--image-topic` | 自动发现 | 指定后只保存这些 topic，可重复传入并支持 `{camera}` |
-| `--jpg-quality Q` | `80` | 保存图片的 JPEG 压缩质量（1–100） |
+| `--image-topic` | 自动发现 | 指定后只保存这些 `Image` 或 `CompressedImage` topic，可重复传入并支持 `{camera}` |
 | `--skip-topic-check` | — | 跳过图像 topic 验证 |
 | `--skip-service-check` | — | 跳过 getter service 验证 |
 
 默认自动发现每个相机命名空间下所有已发布的 `sensor_msgs/Image` 图像流。
 传入一个或多个 `--image-topic` 后，将只保存显式指定的 topic。
+原始 `Image` 以像素值无损的 PNG 保存（固定无损压缩级别 1），16 位深度值保持不变；`CompressedImage`
+不解码、不校验，直接将消息 `data` 原始字节保存为 `.jpg`。自动发现不包含压缩话题。
 
 ### 配置文件
 
@@ -125,10 +126,10 @@ launch_param_load_stress/results/YYYYMMDD_HHMMSS_launch_param_load_stress/
 ├── test_0002/
 │   └── ...
 ├── images/                # 仅在 --save-image-count > 0 时生成
-│   ├── camera_01/color/image_0001.jpg
-│   ├── camera_01/depth/image_0001.jpg
-│   ├── camera_02/ir_left/image_0001.jpg
-│   └── camera_02/ir_right/image_0001.jpg
+│   ├── camera_01/color/image_0001.png
+│   ├── camera_01/color/image_0002.jpg
+│   ├── camera_01/depth/image_0001.png
+│   └── camera_02/ir_left/image_0001.png
 ├── summary.md             # 每轮通过/失败汇总
 ├── events.jsonl           # 结构化生命周期和进度事件
 └── result.json            # 所有轮次的机器可读结果

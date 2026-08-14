@@ -65,7 +65,7 @@ python3 ./export_load_stress_test/export_load_stress_test.py \
 | `--duration` | empty | Optional maximum wall time; the first configured limit reached stops the run |
 | `--sdk-log-level` | `debug` | Orbbec SDK log level |
 | `--save-image-count` | `1` | Images saved per topic per test (`0` = disabled) |
-| `--image-topic` | auto-discovered | When specified, only these topics are monitored and saved; repeatable |
+| `--image-topic` | auto-discovered | Explicit `Image` or `CompressedImage` topic to monitor and save; repeatable |
 | `--config-json` | see Config File | JSON files to alternate; repeatable |
 
 By default, every published `sensor_msgs/Image` stream under each configured
@@ -77,6 +77,11 @@ monitoring and saving to an explicit set:
 --image-topic /{camera}/depth/image_raw \
 --image-topic /{camera}/ir/image_raw
 ```
+
+`sensor_msgs/Image` messages are saved as pixel-lossless PNG files at fixed lossless compression
+level 1, preserving 16-bit depth values. `sensor_msgs/CompressedImage` messages are not decoded or validated; their `data` bytes
+are written directly to `.jpg`. Auto-discovery selects only `Image`; compressed topics must be
+specified explicitly with `--image-topic`.
 
 ### Config File
 
@@ -103,11 +108,11 @@ export_load_stress_test/results/YYYYMMDD_HHMMSS_export_load/
 ├── summary.md       # Final result and per-test pass/fail status
 ├── result.json      # Full machine-readable result
 ├── events.jsonl     # Structured lifecycle and progress events
-├── images/          # JPG images grouped by camera and enabled stream
-│   ├── camera_01/color/image_0001.jpg
-│   ├── camera_01/depth/image_0001.jpg
-│   ├── camera_02/ir_left/image_0001.jpg
-│   └── camera_02/ir_right/image_0001.jpg
+├── images/          # Raw PNG and byte-for-byte CompressedImage JPG files
+│   ├── camera_01/color/image_0001.png
+│   ├── camera_01/color/image_0002.jpg
+│   ├── camera_01/depth/image_0001.png
+│   └── camera_02/ir_left/image_0001.png
 ├── exports/         # Exported JSON and failure diffs per test/camera
 ├── logs/test_XXXX/<camera>/<camera>.launch.log  # Per-test ROS launch log
 └── logs/test_XXXX/<camera>/sdk/Log/<camera>/  # Per-test camera SDK debug logs

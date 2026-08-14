@@ -30,13 +30,17 @@ from _test_protocol import (
 
 ENV_READY_VAR = "STREAM_TOGGLE_STRESS_TEST_ENV_READY"
 INTERRUPTED = False
-TOOL_VERSION = "1.3"
+TOOL_VERSION = "1.4"
 TEST_ID = "stream_toggle_stress_test"
 DEFAULT_STRESS_LAUNCH_ARGS = {
     "enable_heartbeat": "true",
     "enable_firmware_log": "true",
 }
 RAW_IMAGE_TYPES = {"sensor_msgs/msg/Image", "sensor_msgs/Image"}
+COMPRESSED_IMAGE_TYPES = {
+    "sensor_msgs/msg/CompressedImage",
+    "sensor_msgs/CompressedImage",
+}
 SET_BOOL_TYPES = {"std_srvs/srv/SetBool", "std_srvs/SetBool"}
 SET_STREAM_PROFILE_TYPES = {
     "orbbec_camera_msgs/srv/SetStreamProfile",
@@ -293,6 +297,15 @@ class StreamTarget:
 
 
 @dataclass(frozen=True)
+class SaveImageTarget:
+    topic: str
+    target_topic: str
+    topic_kind: str
+    camera_name: str
+    stream: str
+
+
+@dataclass(frozen=True)
 class StreamGroupTarget:
     camera_namespace: str
     camera_name: str
@@ -339,6 +352,68 @@ def stream_target_from_topic(topic: str) -> StreamTarget:
     camera_name = "_".join(namespace_parts)
     service = f"{camera_namespace}/toggle_{stream}"
     return StreamTarget(normalized, camera_namespace, camera_name, stream, service)
+
+
+def save_image_target_from_topic(topic: str) -> SaveImageTarget:
+    normalized = normalize_topic(topic)
+    compressed_suffix = "/compressed"
+    if normalized.endswith(compressed_suffix):
+        target_topic = normalized[: -len(compressed_suffix)]
+        topic_kind = "compressed"
+    else:
+        target_topic = normalized
+        topic_kind = "raw"
+    stream_target = stream_target_from_topic(target_topic)
+    return SaveImageTarget(
+        topic=normalized,
+        target_topic=stream_target.topic,
+        topic_kind=topic_kind,
+        camera_name=stream_target.camera_name,
+        stream=stream_target.stream,
+    )
+
+
+def build_save_image_targets(
+    targets: Sequence[StreamTarget],
+    requested_topics: Sequence[str],
+    topic_types: Dict[str, List[str]],
+) -> Dict[str, List[SaveImageTarget]]:
+    selected_topics = {target.topic for target in targets}
+    topics = list(requested_topics) if requested_topics else sorted(selected_topics)
+    by_target: Dict[str, List[SaveImageTarget]] = {
+        target.topic: [] for target in targets
+    }
+    errors: List[str] = []
+    for topic in topics:
+        try:
+            save_target = save_image_target_from_topic(topic)
+        except ValueError as exc:
+            errors.append(str(exc))
+            continue
+        if save_target.target_topic not in selected_topics:
+            errors.append(
+                f"save image topic does not match a selected stream: {save_target.topic}"
+            )
+            continue
+        advertised_types = topic_types.get(save_target.topic, [])
+        expected_types = (
+            COMPRESSED_IMAGE_TYPES
+            if save_target.topic_kind == "compressed"
+            else RAW_IMAGE_TYPES
+        )
+        if not advertised_types:
+            errors.append(f"save image topic not advertised: {save_target.topic}")
+            continue
+        if not expected_types.intersection(advertised_types):
+            errors.append(
+                f"save image topic has incompatible type: {save_target.topic} "
+                f"({', '.join(advertised_types)})"
+            )
+            continue
+        by_target[save_target.target_topic].append(save_target)
+    if errors:
+        raise RuntimeError("save image topic preflight failed: " + "; ".join(errors))
+    return by_target
 
 
 def parse_stream_profile_spec(raw: str, camera_name: str = "") -> StreamProfileSpec:
@@ -478,6 +553,7 @@ class RosHarness:
         self._rclpy = None
         self._rospy = None
         self._image_type = None
+        self._compressed_image_type = None
         self._set_bool_type = None
         self._set_stream_profile_type = None
         self._set_stream_profile_request_type = None
@@ -492,7 +568,7 @@ class RosHarness:
             try:
                 import rclpy
                 from rclpy.qos import qos_profile_sensor_data
-                from sensor_msgs.msg import Image
+                from sensor_msgs.msg import CompressedImage, Image
                 from std_srvs.srv import SetBool
             except Exception as exc:  # noqa: BLE001
                 raise RuntimeError(
@@ -504,6 +580,7 @@ class RosHarness:
             self._rclpy = rclpy
             self.node = rclpy.create_node(self.node_name)
             self._image_type = Image
+            self._compressed_image_type = CompressedImage
             self._set_bool_type = SetBool
             self._sensor_qos = qos_profile_sensor_data
             if self.enable_profile_switch:
@@ -522,7 +599,7 @@ class RosHarness:
             try:
                 import rosservice
                 import rospy
-                from sensor_msgs.msg import Image
+                from sensor_msgs.msg import CompressedImage, Image
                 from std_srvs.srv import SetBool
             except Exception as exc:  # noqa: BLE001
                 raise RuntimeError(
@@ -534,6 +611,7 @@ class RosHarness:
             self._rospy = rospy
             self._rosservice = rosservice
             self._image_type = Image
+            self._compressed_image_type = CompressedImage
             self._set_bool_type = SetBool
             if self.enable_profile_switch:
                 try:
@@ -576,14 +654,17 @@ class RosHarness:
             services[normalized] = [type_name] if type_name else []
         return services
 
-    def create_image_subscription(self, topic: str, callback):
+    def create_image_subscription(self, topic: str, callback, topic_kind: str = "raw"):
+        message_type = (
+            self._compressed_image_type if topic_kind == "compressed" else self._image_type
+        )
         if self.ros_version == "2":
             subscription = self.node.create_subscription(
-                self._image_type, topic, callback, self._sensor_qos
+                message_type, topic, callback, self._sensor_qos
             )
         else:
             subscription = self._rospy.Subscriber(
-                topic, self._image_type, callback, queue_size=self.queue_size
+                topic, message_type, callback, queue_size=self.queue_size
             )
         self.subscriptions.append(subscription)
         return subscription
@@ -1562,7 +1643,7 @@ class ImagePathSequence:
         self.output_root = output_root
         self._next_indices: Dict[Tuple[str, str], int] = {}
 
-    def next_path(self, target: StreamTarget) -> Path:
+    def next_path(self, target: SaveImageTarget) -> Path:
         key = (target.camera_name, target.stream)
         directory = self.output_root / sanitize_path_part(target.camera_name) / sanitize_path_part(
             target.stream
@@ -1570,52 +1651,99 @@ class ImagePathSequence:
         if key not in self._next_indices:
             highest = 0
             if directory.is_dir():
-                for path in directory.glob("image_*.jpg"):
-                    match = re.fullmatch(r"image_(\d+)\.jpg", path.name)
+                for path in directory.glob("image_*.*"):
+                    match = re.fullmatch(r"image_(\d+)\.(?:png|jpg)", path.name)
                     if match:
                         highest = max(highest, int(match.group(1)))
             self._next_indices[key] = highest + 1
         index = self._next_indices[key]
         self._next_indices[key] = index + 1
-        return directory / f"image_{index:04d}.jpg"
+        suffix = ".jpg" if target.topic_kind == "compressed" else ".png"
+        return directory / f"image_{index:04d}{suffix}"
+
+
+class ImageSaveMonitor:
+    def __init__(self, harness: RosHarness, targets: Sequence[SaveImageTarget]) -> None:
+        self.harness = harness
+        self.lock = threading.Lock()
+        self.state: Dict[str, Dict[str, Any]] = {
+            target.topic: {"sequence": 0, "latest_message": None}
+            for target in targets
+        }
+        self.subscriptions = [
+            harness.create_image_subscription(
+                target.topic,
+                lambda message, name=target.topic: self._on_message(name, message),
+                topic_kind=target.topic_kind,
+            )
+            for target in targets
+        ]
+
+    def _on_message(self, topic: str, message: Any) -> None:
+        with self.lock:
+            item = self.state[topic]
+            item["sequence"] += 1
+            item["latest_message"] = message
+
+    def latest(self, topic: str) -> Tuple[int, Any]:
+        with self.lock:
+            item = self.state[topic]
+            return int(item["sequence"]), item["latest_message"]
+
+    def close(self) -> None:
+        for subscription in list(self.subscriptions):
+            self.harness.destroy_subscription(subscription)
+        self.subscriptions = []
 
 
 class ImageWriter:
-    def __init__(self, output_root: Path, jpg_quality: int) -> None:
+    def __init__(self, output_root: Path) -> None:
+        self.cv2 = None
+        self.bridge = None
+        self.paths = ImagePathSequence(output_root)
+
+    def _ensure_cv_tools(self):
+        if self.cv2 is not None and self.bridge is not None:
+            return self.bridge, self.cv2
         try:
             import cv2
             from cv_bridge import CvBridge
         except Exception as exc:  # noqa: BLE001
             raise RuntimeError(
-                "saving JPG images requires cv_bridge and OpenCV Python modules. "
+                "saving raw images as PNG requires cv_bridge and OpenCV Python modules. "
                 "Source the camera driver environment or set --save-image-count 0 "
                 f"to disable image saving. Original error: {exc}"
             ) from exc
         self.cv2 = cv2
         self.bridge = CvBridge()
-        self.jpg_quality = jpg_quality
-        self.paths = ImagePathSequence(output_root)
+        return self.bridge, self.cv2
 
-    def write(self, target: StreamTarget, message: Any) -> Dict[str, Any]:
+    def write(self, target: SaveImageTarget, message: Any) -> Dict[str, Any]:
         path = self.paths.next_path(target)
         ensure_dir(path.parent)
+        if target.topic_kind == "compressed":
+            path.write_bytes(bytes(getattr(message, "data", b"") or b""))
+            return {
+                "path": str(path),
+                "topic": target.topic,
+                "topic_kind": target.topic_kind,
+            }
+        bridge, cv2 = self._ensure_cv_tools()
         encoding = str(getattr(message, "encoding", "") or "")
-        image = self.bridge.imgmsg_to_cv2(message, desired_encoding="passthrough")
+        image = bridge.imgmsg_to_cv2(message, desired_encoding="passthrough")
         if encoding.lower() == "rgb8":
-            image = self.cv2.cvtColor(image, self.cv2.COLOR_RGB2BGR)
-        elif encoding.lower() in {"mono16", "16uc1"}:
-            image = self.cv2.normalize(image, None, 0, 255, self.cv2.NORM_MINMAX)
-            image = image.astype("uint8")
-        ok = self.cv2.imwrite(
-            str(path), image, [int(self.cv2.IMWRITE_JPEG_QUALITY), self.jpg_quality]
+            image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+        elif encoding.lower() == "rgba8":
+            image = cv2.cvtColor(image, cv2.COLOR_RGBA2BGRA)
+        ok = cv2.imwrite(
+            str(path), image, [int(cv2.IMWRITE_PNG_COMPRESSION), 1]
         )
         if not ok:
-            raise RuntimeError(f"failed to write JPG image: {path}")
+            raise RuntimeError(f"failed to write PNG image: {path}")
         return {
             "path": str(path),
-            "width": int(getattr(message, "width", 0) or 0),
-            "height": int(getattr(message, "height", 0) or 0),
-            "encoding": encoding,
+            "topic": target.topic,
+            "topic_kind": target.topic_kind,
         }
 
 
@@ -1623,34 +1751,45 @@ def save_target_images(
     *,
     session: LaunchSession,
     harness: RosHarness,
-    monitor: StreamMonitor,
+    monitor: ImageSaveMonitor,
     writer: ImageWriter,
-    target: StreamTarget,
+    targets: Sequence[SaveImageTarget],
     count: int,
     timeout: float,
 ) -> List[Dict[str, Any]]:
-    if count <= 0:
+    if count <= 0 or not targets:
         return []
     saved: List[Dict[str, Any]] = []
-    last_sequence, _ = monitor.latest(target.topic)
+    saved_counts = {target.topic: 0 for target in targets}
+    last_sequences = {
+        target.topic: monitor.latest(target.topic)[0] for target in targets
+    }
     deadline = time.monotonic() + timeout
     last_error = ""
-    while time.monotonic() < deadline and len(saved) < count:
+    while time.monotonic() < deadline and any(
+        saved_counts[target.topic] < count for target in targets
+    ):
         session.assert_running()
         harness.spin_once(0.1)
-        sequence, message = monitor.latest(target.topic)
-        if sequence <= last_sequence or message is None:
-            continue
-        last_sequence = sequence
-        try:
-            saved.append(writer.write(target, message))
-        except Exception as exc:  # noqa: BLE001
-            last_error = str(exc)
-    if len(saved) != count:
+        for target in targets:
+            if saved_counts[target.topic] >= count:
+                continue
+            sequence, message = monitor.latest(target.topic)
+            if sequence <= last_sequences[target.topic] or message is None:
+                continue
+            last_sequences[target.topic] = sequence
+            try:
+                saved.append(writer.write(target, message))
+                saved_counts[target.topic] += 1
+            except Exception as exc:  # noqa: BLE001
+                last_error = str(exc)
+    if any(saved_counts[target.topic] != count for target in targets):
         suffix = f"; last error: {last_error}" if last_error else ""
+        counts = ", ".join(
+            f"{target.topic}={saved_counts[target.topic]}/{count}" for target in targets
+        )
         raise RuntimeError(
-            f"saved {len(saved)}/{count} JPG image(s) for {target.topic} "
-            f"within {timeout:.1f}s{suffix}"
+            f"image saving incomplete within {timeout:.1f}s: {counts}{suffix}"
         )
     return saved
 
@@ -1702,7 +1841,7 @@ def build_summary(result: Dict[str, Any]) -> str:
         f"- Completed cycles: {result.get('completed_cycles', 0)}",
         f"- Completed stream operations: {result.get('completed_operations', 0)}",
         f"- Service retry warnings: {len(result.get('warnings', []))}",
-        f"- Saved JPG images: {result.get('saved_image_count', 0)}",
+        f"- Saved images: {result.get('saved_image_count', 0)}",
         f"- Elapsed seconds: {float(result.get('elapsed_seconds', 0.0) or 0.0):.1f}",
         "",
         "## Target Streams",
@@ -1747,6 +1886,30 @@ def validate_args(args) -> Dict[str, Any]:
         )
     if len(set(explicit_topics)) != len(explicit_topics):
         raise ValueError("--image-topic contains duplicate topics")
+    save_image_topics = []
+    for raw_topic in args.save_image_topic:
+        topic = str(raw_topic or "").strip()
+        if not topic:
+            continue
+        if ("{camera}" in topic or "${camera}" in topic) and not camera:
+            raise ValueError("save image topic {camera} placeholder requires one --camera")
+        normalized = normalize_topic(expand_camera_topic(topic, template_camera))
+        save_image_target_from_topic(normalized)
+        save_image_topics.append(normalized)
+    if len(set(save_image_topics)) != len(save_image_topics):
+        raise ValueError("--save-image-topic contains duplicate topics")
+    if explicit_topics:
+        selected_topics = set(explicit_topics)
+        unmatched = [
+            topic
+            for topic in save_image_topics
+            if save_image_target_from_topic(topic).target_topic not in selected_topics
+        ]
+        if unmatched:
+            raise ValueError(
+                "--save-image-topic does not match a selected --image-topic: "
+                + ", ".join(unmatched)
+            )
     profile_switch_enabled = args.switch_stream_profile == 1
     profile_sets: Dict[str, List[StreamProfileSpec]] = {"A": [], "B": []}
     for label, raw_specs in (
@@ -1826,8 +1989,6 @@ def validate_args(args) -> Dict[str, Any]:
         raise ValueError("--run-count must be > 0")
     if args.save_image_count < 0:
         raise ValueError("--save-image-count must be >= 0")
-    if args.jpg_quality < 1 or args.jpg_quality > 100:
-        raise ValueError("--jpg-quality must be in range 1-100")
     if args.queue_size <= 0:
         raise ValueError("--queue-size must be > 0")
     retry_delay = float(args.service_retry_delay)
@@ -1839,6 +2000,7 @@ def validate_args(args) -> Dict[str, Any]:
     return {
         "camera": camera,
         "explicit_topics": explicit_topics,
+        "save_image_topics": save_image_topics,
         "duration": parse_duration(args.duration, 300.0),
         "discovery_timeout": parse_duration(args.topic_discovery_timeout, 30.0),
         "discovery_settle": parse_duration(args.topic_discovery_settle, 2.0),
@@ -1911,6 +2073,8 @@ def run(args) -> int:
         "active_profile_set": "",
         "topic_mode": "manual" if config["explicit_topics"] else "auto",
         "requested_image_topics": config["explicit_topics"],
+        "requested_save_image_topics": config["save_image_topics"],
+        "save_image_topics": [],
         "targets": [],
         "stream_groups": [],
         "skipped_image_topics": [],
@@ -1933,6 +2097,7 @@ def run(args) -> int:
         emit=emit,
     )
     image_writer: Optional[ImageWriter] = None
+    image_save_monitor: Optional[ImageSaveMonitor] = None
     target_may_be_disabled = False
     groups_may_be_disabled = False
     monitor: Optional[StreamMonitor] = None
@@ -1941,7 +2106,7 @@ def run(args) -> int:
 
     try:
         if args.save_image_count > 0:
-            image_writer = ImageWriter(results_dir / "images", args.jpg_quality)
+            image_writer = ImageWriter(results_dir / "images")
         emit("test started", event="phase", phase="starting")
         emit(f"results dir: {results_dir}")
         emit("launch command: " + " ".join(shlex.quote(item) for item in command))
@@ -1961,6 +2126,24 @@ def run(args) -> int:
             )
             result["targets"] = [asdict(target) for target in targets]
             result["skipped_image_topics"] = skipped
+            save_targets_by_topic: Dict[str, List[SaveImageTarget]] = {
+                target.topic: [] for target in targets
+            }
+            if image_writer is not None:
+                save_targets_by_topic = build_save_image_targets(
+                    targets,
+                    config["save_image_topics"],
+                    harness.get_topic_names_and_types(),
+                )
+                all_save_targets = [
+                    save_target
+                    for target in targets
+                    for save_target in save_targets_by_topic[target.topic]
+                ]
+                result["save_image_topics"] = [
+                    asdict(save_target) for save_target in all_save_targets
+                ]
+                image_save_monitor = ImageSaveMonitor(harness, all_save_targets)
             service_types = harness.get_service_names_and_types()
             groups: List[StreamGroupTarget] = []
             if args.toggle_mode == "all":
@@ -2189,14 +2372,14 @@ def run(args) -> int:
                                 config["profile_fps_tolerance"],
                             )
                         groups_may_be_disabled = False
-                        if image_writer is not None:
+                        if image_writer is not None and image_save_monitor is not None:
                             for target in targets:
                                 images = save_target_images(
                                     session=session,
                                     harness=harness,
-                                    monitor=monitor,
+                                    monitor=image_save_monitor,
                                     writer=image_writer,
-                                    target=target,
+                                    targets=save_targets_by_topic[target.topic],
                                     count=args.save_image_count,
                                     timeout=config["save_image_timeout"],
                                 )
@@ -2358,13 +2541,13 @@ def run(args) -> int:
                                 config["profile_fps_tolerance"],
                             )
                         target_may_be_disabled = False
-                        if image_writer is not None:
+                        if image_writer is not None and image_save_monitor is not None:
                             operation["images"] = save_target_images(
                                 session=session,
                                 harness=harness,
-                                monitor=monitor,
+                                monitor=image_save_monitor,
                                 writer=image_writer,
-                                target=target,
+                                targets=save_targets_by_topic[target.topic],
                                 count=args.save_image_count,
                                 timeout=config["save_image_timeout"],
                             )
@@ -2440,6 +2623,11 @@ def run(args) -> int:
             result["cycles"][-1]["status"] = result["status"]
             result["cycles"][-1]["ended_at"] = iso_now()
     finally:
+        if image_save_monitor is not None:
+            try:
+                image_save_monitor.close()
+            except Exception as exc:  # noqa: BLE001
+                result.setdefault("cleanup_errors", []).append(str(exc))
         if monitor is not None:
             try:
                 monitor.close()
@@ -2543,6 +2731,15 @@ def parse_args(argv: Optional[Sequence[str]] = None):
         ),
     )
     parser.add_argument(
+        "--save-image-topic",
+        action="append",
+        default=[],
+        help=(
+            "Image topic to save; repeat to save raw PNG and/or the matching "
+            "image_raw/compressed payload. Defaults to selected raw image topics."
+        ),
+    )
+    parser.add_argument(
         "--toggle-mode",
         choices=("individual", "all"),
         default="individual",
@@ -2601,7 +2798,6 @@ def parse_args(argv: Optional[Sequence[str]] = None):
     )
     parser.add_argument("--save-image-count", type=int, default=1)
     parser.add_argument("--save-image-timeout", default="30")
-    parser.add_argument("--jpg-quality", type=int, default=95)
     parser.add_argument("--queue-size", type=int, default=10)
     parser.add_argument("--results-dir", default="")
     parser.add_argument("--version", action="version", version=f"%(prog)s {TOOL_VERSION}")

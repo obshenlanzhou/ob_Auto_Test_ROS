@@ -15,7 +15,7 @@
     {"name": "cameras", "option": "--camera", "type": "camera-list", "label": "目标相机", "label_en": "Target Cameras", "group": "cameras", "section": "basic", "default": []},
     {"name": "run_count", "option": "--run-count", "type": "integer", "label": "最大循环次数", "label_en": "Run Count", "group": "limits", "section": "basic", "default": "10", "min": 1},
     {"name": "duration", "option": "--duration", "type": "duration", "label": "最长运行时间", "label_en": "Duration", "group": "limits", "section": "basic", "default": ""},
-    {"name": "image_topics", "option": "--image-topic", "type": "list", "label": "图像话题模板", "label_en": "Image Topic Templates", "group": "configuration", "section": "basic", "default": [], "placeholder": "留空则自动发现全部图像流\n/{camera}/color/image_raw"},
+    {"name": "image_topics", "option": "--image-topic", "type": "list", "label": "图像话题模板", "label_en": "Image Topic Templates", "group": "configuration", "section": "basic", "default": [], "placeholder": "留空则自动发现全部原始图像流\n/{camera}/color/image_raw\n/{camera}/color/image_raw/compressed", "note": "Image 保存像素无损 PNG；CompressedImage 的 data 原始字节保存为 JPG。压缩话题必须显式指定。"},
     {"name": "save_image_count", "option": "--save-image-count", "type": "integer", "label": "每话题存图数", "label_en": "Images per Topic", "group": "configuration", "section": "basic", "default": "1", "min": 0},
     {"name": "launch_package", "option": "--launch-package", "type": "text", "label": "Launch 包", "label_en": "Launch Package", "group": "advanced", "section": "advanced", "default": "orbbec_camera"},
     {"name": "launch_args", "option": "--launch-arg", "type": "list", "label": "附加 Launch 参数", "label_en": "Launch Arguments", "group": "advanced", "section": "advanced", "default": ["enable_heartbeat=true", "enable_firmware_log=true"], "placeholder": "enable_heartbeat=true\nenable_firmware_log=true"},
@@ -27,7 +27,6 @@
     {"name": "launch_start_interval", "option": "--launch-start-interval", "type": "number", "label": "相机启动间隔", "label_en": "Launch Start Interval", "group": "advanced", "section": "advanced", "default": "2", "min": 0},
     {"name": "queue_size", "option": "--queue-size", "type": "integer", "label": "队列大小", "label_en": "Queue Size", "group": "advanced", "section": "advanced", "default": "10", "min": 1},
     {"name": "save_image_timeout", "option": "--save-image-timeout", "type": "duration", "label": "存图超时", "label_en": "Image Save Timeout", "group": "advanced", "section": "advanced", "default": "30"},
-    {"name": "jpg_quality", "option": "--jpg-quality", "type": "integer", "label": "JPG 质量", "label_en": "JPG Quality", "group": "advanced", "section": "advanced", "default": "95", "min": 1, "max": 100},
     {"name": "export_service", "option": "--export-service", "type": "text", "label": "导出服务", "label_en": "Export Service", "group": "advanced", "section": "advanced", "default": "/{camera}/export_config_json"},
     {"name": "export_service_type", "option": "--export-service-type", "type": "text", "label": "导出服务类型", "label_en": "Export Service Type", "group": "advanced", "section": "advanced", "default": "orbbec_camera_msgs/srv/SetString"},
     {"name": "service_timeout", "option": "--service-timeout", "type": "duration", "label": "服务超时", "label_en": "Service Timeout", "group": "advanced", "section": "advanced", "default": "30"}

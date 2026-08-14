@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import re
 import shlex
@@ -38,7 +37,7 @@ else:
 
 ENV_READY_VAR = "LAUNCH_PARAM_LOAD_STRESS_ENV_READY"
 INTERRUPTED = False
-TOOL_VERSION = "1.2"
+TOOL_VERSION = "1.3"
 TEST_ID = "launch_param_load_stress"
 DEFAULT_STRESS_LAUNCH_ARGS = {
     "enable_heartbeat": "true",
@@ -709,7 +708,7 @@ STREAM_DIRECTORY_NAMES = {
     "left_color": "color_left",
     "right_color": "color_right",
 }
-IMAGE_FILE_PATTERN = re.compile(r"^image_(\d+)\.jpg$", re.IGNORECASE)
+IMAGE_FILE_PATTERN = re.compile(r"^image_(\d+)\.(?:png|jpg)$", re.IGNORECASE)
 
 
 def image_stream_name(topic: str) -> str:
@@ -731,7 +730,7 @@ class ImagePathSequence:
         self.output_root = output_root
         self._next_indices: Dict[tuple[str, str], int] = {}
 
-    def next_path(self, topic: str, camera_name: str) -> Path:
+    def next_path(self, topic: str, camera_name: str, suffix: str = ".png") -> Path:
         stream_name = image_stream_name(topic)
         safe_camera_name = sanitize_path_part(camera_name or "unknown_camera")
         sequence_key = (safe_camera_name, stream_name)
@@ -744,10 +743,10 @@ class ImagePathSequence:
                 if path.is_file() and (match := IMAGE_FILE_PATTERN.match(path.name))
             ]
             next_index = max(existing_indices, default=0) + 1
-        target = stream_dir / f"image_{next_index:04d}.jpg"
+        target = stream_dir / f"image_{next_index:04d}{suffix}"
         while target.exists():
             next_index += 1
-            target = stream_dir / f"image_{next_index:04d}.jpg"
+            target = stream_dir / f"image_{next_index:04d}{suffix}"
         self._next_indices[sequence_key] = next_index + 1
         return target
 
@@ -761,13 +760,13 @@ class RosImageHarness:
         self._rospy = None
         self.node = None
         self.subscriptions: list = []
-        self.image_type = None
+        self.message_types = {}
 
     def __enter__(self) -> "RosImageHarness":
         if self.ros_version == "2":
             try:
                 import rclpy
-                from sensor_msgs.msg import Image
+                from sensor_msgs.msg import CompressedImage, Image
             except Exception as exc:  # noqa: BLE001
                 raise RuntimeError(
                     "failed to import ROS2 Python modules. Source ROS2 and camera setup "
@@ -777,11 +776,11 @@ class RosImageHarness:
             rclpy.init(args=None)
             self._rclpy = rclpy
             self.node = rclpy.create_node(self.node_name)
-            self.image_type = Image
+            self.message_types = {"raw": Image, "compressed": CompressedImage}
         else:
             try:
                 import rospy
-                from sensor_msgs.msg import Image
+                from sensor_msgs.msg import CompressedImage, Image
             except Exception as exc:  # noqa: BLE001
                 raise RuntimeError(
                     "failed to import ROS1 Python modules. Source ROS1 and camera setup "
@@ -790,14 +789,27 @@ class RosImageHarness:
                 ) from exc
             rospy.init_node(self.node_name, anonymous=True, disable_signals=True)
             self._rospy = rospy
-            self.image_type = Image
+            self.message_types = {"raw": Image, "compressed": CompressedImage}
         return self
 
-    def create_subscription(self, topic: str, callback):
+    def resolve_image_topic_kind(self, topic: str) -> str:
+        topic_types = self.get_topic_names_and_types()
+        candidate_names = [topic, "/" + topic.strip("/")]
+        for candidate_name in candidate_names:
+            for type_name in topic_types.get(candidate_name, []):
+                if type_name in {"sensor_msgs/msg/CompressedImage", "sensor_msgs/CompressedImage"}:
+                    return "compressed"
+                if type_name in {"sensor_msgs/msg/Image", "sensor_msgs/Image"}:
+                    return "raw"
+        return "compressed" if topic.rstrip("/").endswith("/compressed") else "raw"
+
+    def create_subscription(self, topic: str, callback, topic_kind: Optional[str] = None):
+        topic_kind = topic_kind or self.resolve_image_topic_kind(topic)
+        message_type = self.message_types[topic_kind]
         if self.ros_version == "2":
-            sub = self.node.create_subscription(self.image_type, topic, callback, self.queue_size)
+            sub = self.node.create_subscription(message_type, topic, callback, self.queue_size)
         else:
-            sub = self._rospy.Subscriber(topic, self.image_type, callback, queue_size=self.queue_size)
+            sub = self._rospy.Subscriber(topic, message_type, callback, queue_size=self.queue_size)
         self.subscriptions.append(sub)
         return sub
 
@@ -878,13 +890,6 @@ def discover_image_topics(
     )
 
 
-def _valid_image(message: Any) -> bool:
-    width = int(getattr(message, "width", 0) or 0)
-    height = int(getattr(message, "height", 0) or 0)
-    data = getattr(message, "data", b"") or b""
-    return width > 0 and height > 0 and len(data) > 0
-
-
 class ImageCaptureMonitor:
     def __init__(
         self,
@@ -894,22 +899,26 @@ class ImageCaptureMonitor:
         topics: List[str],
         output_root: Path,
         save_images_count: int,
-        jpg_quality: int,
     ) -> None:
         self.harness = harness
         self.camera_name = camera_name
         self.save_images_count = save_images_count
-        self.jpg_quality = jpg_quality
         self.output_root = output_root
         self.state: Dict[str, Dict[str, Any]] = {}
         self._bridge = None
         self._cv2 = None
         self._image_paths = ImagePathSequence(output_root)
         for topic in topics:
-            self.state[topic] = {"saved_files": [], "first_at": None}
+            topic_kind = harness.resolve_image_topic_kind(topic)
+            self.state[topic] = {
+                "saved_files": [],
+                "first_at": None,
+                "topic_kind": topic_kind,
+            }
             harness.create_subscription(
                 topic,
                 lambda msg, t=topic: self._on_message(t, msg),
+                topic_kind=topic_kind,
             )
 
     def _ensure_cv_tools(self):
@@ -920,7 +929,7 @@ class ImageCaptureMonitor:
             from cv_bridge import CvBridge
         except Exception as exc:  # noqa: BLE001
             raise RuntimeError(
-                "saving JPG images requires cv_bridge and OpenCV. "
+                "saving raw images as PNG requires cv_bridge and OpenCV. "
                 "Source the camera driver environment or set --save-image-count 0. "
                 f"Original error: {exc}"
             ) from exc
@@ -928,29 +937,34 @@ class ImageCaptureMonitor:
         self._cv2 = cv2
         return self._bridge, self._cv2
 
-    def _write_jpg(self, message: Any, target_path: Path) -> None:
+    def _write_image(self, topic: str, message: Any, target_path: Path) -> None:
         ensure_dir(target_path.parent)
+        if self.state[topic]["topic_kind"] == "compressed":
+            target_path.write_bytes(bytes(getattr(message, "data", b"") or b""))
+            return
         bridge, cv2 = self._ensure_cv_tools()
         encoding = str(getattr(message, "encoding", "") or "")
         image = bridge.imgmsg_to_cv2(message, desired_encoding="passthrough")
         if encoding.lower() == "rgb8":
             image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-        elif encoding.lower() in {"mono16", "16uc1"}:
-            image = cv2.normalize(image, None, 0, 255, cv2.NORM_MINMAX)
-            image = image.astype("uint8")
-        if not cv2.imwrite(str(target_path), image, [int(cv2.IMWRITE_JPEG_QUALITY), self.jpg_quality]):
-            raise RuntimeError(f"failed to write JPG: {target_path}")
+        elif encoding.lower() == "rgba8":
+            image = cv2.cvtColor(image, cv2.COLOR_RGBA2BGRA)
+        if not cv2.imwrite(
+            str(target_path), image, [int(cv2.IMWRITE_PNG_COMPRESSION), 1]
+        ):
+            raise RuntimeError(f"failed to write PNG: {target_path}")
 
     def _on_message(self, topic: str, message: Any) -> None:
         item = self.state[topic]
-        if item["first_at"] is None and _valid_image(message):
+        if item["first_at"] is None:
             item["first_at"] = time.monotonic()
-        if self.save_images_count <= 0 or not _valid_image(message):
+        if self.save_images_count <= 0:
             return
         if len(item["saved_files"]) >= self.save_images_count:
             return
-        target = self._image_paths.next_path(topic, self.camera_name)
-        self._write_jpg(message, target)
+        suffix = ".jpg" if item["topic_kind"] == "compressed" else ".png"
+        target = self._image_paths.next_path(topic, self.camera_name, suffix)
+        self._write_image(topic, message, target)
         item["saved_files"].append(str(target))
 
     def all_done(self) -> bool:
@@ -975,7 +989,6 @@ def save_topic_images(
     image_topic_templates: List[str],
     output_root: Path,
     save_images_count: int,
-    jpg_quality: int,
     timeout: float,
     emit: StatusLogger,
 ) -> tuple[List[str], List[str]]:
@@ -1004,7 +1017,6 @@ def save_topic_images(
                 topics=image_topics,
                 output_root=output_root,
                 save_images_count=save_images_count,
-                jpg_quality=jpg_quality,
             )
             deadline = time.monotonic() + timeout
             while time.monotonic() < deadline and not monitor.all_done():
@@ -1268,7 +1280,6 @@ def _check_one_camera(
     skip_service_check: bool,
     save_images_count: int,
     image_topic_templates: List[str],
-    jpg_quality: int,
     images_dir: Optional[Path],
     emit: StatusLogger,
 ) -> Dict[str, Any]:
@@ -1319,7 +1330,6 @@ def _check_one_camera(
             image_topic_templates=image_topic_templates,
             output_root=images_dir,
             save_images_count=save_images_count,
-            jpg_quality=jpg_quality,
             timeout=topic_timeout,
             emit=emit,
         )
@@ -1392,7 +1402,6 @@ def run(args) -> int:
     )
     save_images_count = args.save_image_count
     image_topic_templates = [topic.strip() for topic in args.image_topic if topic.strip()]
-    jpg_quality = args.jpg_quality
 
     run_id = datetime.now().strftime("%Y%m%d_%H%M%S_launch_param_load_stress")
     run_started_at = iso_now()
@@ -1508,7 +1517,6 @@ def run(args) -> int:
                         skip_service_check=args.skip_service_check,
                         save_images_count=save_images_count,
                         image_topic_templates=image_topic_templates,
-                        jpg_quality=jpg_quality,
                         images_dir=images_dir,
                         emit=emit,
                     )
@@ -1656,7 +1664,7 @@ def parse_args():
         action="append",
         default=[],
         help=(
-            "Image topic to save; can repeat and supports {camera}. "
+            "Image or CompressedImage topic to save; can repeat and supports {camera}. "
             "When omitted, all published image streams under each camera are discovered."
         ),
     )
@@ -1666,13 +1674,6 @@ def parse_args():
         default=1,
         metavar="N",
         help="Save N images per selected stream topic per camera (0 = disabled)",
-    )
-    parser.add_argument(
-        "--jpg-quality",
-        type=int,
-        default=80,
-        metavar="Q",
-        help="JPEG compression quality 1-100 for saved images (default: 80)",
     )
     parser.add_argument(
         "--version",
@@ -1689,8 +1690,6 @@ def parse_args():
             parser.error("--run-count must be >= 1")
         if args.save_image_count < 0:
             parser.error("--save-image-count must be >= 0")
-        if not 1 <= args.jpg_quality <= 100:
-            parser.error("--jpg-quality must be in range 1-100")
     return args
 
 

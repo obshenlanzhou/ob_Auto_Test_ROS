@@ -63,7 +63,7 @@ python3 ./export_load_stress_test/export_load_stress_test.py \
 | `--duration` | 空 | 可选的最长运行时间；任一已配置上限先达到即结束 |
 | `--sdk-log-level` | `debug` | Orbbec SDK 日志级别 |
 | `--save-image-count` | `1` | 每轮每个 topic 保存的图片数（`0` = 不存图） |
-| `--image-topic` | 自动发现 | 指定后只监控并保存这些 topic，可重复传入 |
+| `--image-topic` | 自动发现 | 指定后只监控并保存这些 `Image` 或 `CompressedImage` topic，可重复传入 |
 | `--config-json` | 见配置文件 | 交替使用的 JSON 文件，可重复传入 |
 
 默认自动发现每个相机命名空间下所有已发布的 `sensor_msgs/Image` 图像流。
@@ -74,6 +74,10 @@ python3 ./export_load_stress_test/export_load_stress_test.py \
 --image-topic /{camera}/depth/image_raw \
 --image-topic /{camera}/ir/image_raw
 ```
+
+`sensor_msgs/Image` 以像素值无损的 PNG 保存（固定无损压缩级别 1），16 位深度值保持不变；
+`sensor_msgs/CompressedImage` 不解码、不校验，直接将消息 `data` 原始字节保存为 `.jpg`。
+自动发现只选择 `Image`；压缩话题必须通过 `--image-topic` 显式指定。
 
 ### 配置文件
 
@@ -100,11 +104,11 @@ export_load_stress_test/results/YYYYMMDD_HHMMSS_export_load/
 ├── summary.md       # 最终结果和每次压测通过/失败状态
 ├── result.json      # 完整机器可读结果
 ├── events.jsonl     # 结构化生命周期和进度事件
-├── images/          # 按相机及已启用图像流归类的 JPG 图像
-│   ├── camera_01/color/image_0001.jpg
-│   ├── camera_01/depth/image_0001.jpg
-│   ├── camera_02/ir_left/image_0001.jpg
-│   └── camera_02/ir_right/image_0001.jpg
+├── images/          # raw 为 PNG；CompressedImage 原始字节为 JPG
+│   ├── camera_01/color/image_0001.png
+│   ├── camera_01/color/image_0002.jpg
+│   ├── camera_01/depth/image_0001.png
+│   └── camera_02/ir_left/image_0001.png
 ├── exports/         # 每次压测/每台相机的导出 JSON 和失败 diff
 ├── logs/test_XXXX/<camera>/<camera>.launch.log  # 每轮 ROS launch 日志
 └── logs/test_XXXX/<camera>/sdk/Log/<camera>/  # 每轮相机 SDK debug 日志

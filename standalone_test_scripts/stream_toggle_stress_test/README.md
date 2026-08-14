@@ -177,6 +177,22 @@ Explicit topics must match `/<camera-namespace>/<stream>/image_raw`, use
 `sensor_msgs/Image`, and advertise the corresponding `toggle_<stream>` service. Otherwise,
 preflight fails. The `{camera}` placeholder is supported only when one `--camera` is provided.
 
+Without `--save-image-topic`, each target saves its raw `image_raw` topic. To save both raw and
+compressed evidence for one stream, repeat the option with the target topic and its strict
+`/compressed` child:
+
+```bash
+--image-topic /camera_01/color/image_raw \
+--save-image-topic /camera_01/color/image_raw \
+--save-image-topic /camera_01/color/image_raw/compressed
+```
+
+`sensor_msgs/Image` is saved as pixel-lossless PNG at fixed lossless compression level 1 and
+retains 16-bit depth values.
+`sensor_msgs/CompressedImage` is not decoded or validated; its `data` bytes are written directly
+to `.jpg`. A compressed save topic must be the selected raw target plus `/compressed` and must be
+specified explicitly. `--save-image-count` applies independently to every save topic.
+
 For multi-camera profile switching, sets A and B must contain exactly the same topic set. All
 entries for one camera are submitted in one `/<camera_name>/set_stream_profile` request. For
 example:
@@ -228,6 +244,7 @@ second:
 | `--launch-arg` | — | Extra launch argument; repeatable |
 | `--camera` | empty | Single-camera launch arguments; at most one |
 | `--image-topic` | auto | Strict raw-image target; repeatable |
+| `--save-image-topic` | target raw topics | Save source; repeat a target raw topic and/or its `/compressed` child |
 | `--toggle-mode` | `individual` | `individual` per-stream toggles (ROS1/ROS2); `all` whole-camera toggles (currently ROS2 only) |
 | `--switch-stream-profile` | `0` | `0` keeps launch profiles; `1` alternates resolution/FPS/format sets A and B |
 | `--stream-profile-a` | empty | Set-A entry as `TOPIC=WIDTHxHEIGHT@FPS[:FORMAT]`; repeatable |
@@ -243,15 +260,14 @@ second:
 | `--service-timeout` | `15` | Toggle service-call timeout |
 | `--service-retry-delay` | `1` | Delay before the one retry |
 | `--profile-fps-tolerance` | `0.15` | Allowed measured-FPS deviation ratio from 0 to 1, with a minimum absolute tolerance of 1 FPS |
-| `--save-image-count` | `1` | JPG files per stream per cycle; `0` disables saving |
+| `--save-image-count` | `1` | Files per save topic per cycle; `0` disables saving |
 | `--save-image-timeout` | `30` | Per-stream image-save timeout |
-| `--jpg-quality` | `95` | JPG quality from 1 to 100 |
 | `--sdk-log-level` | `debug` | SDK log level for a single-camera launch; preconfigure it in a multi-camera launch |
 | `--queue-size` | `10` | Image subscription queue size |
 | `--results-dir` | generated | Custom result directory |
 
-Image saving requires `cv_bridge` and OpenCV. Dependencies are checked before launch startup when
-`--save-image-count` is greater than zero; use `0` to disable image saving.
+Raw PNG saving requires `cv_bridge` and OpenCV. Saving only byte-for-byte `CompressedImage`
+payloads does not require image decoding. Use `--save-image-count 0` to disable image saving.
 
 ## Results
 
@@ -261,8 +277,9 @@ stream_toggle_stress_test/results/YYYYMMDD_HHMMSS_stream_toggle/
 │   ├── camera.launch.log
 │   └── sdk/
 ├── images/
-│   ├── camera_01/color/image_0001.jpg
-│   └── camera_02/depth/image_0001.jpg
+│   ├── camera_01/color/image_0001.png
+│   ├── camera_01/color/image_0002.jpg
+│   └── camera_02/depth/image_0001.png
 ├── summary.md
 ├── events.jsonl
 └── result.json
