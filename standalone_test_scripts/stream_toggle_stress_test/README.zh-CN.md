@@ -9,10 +9,19 @@ English: [README.md](README.md)
 - `--toggle-mode individual`（默认）：通过 `toggle_<stream>` 逐路关闭和恢复。
 - `--toggle-mode all`：通过每台相机的 `set_streams_enable` 整体关闭和恢复全部流。
 
-还可通过 `--switch-stream-profile 1` 启用分辨率和帧率切换。工具接受 A、B 两组
-`图像话题=宽x高@帧率` 配置，按相机调用 `set_stream_profile`，在每个完整循环开始时
-交替切换配置。切换后会验证全部目标流恢复、配置流的分辨率精确匹配且实测帧率处于
-允许偏差内；随后继续执行原有开关流验证和存图，并再次确认配置没有在开关流后丢失。
+还可通过 `--switch-stream-profile 1` 启用分辨率、帧率和出流格式切换。工具接受 A、B
+两组 `图像话题=宽x高@帧率:格式` 配置，按相机调用 `set_stream_profile`，在每个完整
+循环开始时交替切换。切换后会验证全部目标流恢复、配置流的分辨率精确匹配、实测帧率
+处于允许偏差内，且 ROS 图像 encoding 与指定 SDK 格式兼容；随后继续执行原有开关流
+验证和存图，并再次确认配置没有在开关流后丢失。
+
+格式字段可省略，此时驱动保持当前格式。格式名称不在工具中限制，由驱动根据相机实际
+profile 校验，例如 `MJPG`、`RGB888`、`YUYV`、`Y8`、`Y16`。由于多个 SDK 格式可能
+映射为同一个 ROS encoding（如彩色 `MJPG` 和 `RGB888` 均可为 `rgb8`），精确 SDK
+格式以 `set_stream_profile` 成功选型为准，图像话题用于验证其 ROS 表示兼容性。
+每台相机的 A/B 配置必须能从 `sensor_msgs/Image` 区分：分辨率或帧率不同即可；如果
+只改变格式，则 ROS encoding 必须不同，例如 `BGR` 与 `RGB888`。相同分辨率/帧率下的
+`MJPG` 与 `RGB888` 都映射为 `rgb8`，工具会在参数校验阶段拒绝这种无法观测的组合。
 
 工具支持单相机和预配置的多相机 launch。开关模式的 ROS 版本支持情况如下：
 
@@ -94,10 +103,10 @@ python3 ./stream_toggle_stress_test/stream_toggle_stress_test.py \
   --launch-file gemini_330_series.launch.py \
   --camera name=camera,usb-port=2-1 \
   --switch-stream-profile 1 \
-  --stream-profile-a /camera/color/image_raw=1280x720@30 \
-  --stream-profile-a /camera/depth/image_raw=640x480@30 \
-  --stream-profile-b /camera/color/image_raw=640x480@15 \
-  --stream-profile-b /camera/depth/image_raw=320x240@15 \
+  --stream-profile-a /camera/color/image_raw=1280x720@30:MJPG \
+  --stream-profile-a /camera/depth/image_raw=640x480@30:Y16 \
+  --stream-profile-b /camera/color/image_raw=640x480@15:RGB888 \
+  --stream-profile-b /camera/depth/image_raw=320x240@15:Y16 \
   --run-count 10
 ```
 
@@ -167,14 +176,15 @@ python3 ./stream_toggle_stress_test/stream_toggle_stress_test.py \
 
 ```bash
   --switch-stream-profile 1 \
-  --stream-profile-a /camera_01/color/image_raw=1280x720@30 \
-  --stream-profile-a /camera_02/color/image_raw=640x480@30 \
-  --stream-profile-b /camera_01/color/image_raw=640x480@15 \
-  --stream-profile-b /camera_02/color/image_raw=320x240@15
+  --stream-profile-a /camera_01/color/image_raw=1280x720@30:MJPG \
+  --stream-profile-a /camera_02/color/image_raw=640x480@30:RGB888 \
+  --stream-profile-b /camera_01/color/image_raw=640x480@15:RGB888 \
+  --stream-profile-b /camera_02/color/image_raw=320x240@15:MJPG
 ```
 
-两组配置的话题必须属于最终选中的目标流，且至少一个分辨率或帧率不同。不在 A/B
-配置中的其他目标流不会改变 profile，但仍参与全局稳定性检查。
+两组配置的话题必须属于最终选中的目标流；每台相机至少一路的分辨率、帧率或可观测
+ROS encoding 必须不同。不在 A/B 配置中的其他目标流不会改变 profile，但仍参与全局
+稳定性检查。
 
 ## 循环、重试与停止
 
@@ -204,7 +214,7 @@ python3 ./stream_toggle_stress_test/stream_toggle_stress_test.py \
 | `--image-topic` | 自动发现 | 严格指定目标原始图像流，可重复传入 |
 | `--toggle-mode` | `individual` | `individual` 逐路开关（ROS1/ROS2）；`all` 整体开关（当前仅 ROS2） |
 | `--switch-stream-profile` | `0` | `0` 不切换；`1` 在 A/B 两组分辨率和帧率间交替切换 |
-| `--stream-profile-a` | 空 | A 组配置，格式 `TOPIC=WIDTHxHEIGHT@FPS`，可重复传入 |
+| `--stream-profile-a` | 空 | A 组配置，格式 `TOPIC=WIDTHxHEIGHT@FPS[:FORMAT]`，可重复传入 |
 | `--stream-profile-b` | 空 | B 组配置，格式同上，话题集合必须与 A 组相同 |
 | `--duration` | `300` | 最长运行时间，支持 `15m`、`2h` |
 | `--run-count` | 空 | 最大完整循环数 |

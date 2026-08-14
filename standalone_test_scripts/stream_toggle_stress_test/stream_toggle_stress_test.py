@@ -30,7 +30,7 @@ from _test_protocol import (
 
 ENV_READY_VAR = "STREAM_TOGGLE_STRESS_TEST_ENV_READY"
 INTERRUPTED = False
-TOOL_VERSION = "1.1"
+TOOL_VERSION = "1.2"
 TEST_ID = "stream_toggle_stress_test"
 DEFAULT_STRESS_LAUNCH_ARGS = {
     "enable_heartbeat": "true",
@@ -313,6 +313,7 @@ class StreamProfileSpec:
     width: int
     height: int
     fps: int
+    format: str
 
 
 @dataclass(frozen=True)
@@ -344,17 +345,22 @@ def parse_stream_profile_spec(raw: str, camera_name: str = "") -> StreamProfileS
     text = expand_camera_topic(str(raw or "").strip(), camera_name)
     if "=" not in text:
         raise ValueError(
-            "stream profile must be TOPIC=WIDTHxHEIGHT@FPS: " + str(raw)
+            "stream profile must be TOPIC=WIDTHxHEIGHT@FPS[:FORMAT]: " + str(raw)
         )
     topic_text, profile_text = text.rsplit("=", 1)
     target = stream_target_from_topic(topic_text.strip())
-    match = re.fullmatch(r"([1-9]\d*)[xX]([1-9]\d*)@([1-9]\d*)", profile_text.strip())
+    match = re.fullmatch(
+        r"([1-9]\d*)[xX]([1-9]\d*)@([1-9]\d*)(?::([A-Za-z0-9_]+))?",
+        profile_text.strip(),
+    )
     if not match:
         raise ValueError(
-            "stream profile must be TOPIC=WIDTHxHEIGHT@FPS with positive integers: "
+            "stream profile must be TOPIC=WIDTHxHEIGHT@FPS[:FORMAT] with positive "
+            "integers and a valid format token: "
             + str(raw)
         )
-    width, height, fps = (int(item) for item in match.groups())
+    width, height, fps = (int(item) for item in match.groups()[:3])
+    stream_format = str(match.group(4) or "").upper()
     return StreamProfileSpec(
         topic=target.topic,
         camera_namespace=target.camera_namespace,
@@ -363,6 +369,7 @@ def parse_stream_profile_spec(raw: str, camera_name: str = "") -> StreamProfileS
         width=width,
         height=height,
         fps=fps,
+        format=stream_format,
     )
 
 
@@ -659,7 +666,7 @@ class RosHarness:
             message.width = profile.width
             message.height = profile.height
             message.fps = profile.fps
-            message.format = ""
+            message.format = profile.format
             request.profiles.append(message)
 
         if self.ros_version == "2":
@@ -1136,6 +1143,31 @@ def wait_for_enabled_state(
     )
 
 
+def expected_ros_encodings(spec: StreamProfileSpec) -> Tuple[str, ...]:
+    stream_format = spec.format.upper()
+    if not stream_format or stream_format == "ANY":
+        return ()
+    is_depth = spec.stream == "depth"
+    is_ir = spec.stream in {"ir", "left_ir", "right_ir"}
+    if stream_format in {"Y8", "GRAY"}:
+        return ("8uc1",) if is_depth else ("mono8",)
+    if stream_format in {"Y10", "Y11", "Y12", "Y14", "Y16", "Z16", "RW16"}:
+        return ("16uc1",) if is_depth else ("mono16",)
+    if stream_format in {"MJPG", "MJPEG"}:
+        return ("mono8",) if is_ir else ("rgb8",)
+    if stream_format == "BGR":
+        return ("bgr8",)
+    if stream_format in {"RGB", "RGB888"}:
+        return ("rgb8",)
+    if stream_format == "BGRA":
+        return ("bgra8",)
+    if stream_format == "RGBA":
+        return ("rgba8",)
+    if stream_format in {"YUYV", "YUYV2", "UYVY", "I420", "NV12", "NV21"}:
+        return ("rgb8",)
+    return ()
+
+
 def evaluate_profile_state(
     specs: Sequence[StreamProfileSpec],
     snapshot: Sequence[Dict[str, Any]],
@@ -1148,9 +1180,12 @@ def evaluate_profile_state(
         actual_width = int(row.get("width", 0) or 0)
         actual_height = int(row.get("height", 0) or 0)
         actual_fps = float(row.get("window_fps", 0.0) or 0.0)
+        actual_encoding = str(row.get("encoding", "") or "").lower()
         fps_tolerance = max(1.0, spec.fps * fps_tolerance_ratio)
         resolution_match = actual_width == spec.width and actual_height == spec.height
         fps_match = actual_fps > 0.0 and abs(actual_fps - spec.fps) <= fps_tolerance
+        expected_encodings = expected_ros_encodings(spec)
+        encoding_match = not expected_encodings or actual_encoding in expected_encodings
         checks.append(
             {
                 "topic": spec.topic,
@@ -1158,13 +1193,18 @@ def evaluate_profile_state(
                 "expected_width": spec.width,
                 "expected_height": spec.height,
                 "expected_fps": spec.fps,
+                "expected_format": spec.format,
+                "expected_ros_encodings": list(expected_encodings),
                 "actual_width": actual_width,
                 "actual_height": actual_height,
                 "actual_fps": actual_fps,
+                "actual_encoding": actual_encoding,
                 "fps_tolerance": fps_tolerance,
                 "resolution_match": resolution_match,
                 "fps_match": fps_match,
-                "passed": resolution_match and fps_match,
+                "format_encoding_check_supported": bool(expected_encodings),
+                "format_encoding_match": encoding_match,
+                "passed": resolution_match and fps_match and encoding_match,
             }
         )
     return {
@@ -1739,13 +1779,46 @@ def validate_args(args) -> Dict[str, Any]:
         if topics_a != topics_b:
             raise ValueError("stream profile sets A and B must configure the same topics")
         values_a = {
-            spec.topic: (spec.width, spec.height, spec.fps) for spec in profile_sets["A"]
+            spec.topic: (spec.width, spec.height, spec.fps, spec.format)
+            for spec in profile_sets["A"]
         }
         values_b = {
-            spec.topic: (spec.width, spec.height, spec.fps) for spec in profile_sets["B"]
+            spec.topic: (spec.width, spec.height, spec.fps, spec.format)
+            for spec in profile_sets["B"]
         }
         if values_a == values_b:
             raise ValueError("stream profile sets A and B must be different")
+        specs_a_by_topic = {spec.topic: spec for spec in profile_sets["A"]}
+        specs_b_by_topic = {spec.topic: spec for spec in profile_sets["B"]}
+        namespaces = sorted({spec.camera_namespace for spec in profile_sets["A"]})
+        for namespace in namespaces:
+            namespace_topics = [
+                spec.topic
+                for spec in profile_sets["A"]
+                if spec.camera_namespace == namespace
+            ]
+            distinguishable = False
+            for topic in namespace_topics:
+                spec_a = specs_a_by_topic[topic]
+                spec_b = specs_b_by_topic[topic]
+                if (spec_a.width, spec_a.height, spec_a.fps) != (
+                    spec_b.width,
+                    spec_b.height,
+                    spec_b.fps,
+                ):
+                    distinguishable = True
+                    break
+                encodings_a = expected_ros_encodings(spec_a)
+                encodings_b = expected_ros_encodings(spec_b)
+                if encodings_a and encodings_b and encodings_a != encodings_b:
+                    distinguishable = True
+                    break
+            if not distinguishable:
+                raise ValueError(
+                    f"profile sets A and B for {namespace} cannot be distinguished from "
+                    "sensor_msgs/Image; change resolution/FPS or use formats with different "
+                    "ROS encodings"
+                )
     run_count = args.run_count
     if run_count is not None and run_count <= 0:
         raise ValueError("--run-count must be > 0")
@@ -2411,7 +2484,8 @@ def run(args) -> int:
 def parse_args(argv: Optional[Sequence[str]] = None):
     parser = argparse.ArgumentParser(
         description=(
-            "Stress-test individual or all-stream camera toggles and verify recovery."
+            "Stress-test individual or all-stream camera toggles, optionally alternate "
+            "resolution/FPS/format profiles, and verify recovery."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
@@ -2484,15 +2558,15 @@ def parse_args(argv: Optional[Sequence[str]] = None):
         "--stream-profile-a",
         action="append",
         default=[],
-        metavar="TOPIC=WIDTHxHEIGHT@FPS",
-        help="Profile-set A entry; repeat for multiple streams/cameras",
+        metavar="TOPIC=WIDTHxHEIGHT@FPS[:FORMAT]",
+        help="Profile-set A entry with optional SDK format; repeat for streams/cameras",
     )
     parser.add_argument(
         "--stream-profile-b",
         action="append",
         default=[],
-        metavar="TOPIC=WIDTHxHEIGHT@FPS",
-        help="Profile-set B entry; repeat for multiple streams/cameras",
+        metavar="TOPIC=WIDTHxHEIGHT@FPS[:FORMAT]",
+        help="Profile-set B entry with optional SDK format; repeat for streams/cameras",
     )
     parser.add_argument("--duration", default="300")
     parser.add_argument("--run-count", type=int, default=None)

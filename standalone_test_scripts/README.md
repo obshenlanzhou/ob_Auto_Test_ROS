@@ -109,7 +109,7 @@ not import the Web UI package.
 | Script directory | Purpose | Details |
 | --- | --- | --- |
 | [launch_restart_stream_check](launch_restart_stream_check/README.md) | Repeatedly restart a launch file and check image stream recovery | Launch restart stream stability stress test |
-| [stream_toggle_stress_test](stream_toggle_stress_test/README.md) | Toggle individual/all streams, optionally alternate two resolution/FPS sets, and verify recovery | Single/multi-camera with JPG evidence; individual/profile switching supports ROS1/ROS2, all mode is currently ROS2 only |
+| [stream_toggle_stress_test](stream_toggle_stress_test/README.md) | Toggle individual/all streams, optionally alternate two resolution/FPS/format sets, and verify recovery | Single/multi-camera with JPG evidence; individual/profile switching supports ROS1/ROS2, all mode is currently ROS2 only |
 | [launch_param_load_stress](launch_param_load_stress/README.md) | Stress-test launch parameter loading via `config_file_path` | Verifies ROS parameters, image topics, and getter services; supports multi-camera and repeated runs |
 | [export_load_stress_test](export_load_stress_test/README.md) | Alternate JSON import/export and compare parameters | Config JSON import/export consistency stress test |
 | [preset_upgrade_stress_test](preset_upgrade_stress_test/README.md) | Alternately update optional depth presets and verify streams | Optional depth preset upgrade stress test |

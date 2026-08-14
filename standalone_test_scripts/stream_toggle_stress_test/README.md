@@ -9,11 +9,22 @@ This tool starts one ROS launch process and supports two configurable stream-tog
 - `--toggle-mode individual` (default) disables and restores one `toggle_<stream>` at a time.
 - `--toggle-mode all` uses each camera's `set_streams_enable` service to stop and start all streams.
 
-Optional resolution/FPS switching is enabled with `--switch-stream-profile 1`. The tool accepts
-profile sets A and B as `IMAGE_TOPIC=WIDTHxHEIGHT@FPS`, groups them per camera, and calls
-`set_stream_profile` at the start of each completed cycle. It verifies global recovery, exact
-configured resolutions, and measured FPS within tolerance before running the existing toggle and
-image-evidence transaction. The selected profile is verified again after toggling.
+Optional resolution/FPS/output-format switching is enabled with `--switch-stream-profile 1`. The
+tool accepts profile sets A and B as `IMAGE_TOPIC=WIDTHxHEIGHT@FPS:FORMAT`, groups them per camera,
+and calls `set_stream_profile` at the start of each cycle. It verifies global recovery, exact
+configured resolutions, measured FPS within tolerance, and a ROS image encoding compatible with
+the requested SDK format before running the existing toggle and image-evidence transaction. The
+selected profile is verified again after toggling.
+
+The format is optional; omitting it preserves the active format. The driver validates names and
+device profile support, including values such as `MJPG`, `RGB888`, `YUYV`, `Y8`, and `Y16`.
+Multiple SDK formats can map to the same ROS encoding (for example, color `MJPG` and `RGB888` may
+both publish `rgb8`), so exact SDK-format selection is established by a successful
+`set_stream_profile` response while the image topic verifies the compatible ROS representation.
+Each camera's A/B sets must be distinguishable through `sensor_msgs/Image`: a resolution or FPS
+change is sufficient; a format-only change must produce different ROS encodings, such as `BGR`
+versus `RGB888`. Equal-resolution/FPS `MJPG` versus `RGB888` is rejected because both appear as
+`rgb8` and the tool cannot safely identify an already-active set.
 
 It supports a single-camera launch and a preconfigured multi-camera launch. ROS-version support is:
 
@@ -98,10 +109,10 @@ python3 ./stream_toggle_stress_test/stream_toggle_stress_test.py \
   --launch-file gemini_330_series.launch.py \
   --camera name=camera,usb-port=2-1 \
   --switch-stream-profile 1 \
-  --stream-profile-a /camera/color/image_raw=1280x720@30 \
-  --stream-profile-a /camera/depth/image_raw=640x480@30 \
-  --stream-profile-b /camera/color/image_raw=640x480@15 \
-  --stream-profile-b /camera/depth/image_raw=320x240@15 \
+  --stream-profile-a /camera/color/image_raw=1280x720@30:MJPG \
+  --stream-profile-a /camera/depth/image_raw=640x480@30:Y16 \
+  --stream-profile-b /camera/color/image_raw=640x480@15:RGB888 \
+  --stream-profile-b /camera/depth/image_raw=320x240@15:Y16 \
   --run-count 10
 ```
 
@@ -172,15 +183,15 @@ example:
 
 ```bash
   --switch-stream-profile 1 \
-  --stream-profile-a /camera_01/color/image_raw=1280x720@30 \
-  --stream-profile-a /camera_02/color/image_raw=640x480@30 \
-  --stream-profile-b /camera_01/color/image_raw=640x480@15 \
-  --stream-profile-b /camera_02/color/image_raw=320x240@15
+  --stream-profile-a /camera_01/color/image_raw=1280x720@30:MJPG \
+  --stream-profile-a /camera_02/color/image_raw=640x480@30:RGB888 \
+  --stream-profile-b /camera_01/color/image_raw=640x480@15:RGB888 \
+  --stream-profile-b /camera_02/color/image_raw=320x240@15:MJPG
 ```
 
-Configured profile topics must be selected target streams, and at least one resolution or FPS must
-differ between A and B. Other selected streams keep their profiles but remain part of global
-stability checks.
+Configured profile topics must be selected target streams. For each camera, at least one
+resolution, FPS, or observable ROS encoding must differ between A and B. Other selected streams
+keep their profiles but remain part of global stability checks.
 
 ## Cycles, retries, and stopping
 
@@ -214,7 +225,7 @@ second:
 | `--image-topic` | auto | Strict raw-image target; repeatable |
 | `--toggle-mode` | `individual` | `individual` per-stream toggles (ROS1/ROS2); `all` whole-camera toggles (currently ROS2 only) |
 | `--switch-stream-profile` | `0` | `0` keeps launch profiles; `1` alternates resolution/FPS sets A and B |
-| `--stream-profile-a` | empty | Set-A entry as `TOPIC=WIDTHxHEIGHT@FPS`; repeatable |
+| `--stream-profile-a` | empty | Set-A entry as `TOPIC=WIDTHxHEIGHT@FPS[:FORMAT]`; repeatable |
 | `--stream-profile-b` | empty | Set-B entry in the same format and with the same topics as set A |
 | `--duration` | `300` | Maximum duration; supports `15m` and `2h` |
 | `--run-count` | empty | Maximum completed cycles |
