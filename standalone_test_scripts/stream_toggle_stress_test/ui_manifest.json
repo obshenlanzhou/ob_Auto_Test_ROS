@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "id": "stream_toggle_stress_test",
-  "title": "逐路开关流压测",
-  "description": "逐路关闭和恢复图像流，验证目标流停流以及单/多相机全部其他流稳定恢复。",
+  "title": "开关流压测",
+  "description": "支持逐路或整体关闭和恢复图像流，并验证单/多相机目标流稳定恢复。",
   "script": "stream_toggle_stress_test.py",
   "risk": "normal",
   "stop_policy": "immediate",
@@ -13,6 +13,7 @@
     {"name": "launch_file", "option": "--launch-file", "type": "path", "label": "Launch 文件", "label_en": "Launch File", "group": "configuration", "section": "basic", "default": "", "placeholder": "gemini_330_series.launch.py"},
     {"name": "cameras", "option": "--camera", "type": "camera-list", "label": "单相机启动参数", "label_en": "Single-camera Arguments", "group": "cameras", "section": "basic", "default": [], "max_items": 1, "note": "仅用于单相机 launch 参数注入；预配置多相机 launch 请留空。"},
     {"name": "image_topics", "option": "--image-topic", "type": "list", "label": "目标图像话题", "label_en": "Target Image Topics", "group": "configuration", "section": "basic", "default": [], "placeholder": "/camera_01/color/image_raw\n/camera_02/depth/image_raw", "note": "留空时自动发现具有 toggle 服务的所有原始图像流。"},
+    {"name": "toggle_mode", "option": "--toggle-mode", "type": "select", "label": "开关模式", "label_en": "Toggle Mode", "group": "configuration", "section": "basic", "default": "individual", "choices": [{"value": "individual", "label": "逐路开关"}, {"value": "all", "label": "整体开关"}]},
     {"name": "duration", "option": "--duration", "type": "duration", "label": "最长运行时间", "label_en": "Duration", "group": "limits", "section": "basic", "default": "300"},
     {"name": "run_count", "option": "--run-count", "type": "integer", "label": "最大完整循环数", "label_en": "Run Count", "group": "limits", "section": "basic", "default": "", "min": 1, "placeholder": "10"},
     {"name": "save_image_count", "option": "--save-image-count", "type": "integer", "label": "每路每循环存图数", "label_en": "Images per Stream", "group": "configuration", "section": "basic", "default": 1, "min": 0},

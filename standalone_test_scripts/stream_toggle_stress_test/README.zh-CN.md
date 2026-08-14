@@ -1,13 +1,27 @@
-# 逐路开关流压测
+# 开关流压测
 
 English: [README.md](README.md)
 
 ## 工具介绍
 
-工具启动一个 ROS launch，并通过驱动提供的 `toggle_<stream>` 服务逐路关闭和恢复
-图像流。支持 ROS 1、ROS 2、单相机和预配置的多相机 launch。
+工具启动一个 ROS launch，支持两种可配置的开关流压测模式：
 
-每路流的验证事务为：
+- `--toggle-mode individual`（默认）：通过 `toggle_<stream>` 逐路关闭和恢复。
+- `--toggle-mode all`：通过每台相机的 `set_streams_enable` 整体关闭和恢复全部流。
+
+工具支持单相机和预配置的多相机 launch。开关模式的 ROS 版本支持情况如下：
+
+| 开关模式 | ROS 1 | ROS 2 |
+| --- | --- | --- |
+| `individual` 逐路开关 | 支持 | 支持 |
+| `all` 整体开关 | **不支持** | 支持 |
+
+当前 ROS1 v2.9.3 驱动只提供 `toggle_<stream>` 逐路服务，没有整体开关所需的
+`set_streams_enable` 服务。因此 ROS1 必须使用默认的 `individual` 模式；若指定
+`--toggle-mode all`，工具会在前置检查阶段明确失败，不会开始压测。ROS2 的 `all`
+模式要求每台目标相机都提供 `/<camera_name>/set_streams_enable`。
+
+逐路模式中，每路流的验证事务为：
 
 ```text
 关闭目标流
@@ -17,9 +31,23 @@ English: [README.md](README.md)
   → 保存当前目标流图像
 ```
 
+整体模式中，每个循环的验证事务为：
+
+```text
+依次调用所有目标相机的 set_streams_enable(false)
+  → 全部目标图像流连续 2 秒无图像
+  → 依次调用 set_streams_enable(true)
+  → 全部目标图像流连续稳定 5 秒
+  → 为每路目标流保存图像
+```
+
+多相机服务调用按相机命名空间确定性排序；每台相机的一次服务调用会整体开关该 launch
+中为该相机启用的所有流。显式 `--image-topic` 控制验证和存图清单，但整体服务仍会影响
+该相机所有已启用流。
+
 驱动开关一路流时会重建相机 pipeline，因此工具会监控多相机 launch 中全部选中流，
-检查同一相机及其他相机是否受到连带影响。执行顺序固定为相机命名空间、流名排序，
-一次只操作一路流。
+检查同一相机及其他相机是否受到连带影响。逐路模式按相机命名空间、流名排序，一次只
+操作一路；整体模式按相机命名空间排序，一次整体操作一台相机。
 
 ## 使用方法
 
@@ -37,6 +65,18 @@ python3 ./stream_toggle_stress_test/stream_toggle_stress_test.py \
   --duration 1h
 ```
 
+整体开关：
+
+```bash
+python3 ./stream_toggle_stress_test/stream_toggle_stress_test.py \
+  --ros-version 2 \
+  --driver-setup /path/to/camera_ws/install/setup.bash \
+  --launch-file gemini_330_series.launch.py \
+  --camera name=camera,usb-port=2-1 \
+  --toggle-mode all \
+  --run-count 10
+```
+
 ROS 1：
 
 ```bash
@@ -48,6 +88,9 @@ python3 ./stream_toggle_stress_test/stream_toggle_stress_test.py \
   --camera name=camera,usb-port=2-1 \
   --run-count 10
 ```
+
+ROS1 示例使用默认的 `--toggle-mode individual`；当前 ROS1 v2.9.3 驱动不支持
+`--toggle-mode all`。
 
 单相机可传入最多一个 `--camera`，字段格式与其他独立脚本相同：`name`、
 `serial-number`、`usb-port`、`device-ip`、`device-port` 和 `config-file-path`。
@@ -94,7 +137,9 @@ python3 ./stream_toggle_stress_test/stream_toggle_stress_test.py \
 
 ## 循环、重试与停止
 
-一个完整循环表示所有目标流各完成一次“关闭→验证→开启→验证→存图”。同时设置
+逐路模式的一个完整循环表示所有目标流各完成一次“关闭→验证→开启→验证→存图”；
+整体模式的一个完整循环表示所有目标相机整体关闭、全部停流验证、整体开启、全部恢复
+验证和逐路存图。同时设置
 `--run-count` 和 `--duration` 时，任一上限先达到即停止。首个完整循环始终执行完，保证
 每个目标流至少验证一次；后续到达时间上限时，会在当前单路事务完成恢复后停止。
 
@@ -116,6 +161,7 @@ python3 ./stream_toggle_stress_test/stream_toggle_stress_test.py \
 | `--launch-arg` | — | 附加 launch 参数，可重复传入 |
 | `--camera` | 空 | 单相机 launch 参数，最多一个 |
 | `--image-topic` | 自动发现 | 严格指定目标原始图像流，可重复传入 |
+| `--toggle-mode` | `individual` | `individual` 逐路开关（ROS1/ROS2）；`all` 整体开关（当前仅 ROS2） |
 | `--duration` | `300` | 最长运行时间，支持 `15m`、`2h` |
 | `--run-count` | 空 | 最大完整循环数 |
 | `--topic-discovery-timeout` | `30` | 话题/服务发现最长等待时间 |

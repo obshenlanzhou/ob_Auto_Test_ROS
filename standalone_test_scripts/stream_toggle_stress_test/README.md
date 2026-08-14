@@ -1,14 +1,28 @@
-# Per-stream Toggle Stress Test
+# Stream Toggle Stress Test
 
 Chinese: [README.zh-CN.md](README.zh-CN.md)
 
 ## Overview
 
-This tool starts one ROS launch process and repeatedly disables and restores each camera image
-stream through the driver's `toggle_<stream>` services. It supports ROS 1, ROS 2, a
-single-camera launch, and a preconfigured multi-camera launch.
+This tool starts one ROS launch process and supports two configurable stream-toggle modes:
 
-Each target stream runs this transaction:
+- `--toggle-mode individual` (default) disables and restores one `toggle_<stream>` at a time.
+- `--toggle-mode all` uses each camera's `set_streams_enable` service to stop and start all streams.
+
+It supports a single-camera launch and a preconfigured multi-camera launch. ROS-version support is:
+
+| Toggle mode | ROS 1 | ROS 2 |
+| --- | --- | --- |
+| `individual` per-stream toggle | Supported | Supported |
+| `all` whole-camera toggle | **Not supported** | Supported |
+
+The current ROS1 v2.9.3 driver provides only the per-stream `toggle_<stream>` services and does not
+provide the `set_streams_enable` service required by whole-camera mode. ROS1 must therefore use the
+default `individual` mode. If `--toggle-mode all` is requested with ROS1, preflight fails clearly
+before the stress run begins. ROS2 `all` mode requires every target camera to advertise
+`/<camera_name>/set_streams_enable`.
+
+In individual mode, each target stream runs this transaction:
 
 ```text
 disable target
@@ -18,9 +32,25 @@ disable target
   → save an image from the restored target
 ```
 
+In all mode, each cycle runs this transaction:
+
+```text
+call set_streams_enable(false) for every target camera
+  → every target image stream stays quiet for 2 s
+  → call set_streams_enable(true) for every target camera
+  → every target image stream is stable for 5 s
+  → save an image from every target stream
+```
+
+Multi-camera services are called in deterministic camera-namespace order. One all-stream service
+affects every launch-enabled stream on that camera. Explicit `--image-topic` values select the
+verification and image-evidence list, but the all-stream service still affects all enabled streams
+on that camera.
+
 The driver rebuilds its pipeline when toggling a stream. The tool therefore monitors all selected
-streams across every camera for collateral failures. Operations run globally in deterministic
-camera-namespace and stream-name order, one stream at a time.
+streams across every camera for collateral failures. Individual mode operates one stream at a time
+in camera-namespace and stream-name order; all mode operates one camera at a time in namespace
+order.
 
 ## Usage
 
@@ -38,6 +68,18 @@ python3 ./stream_toggle_stress_test/stream_toggle_stress_test.py \
   --duration 1h
 ```
 
+All-stream mode:
+
+```bash
+python3 ./stream_toggle_stress_test/stream_toggle_stress_test.py \
+  --ros-version 2 \
+  --driver-setup /path/to/camera_ws/install/setup.bash \
+  --launch-file gemini_330_series.launch.py \
+  --camera name=camera,usb-port=2-1 \
+  --toggle-mode all \
+  --run-count 10
+```
+
 ROS 1:
 
 ```bash
@@ -49,6 +91,9 @@ python3 ./stream_toggle_stress_test/stream_toggle_stress_test.py \
   --camera name=camera,usb-port=2-1 \
   --run-count 10
 ```
+
+The ROS1 example uses the default `--toggle-mode individual`. The current ROS1 v2.9.3 driver does
+not support `--toggle-mode all`.
 
 At most one `--camera` may be supplied. It accepts the common standalone fields `name`,
 `serial-number`, `usb-port`, `device-ip`, `device-port`, and `config-file-path`, which are
@@ -95,7 +140,9 @@ preflight fails. The `{camera}` placeholder is supported only when one `--camera
 
 ## Cycles, retries, and stopping
 
-One complete cycle toggles and verifies every target stream once. When both `--run-count` and
+In individual mode, one complete cycle toggles and verifies every target stream once. In all mode,
+one cycle stops every target camera, verifies all target streams are quiet, starts every target
+camera, verifies recovery, and saves per-stream evidence. When both `--run-count` and
 `--duration` are set, the first limit reached stops the run. The first full cycle always completes
 so that every target is tested. In later cycles, an expired duration stops the run after the
 current per-stream transaction has restored the stream.
@@ -121,6 +168,7 @@ second:
 | `--launch-arg` | — | Extra launch argument; repeatable |
 | `--camera` | empty | Single-camera launch arguments; at most one |
 | `--image-topic` | auto | Strict raw-image target; repeatable |
+| `--toggle-mode` | `individual` | `individual` per-stream toggles (ROS1/ROS2); `all` whole-camera toggles (currently ROS2 only) |
 | `--duration` | `300` | Maximum duration; supports `15m` and `2h` |
 | `--run-count` | empty | Maximum completed cycles |
 | `--topic-discovery-timeout` | `30` | Topic/service discovery timeout |

@@ -288,6 +288,18 @@ class StreamTarget:
     service: str
 
 
+@dataclass(frozen=True)
+class StreamGroupTarget:
+    camera_namespace: str
+    camera_name: str
+    service: str
+    topics: Tuple[str, ...]
+
+    @property
+    def topic(self) -> str:
+        return f"{self.camera_namespace}/*"
+
+
 def stream_target_from_topic(topic: str) -> StreamTarget:
     normalized = normalize_topic(topic)
     parts = [item for item in normalized.split("/") if item]
@@ -311,6 +323,41 @@ def is_raw_image_type(type_names: Sequence[str]) -> bool:
 
 def is_set_bool_type(type_names: Sequence[str]) -> bool:
     return any(type_name in SET_BOOL_TYPES for type_name in type_names)
+
+
+def build_stream_groups(
+    targets: Sequence[StreamTarget], service_types: Dict[str, List[str]]
+) -> List[StreamGroupTarget]:
+    topics_by_namespace: Dict[str, List[str]] = {}
+    camera_names: Dict[str, str] = {}
+    for target in targets:
+        topics_by_namespace.setdefault(target.camera_namespace, []).append(target.topic)
+        camera_names[target.camera_namespace] = target.camera_name
+    groups = []
+    errors = []
+    for namespace in sorted(topics_by_namespace):
+        service = f"{namespace}/set_streams_enable"
+        advertised_types = service_types.get(service, [])
+        if not advertised_types:
+            errors.append(f"all-stream service not advertised: {service}")
+            continue
+        if not is_set_bool_type(advertised_types):
+            errors.append(
+                f"all-stream service is not std_srvs/SetBool: {service} "
+                f"({', '.join(advertised_types)})"
+            )
+            continue
+        groups.append(
+            StreamGroupTarget(
+                camera_namespace=namespace,
+                camera_name=camera_names[namespace],
+                service=service,
+                topics=tuple(sorted(topics_by_namespace[namespace])),
+            )
+        )
+    if errors:
+        raise RuntimeError("all-stream preflight failed: " + "; ".join(errors))
+    return groups
 
 
 class RosHarness:
@@ -814,6 +861,46 @@ def wait_for_disabled_state(
     )
 
 
+def wait_for_all_disabled_state(
+    *,
+    session: LaunchSession,
+    harness: RosHarness,
+    monitor: StreamMonitor,
+    stop_stable_seconds: float,
+    timeout: float,
+) -> Dict[str, Any]:
+    started = time.monotonic()
+    deadline = started + timeout
+    while time.monotonic() < deadline:
+        session.assert_running()
+        harness.spin_once(0.1)
+        quiet_topics = [
+            topic
+            for topic in monitor.topics
+            if monitor.topic_is_quiet(topic, stop_stable_seconds)
+        ]
+        if len(quiet_topics) == len(monitor.topics):
+            return {
+                "elapsed_seconds": time.monotonic() - started,
+                "all_streams_quiet": True,
+                "topics": monitor.snapshot(),
+            }
+    quiet_topics = [
+        topic
+        for topic in monitor.topics
+        if monitor.topic_is_quiet(topic, stop_stable_seconds)
+    ]
+    raise StreamVerificationError(
+        f"all-stream disabled-state verification timed out after {timeout:.1f}s",
+        {
+            "elapsed_seconds": time.monotonic() - started,
+            "all_streams_quiet": len(quiet_topics) == len(monitor.topics),
+            "quiet_topics": quiet_topics,
+            "topics": monitor.snapshot(),
+        },
+    )
+
+
 def wait_for_enabled_state(
     *,
     session: LaunchSession,
@@ -857,7 +944,7 @@ def call_toggle_with_retry(
     *,
     session: LaunchSession,
     harness: RosHarness,
-    target: StreamTarget,
+    target: Any,
     enabled: bool,
     timeout: float,
     retry_delay: float,
@@ -932,6 +1019,77 @@ def best_effort_restore(
         outcome["message"] = str(exc)
         emit(f"cleanup restore failed for {target.topic}: {exc}")
         return outcome
+
+
+def best_effort_restore_groups(
+    *,
+    session: LaunchSession,
+    harness: RosHarness,
+    monitor: StreamMonitor,
+    groups: Sequence[StreamGroupTarget],
+    service_timeout: float,
+    confirmation_timeout: float,
+    emit: StatusLogger,
+) -> Dict[str, Any]:
+    baselines = {topic: monitor.latest(topic)[0] for topic in monitor.topics}
+    outcomes = []
+    service_success = True
+    for group in groups:
+        try:
+            session.assert_running()
+            response = harness.call_set_bool(group.service, True, service_timeout)
+            success = bool(response.get("success"))
+            message = str(response.get("message", ""))
+            if not success:
+                service_success = False
+            outcomes.append(
+                {
+                    "camera_namespace": group.camera_namespace,
+                    "service": group.service,
+                    "success": success,
+                    "message": message,
+                }
+            )
+        except Exception as exc:  # noqa: BLE001
+            service_success = False
+            outcomes.append(
+                {
+                    "camera_namespace": group.camera_namespace,
+                    "service": group.service,
+                    "success": False,
+                    "message": str(exc),
+                }
+            )
+    resumed_topics = set()
+    deadline = time.monotonic() + confirmation_timeout
+    try:
+        while service_success and time.monotonic() < deadline:
+            session.assert_running()
+            harness.spin_once(0.1)
+            for topic, baseline in baselines.items():
+                if monitor.latest(topic)[0] > baseline:
+                    resumed_topics.add(topic)
+            if len(resumed_topics) == len(baselines):
+                return {
+                    "attempted": True,
+                    "success": True,
+                    "services": outcomes,
+                    "resumed_topics": sorted(resumed_topics),
+                    "message": "all stream groups restored and confirmed",
+                }
+    except Exception as exc:  # noqa: BLE001
+        outcomes.append({"success": False, "message": str(exc)})
+    message = "one or more all-stream services failed"
+    if service_success:
+        message = "not all target streams resumed during cleanup confirmation"
+    emit(f"all-stream cleanup restore failed: {message}")
+    return {
+        "attempted": True,
+        "success": False,
+        "services": outcomes,
+        "resumed_topics": sorted(resumed_topics),
+        "message": message,
+    }
 
 
 def sanitize_path_part(value: str) -> str:
@@ -1073,6 +1231,7 @@ def build_summary(result: Dict[str, Any]) -> str:
         "",
         f"- Status: {result.get('status', '')}",
         f"- Tool version: {result.get('tool_version', '')}",
+        f"- Toggle mode: {result.get('toggle_mode', 'individual')}",
         f"- Completed cycles: {result.get('completed_cycles', 0)}",
         f"- Completed stream operations: {result.get('completed_operations', 0)}",
         f"- Service retry warnings: {len(result.get('warnings', []))}",
@@ -1191,9 +1350,11 @@ def run(args) -> int:
         "launch_package": args.launch_package,
         "launch_args": launch_args,
         "camera": camera,
+        "toggle_mode": args.toggle_mode,
         "topic_mode": "manual" if config["explicit_topics"] else "auto",
         "requested_image_topics": config["explicit_topics"],
         "targets": [],
+        "stream_groups": [],
         "skipped_image_topics": [],
         "duration_limit_seconds": config["duration"],
         "run_count": args.run_count,
@@ -1215,6 +1376,7 @@ def run(args) -> int:
     )
     image_writer: Optional[ImageWriter] = None
     target_may_be_disabled = False
+    groups_may_be_disabled = False
     monitor: Optional[StreamMonitor] = None
     test_started_monotonic = time.monotonic()
     deadline = test_started_monotonic + config["duration"]
@@ -1236,6 +1398,16 @@ def run(args) -> int:
             )
             result["targets"] = [asdict(target) for target in targets]
             result["skipped_image_topics"] = skipped
+            groups: List[StreamGroupTarget] = []
+            if args.toggle_mode == "all":
+                groups = build_stream_groups(
+                    targets, harness.get_service_names_and_types()
+                )
+                result["stream_groups"] = [asdict(group) for group in groups]
+                emit(
+                    "all-stream services: "
+                    + ", ".join(group.service for group in groups)
+                )
             emit(
                 "target streams: " + ", ".join(target.topic for target in targets),
                 event="phase",
@@ -1270,6 +1442,170 @@ def run(args) -> int:
                     "operations": [],
                 }
                 result["cycles"].append(cycle)
+                if args.toggle_mode == "all":
+                    operation = {
+                        "index": 1,
+                        "mode": "all",
+                        "topics": [target.topic for target in targets],
+                        "services": [group.service for group in groups],
+                        "status": "running",
+                        "started_at": iso_now(),
+                        "ended_at": "",
+                        "disable_services": [],
+                        "enable_services": [],
+                        "images": [],
+                    }
+                    cycle["operations"].append(operation)
+                    groups_may_be_disabled = True
+                    emit(
+                        f"cycle {cycle_index}: disable all streams",
+                        event="progress",
+                        current=cycle_index,
+                        total=args.run_count,
+                        cycle=cycle_index,
+                        phase="disabling-all",
+                    )
+                    try:
+                        for group in groups:
+                            disable = call_toggle_with_retry(
+                                session=session,
+                                harness=harness,
+                                target=group,
+                                enabled=False,
+                                timeout=config["service_timeout"],
+                                retry_delay=config["service_retry_delay"],
+                            )
+                            disable["camera_namespace"] = group.camera_namespace
+                            disable["service"] = group.service
+                            operation["disable_services"].append(disable)
+                            if disable["retried"]:
+                                warning = {
+                                    "cycle": cycle_index,
+                                    "camera_namespace": group.camera_namespace,
+                                    "action": "disable-all",
+                                    "message": (
+                                        f"cycle {cycle_index} {group.camera_namespace}: "
+                                        "disable-all succeeded only after retry"
+                                    ),
+                                }
+                                result["warnings"].append(warning)
+                                emit(warning["message"])
+                        monitor.reset_window()
+                        operation["disabled_state"] = wait_for_all_disabled_state(
+                            session=session,
+                            harness=harness,
+                            monitor=monitor,
+                            stop_stable_seconds=config["stop_stable"],
+                            timeout=config["stream_timeout"],
+                        )
+
+                        emit(
+                            f"cycle {cycle_index}: enable all streams",
+                            event="progress",
+                            current=cycle_index,
+                            total=args.run_count,
+                            cycle=cycle_index,
+                            phase="enabling-all",
+                        )
+                        for group in groups:
+                            enable = call_toggle_with_retry(
+                                session=session,
+                                harness=harness,
+                                target=group,
+                                enabled=True,
+                                timeout=config["service_timeout"],
+                                retry_delay=config["service_retry_delay"],
+                            )
+                            enable["camera_namespace"] = group.camera_namespace
+                            enable["service"] = group.service
+                            operation["enable_services"].append(enable)
+                            if enable["retried"]:
+                                warning = {
+                                    "cycle": cycle_index,
+                                    "camera_namespace": group.camera_namespace,
+                                    "action": "enable-all",
+                                    "message": (
+                                        f"cycle {cycle_index} {group.camera_namespace}: "
+                                        "enable-all succeeded only after retry"
+                                    ),
+                                }
+                                result["warnings"].append(warning)
+                                emit(warning["message"])
+                        monitor.reset_window()
+                        operation["enabled_state"] = wait_for_enabled_state(
+                            session=session,
+                            harness=harness,
+                            monitor=monitor,
+                            stable_seconds=config["stable"],
+                            max_gap_seconds=config["max_gap"],
+                            timeout=config["stream_timeout"],
+                        )
+                        groups_may_be_disabled = False
+                        if image_writer is not None:
+                            for target in targets:
+                                images = save_target_images(
+                                    session=session,
+                                    harness=harness,
+                                    monitor=monitor,
+                                    writer=image_writer,
+                                    target=target,
+                                    count=args.save_image_count,
+                                    timeout=config["save_image_timeout"],
+                                )
+                                operation["images"].extend(images)
+                                result["saved_image_count"] += len(images)
+                        operation["status"] = "passed"
+                        result["completed_operations"] += len(targets)
+                        emit(
+                            f"cycle {cycle_index}: all streams passed",
+                            event="progress",
+                            current=cycle_index,
+                            total=args.run_count,
+                            cycle=cycle_index,
+                            phase="completed-all-streams",
+                        )
+                    except BaseException as exc:  # cleanup must run for interruption
+                        operation["status"] = (
+                            "interrupted" if INTERRUPTED else "failed"
+                        )
+                        operation["error"] = str(exc)
+                        cycle["error"] = str(exc)
+                        if isinstance(exc, ToggleCallError):
+                            key = "enable_services" if exc.enabled else "disable_services"
+                            operation[key].append(
+                                {
+                                    "success": False,
+                                    "retried": True,
+                                    "attempts": exc.attempts,
+                                }
+                            )
+                        if isinstance(exc, StreamVerificationError):
+                            operation["verification_failure"] = exc.details
+                        if groups_may_be_disabled:
+                            operation["cleanup_restore"] = best_effort_restore_groups(
+                                session=session,
+                                harness=harness,
+                                monitor=monitor,
+                                groups=groups,
+                                service_timeout=config["service_timeout"],
+                                confirmation_timeout=config["stream_timeout"],
+                                emit=emit,
+                            )
+                            groups_may_be_disabled = False
+                        raise
+                    finally:
+                        operation["ended_at"] = iso_now()
+                    cycle["ended_at"] = iso_now()
+                    cycle["status"] = "passed"
+                    result["completed_cycles"] += 1
+                    emit(
+                        f"cycle {cycle_index} completed",
+                        event="progress",
+                        current=cycle_index,
+                        total=args.run_count,
+                        phase="completed-cycle",
+                    )
+                    continue
                 for target_index, target in enumerate(targets, start=1):
                     if cycle_index > 1 and time.monotonic() >= deadline:
                         cycle["status"] = "partial"
@@ -1498,7 +1834,7 @@ def run(args) -> int:
 def parse_args(argv: Optional[Sequence[str]] = None):
     parser = argparse.ArgumentParser(
         description=(
-            "Repeatedly toggle each camera image stream and verify all streams recover."
+            "Stress-test individual or all-stream camera toggles and verify recovery."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
@@ -1549,6 +1885,15 @@ def parse_args(argv: Optional[Sequence[str]] = None):
         help=(
             "Required sensor_msgs/Image topic; repeat to select streams. If omitted, "
             "all raw image topics with matching toggle services are auto-discovered."
+        ),
+    )
+    parser.add_argument(
+        "--toggle-mode",
+        choices=("individual", "all"),
+        default="individual",
+        help=(
+            "individual toggles one stream at a time; all uses each camera's "
+            "set_streams_enable service"
         ),
     )
     parser.add_argument("--duration", default="300")

@@ -99,6 +99,42 @@ def test_explicit_targets_are_strict_and_deterministically_sorted():
     assert missing_errors == ["image topic not advertised: /camera_03/color/image_raw"]
 
 
+def test_all_stream_groups_require_one_set_bool_service_per_camera():
+    module = load_script()
+    targets = [
+        module.stream_target_from_topic("/camera_02/depth/image_raw"),
+        module.stream_target_from_topic("/camera_01/depth/image_raw"),
+        module.stream_target_from_topic("/camera_01/color/image_raw"),
+    ]
+    service_types = {
+        "/camera_01/set_streams_enable": ["std_srvs/srv/SetBool"],
+        "/camera_02/set_streams_enable": ["std_srvs/srv/SetBool"],
+    }
+
+    groups = module.build_stream_groups(targets, service_types)
+
+    assert [group.camera_namespace for group in groups] == ["/camera_01", "/camera_02"]
+    assert groups[0].service == "/camera_01/set_streams_enable"
+    assert groups[0].topics == (
+        "/camera_01/color/image_raw",
+        "/camera_01/depth/image_raw",
+    )
+    with pytest.raises(RuntimeError, match="/camera_02/set_streams_enable"):
+        module.build_stream_groups(targets, {"/camera_01/set_streams_enable": ["std_srvs/SetBool"]})
+
+
+def test_toggle_mode_defaults_to_individual_and_accepts_all():
+    module = load_script()
+
+    assert module.parse_args(["--launch-file", "test.launch.py"]).toggle_mode == "individual"
+    assert (
+        module.parse_args(
+            ["--launch-file", "test.launch.py", "--toggle-mode", "all"]
+        ).toggle_mode
+        == "all"
+    )
+
+
 def test_ros1_service_graph_uses_rosservice_types():
     module = load_script()
     harness = module.RosHarness("1", "test", 10)
@@ -228,6 +264,49 @@ def test_toggle_fails_after_exactly_two_attempts():
             retry_delay=0,
         )
     assert harness.calls == 2
+
+
+def test_all_disabled_state_requires_every_target_to_be_quiet(monkeypatch):
+    module = load_script()
+
+    class Clock:
+        now = 0.0
+
+        def monotonic(self):
+            return self.now
+
+    class Session:
+        def assert_running(self):
+            pass
+
+    class Harness:
+        def spin_once(self, timeout):
+            clock.now += timeout
+
+    class Monitor:
+        topics = ["/camera/color/image_raw", "/camera/depth/image_raw"]
+
+        def topic_is_quiet(self, topic, quiet_seconds):
+            if topic.endswith("color/image_raw"):
+                return clock.now >= quiet_seconds
+            return clock.now >= quiet_seconds + 0.5
+
+        def snapshot(self):
+            return [{"topic": topic} for topic in self.topics]
+
+    clock = Clock()
+    monkeypatch.setattr(module.time, "monotonic", clock.monotonic)
+
+    result = module.wait_for_all_disabled_state(
+        session=Session(),
+        harness=Harness(),
+        monitor=Monitor(),
+        stop_stable_seconds=2.0,
+        timeout=5.0,
+    )
+
+    assert result["all_streams_quiet"] is True
+    assert result["elapsed_seconds"] >= 2.5
 
 
 def test_image_paths_are_per_camera_stream_and_never_overwrite(tmp_path):
