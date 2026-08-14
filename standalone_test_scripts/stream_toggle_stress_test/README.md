@@ -9,12 +9,21 @@ This tool starts one ROS launch process and supports two configurable stream-tog
 - `--toggle-mode individual` (default) disables and restores one `toggle_<stream>` at a time.
 - `--toggle-mode all` uses each camera's `set_streams_enable` service to stop and start all streams.
 
+Optional resolution/FPS switching is enabled with `--switch-stream-profile 1`. The tool accepts
+profile sets A and B as `IMAGE_TOPIC=WIDTHxHEIGHT@FPS`, groups them per camera, and calls
+`set_stream_profile` at the start of each completed cycle. It verifies global recovery, exact
+configured resolutions, and measured FPS within tolerance before running the existing toggle and
+image-evidence transaction. The selected profile is verified again after toggling.
+
 It supports a single-camera launch and a preconfigured multi-camera launch. ROS-version support is:
 
 | Toggle mode | ROS 1 | ROS 2 |
 | --- | --- | --- |
 | `individual` per-stream toggle | Supported | Supported |
 | `all` whole-camera toggle | **Not supported** | Supported |
+
+Runtime resolution/FPS switching uses the separate `set_stream_profile` service and is supported by
+the current ROS1 v2.9.3 and ROS2 drivers. It does not change the ROS1 limitation for `all` mode.
 
 The current ROS1 v2.9.3 driver provides only the per-stream `toggle_<stream>` services and does not
 provide the `set_streams_enable` service required by whole-camera mode. ROS1 must therefore use the
@@ -80,6 +89,25 @@ python3 ./stream_toggle_stress_test/stream_toggle_stress_test.py \
   --run-count 10
 ```
 
+Individual toggles with alternating resolution/FPS profiles:
+
+```bash
+python3 ./stream_toggle_stress_test/stream_toggle_stress_test.py \
+  --ros-version 2 \
+  --driver-setup /path/to/camera_ws/install/setup.bash \
+  --launch-file gemini_330_series.launch.py \
+  --camera name=camera,usb-port=2-1 \
+  --switch-stream-profile 1 \
+  --stream-profile-a /camera/color/image_raw=1280x720@30 \
+  --stream-profile-a /camera/depth/image_raw=640x480@30 \
+  --stream-profile-b /camera/color/image_raw=640x480@15 \
+  --stream-profile-b /camera/depth/image_raw=320x240@15 \
+  --run-count 10
+```
+
+Single-camera entries may use `/{camera}/color/image_raw=...`; the placeholder is expanded from the
+`name` in `--camera`.
+
 ROS 1:
 
 ```bash
@@ -138,6 +166,22 @@ Explicit topics must match `/<camera-namespace>/<stream>/image_raw`, use
 `sensor_msgs/Image`, and advertise the corresponding `toggle_<stream>` service. Otherwise,
 preflight fails. The `{camera}` placeholder is supported only when one `--camera` is provided.
 
+For multi-camera profile switching, sets A and B must contain exactly the same topic set. All
+entries for one camera are submitted in one `/<camera_name>/set_stream_profile` request. For
+example:
+
+```bash
+  --switch-stream-profile 1 \
+  --stream-profile-a /camera_01/color/image_raw=1280x720@30 \
+  --stream-profile-a /camera_02/color/image_raw=640x480@30 \
+  --stream-profile-b /camera_01/color/image_raw=640x480@15 \
+  --stream-profile-b /camera_02/color/image_raw=320x240@15
+```
+
+Configured profile topics must be selected target streams, and at least one resolution or FPS must
+differ between A and B. Other selected streams keep their profiles but remain part of global
+stability checks.
+
 ## Cycles, retries, and stopping
 
 In individual mode, one complete cycle toggles and verifies every target stream once. In all mode,
@@ -169,6 +213,9 @@ second:
 | `--camera` | empty | Single-camera launch arguments; at most one |
 | `--image-topic` | auto | Strict raw-image target; repeatable |
 | `--toggle-mode` | `individual` | `individual` per-stream toggles (ROS1/ROS2); `all` whole-camera toggles (currently ROS2 only) |
+| `--switch-stream-profile` | `0` | `0` keeps launch profiles; `1` alternates resolution/FPS sets A and B |
+| `--stream-profile-a` | empty | Set-A entry as `TOPIC=WIDTHxHEIGHT@FPS`; repeatable |
+| `--stream-profile-b` | empty | Set-B entry in the same format and with the same topics as set A |
 | `--duration` | `300` | Maximum duration; supports `15m` and `2h` |
 | `--run-count` | empty | Maximum completed cycles |
 | `--topic-discovery-timeout` | `30` | Topic/service discovery timeout |
@@ -179,6 +226,7 @@ second:
 | `--max-gap-seconds` | `1.5` | Maximum receive gap in a stable window |
 | `--service-timeout` | `15` | Toggle service-call timeout |
 | `--service-retry-delay` | `1` | Delay before the one retry |
+| `--profile-fps-tolerance` | `0.15` | Allowed measured-FPS deviation ratio from 0 to 1, with a minimum absolute tolerance of 1 FPS |
 | `--save-image-count` | `1` | JPG files per stream per cycle; `0` disables saving |
 | `--save-image-timeout` | `30` | Per-stream image-save timeout |
 | `--jpg-quality` | `95` | JPG quality from 1 to 100 |

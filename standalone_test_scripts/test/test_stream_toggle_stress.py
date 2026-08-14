@@ -135,6 +135,234 @@ def test_toggle_mode_defaults_to_individual_and_accepts_all():
     )
 
 
+def test_stream_profile_parser_supports_nested_namespace_and_camera_placeholder():
+    module = load_script()
+
+    nested = module.parse_stream_profile_spec(
+        "/rig/camera_01/color/image_raw=1280x720@30"
+    )
+    templated = module.parse_stream_profile_spec(
+        "/{camera}/depth/image_raw=640X480@15", "camera_02"
+    )
+
+    assert (nested.camera_namespace, nested.stream) == ("/rig/camera_01", "color")
+    assert (nested.width, nested.height, nested.fps) == (1280, 720, 30)
+    assert templated.topic == "/camera_02/depth/image_raw"
+    assert (templated.width, templated.height, templated.fps) == (640, 480, 15)
+    with pytest.raises(ValueError, match="WIDTHxHEIGHT@FPS"):
+        module.parse_stream_profile_spec("/camera/color/image_raw=640x480")
+
+
+def test_stream_profile_switch_requires_two_different_matching_sets():
+    module = load_script()
+    common = [
+        "--launch-file",
+        "test.launch.py",
+        "--switch-stream-profile",
+        "1",
+        "--stream-profile-a",
+        "/camera/color/image_raw=1280x720@30",
+    ]
+
+    with pytest.raises(ValueError, match="requires both"):
+        module.validate_args(module.parse_args(common))
+    with pytest.raises(ValueError, match="same topics"):
+        module.validate_args(
+            module.parse_args(
+                common
+                + [
+                    "--stream-profile-b",
+                    "/camera/depth/image_raw=640x480@30",
+                ]
+            )
+        )
+    with pytest.raises(ValueError, match="must be different"):
+        module.validate_args(
+            module.parse_args(
+                common
+                + [
+                    "--stream-profile-b",
+                    "/camera/color/image_raw=1280x720@30",
+                ]
+            )
+        )
+
+    config = module.validate_args(
+        module.parse_args(
+            common
+            + [
+                "--stream-profile-b",
+                "/camera/color/image_raw=640x480@15",
+            ]
+        )
+    )
+    assert config["profile_switch_enabled"] is True
+    assert config["profile_sets"]["B"][0].fps == 15
+
+
+def test_profile_groups_require_service_and_selected_target():
+    module = load_script()
+    targets = [module.stream_target_from_topic("/camera_01/color/image_raw")]
+    spec = module.parse_stream_profile_spec(
+        "/camera_01/color/image_raw=1280x720@30"
+    )
+    services = {
+        "/camera_01/set_stream_profile": [
+            "orbbec_camera_msgs/srv/SetStreamProfile"
+        ]
+    }
+
+    groups = module.build_profile_groups([spec], targets, services)
+
+    assert len(groups) == 1
+    assert groups[0].service == "/camera_01/set_stream_profile"
+    assert groups[0].profiles == (spec,)
+    with pytest.raises(RuntimeError, match="not advertised"):
+        module.build_profile_groups([spec], targets, {})
+    other = module.parse_stream_profile_spec(
+        "/camera_02/color/image_raw=1280x720@30"
+    )
+    with pytest.raises(RuntimeError, match="not a selected target"):
+        module.build_profile_groups([other], targets, services)
+
+
+def test_profile_state_checks_resolution_and_measured_fps():
+    module = load_script()
+    spec = module.parse_stream_profile_spec("/camera/color/image_raw=640x480@30")
+
+    passed = module.evaluate_profile_state(
+        [spec],
+        [
+            {
+                "topic": spec.topic,
+                "width": 640,
+                "height": 480,
+                "window_fps": 29.5,
+            }
+        ],
+        0.15,
+    )
+    bad_resolution = module.evaluate_profile_state(
+        [spec],
+        [
+            {
+                "topic": spec.topic,
+                "width": 1280,
+                "height": 720,
+                "window_fps": 29.5,
+            }
+        ],
+        0.15,
+    )
+    bad_fps = module.evaluate_profile_state(
+        [spec],
+        [
+            {
+                "topic": spec.topic,
+                "width": 640,
+                "height": 480,
+                "window_fps": 15.0,
+            }
+        ],
+        0.15,
+    )
+
+    assert passed["all_profiles_match"] is True
+    assert bad_resolution["all_profiles_match"] is False
+    assert bad_fps["all_profiles_match"] is False
+
+
+def test_profile_service_retries_once_and_reports_degraded_success():
+    module = load_script()
+    spec = module.parse_stream_profile_spec("/camera/color/image_raw=640x480@30")
+    group = module.StreamProfileGroup(
+        camera_namespace="/camera",
+        camera_name="camera",
+        service="/camera/set_stream_profile",
+        profiles=(spec,),
+    )
+
+    class Session:
+        def assert_running(self):
+            pass
+
+    class Harness:
+        calls = 0
+
+        def call_set_stream_profile(self, service, profiles, timeout):
+            assert service == group.service
+            assert profiles == (spec,)
+            assert timeout == 15
+            self.calls += 1
+            if self.calls == 1:
+                raise TimeoutError("first call timed out")
+            return {"success": True, "message": "success"}
+
+    sleeps = []
+    result = module.call_profile_with_retry(
+        session=Session(),
+        harness=Harness(),
+        group=group,
+        timeout=15,
+        retry_delay=1,
+        sleep=sleeps.append,
+    )
+
+    assert result["retried"] is True
+    assert [attempt["success"] for attempt in result["attempts"]] == [False, True]
+    assert sleeps == [1]
+
+
+def test_ros1_profile_request_batches_multiple_streams_for_one_camera():
+    module = load_script()
+    specs = (
+        module.parse_stream_profile_spec("/camera/color/image_raw=1280x720@30"),
+        module.parse_stream_profile_spec("/camera/depth/image_raw=640x480@15"),
+    )
+
+    class Request:
+        def __init__(self):
+            self.profiles = []
+
+    class Message:
+        pass
+
+    captured = {}
+
+    class RosPy:
+        @staticmethod
+        def wait_for_service(service, timeout):
+            assert service == "/camera/set_stream_profile"
+            assert timeout == 15
+
+        @staticmethod
+        def ServiceProxy(service, service_type):
+            del service, service_type
+
+            def invoke(request):
+                captured["request"] = request
+                return SimpleNamespace(success=True, message="success")
+
+            return invoke
+
+    harness = module.RosHarness("1", "test", 10, enable_profile_switch=True)
+    harness._rospy = RosPy()
+    harness._set_stream_profile_type = object
+    harness._set_stream_profile_request_type = Request
+    harness._stream_profile_message_type = Message
+
+    response = harness.call_set_stream_profile(
+        "/camera/set_stream_profile", specs, timeout=15
+    )
+
+    assert response == {"success": True, "message": "success"}
+    messages = captured["request"].profiles
+    assert [(item.stream_name, item.width, item.height, item.fps, item.format) for item in messages] == [
+        ("color", 1280, 720, 30, ""),
+        ("depth", 640, 480, 15, ""),
+    ]
+
+
 def test_ros1_service_graph_uses_rosservice_types():
     module = load_script()
     harness = module.RosHarness("1", "test", 10)

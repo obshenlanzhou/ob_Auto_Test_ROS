@@ -9,12 +9,20 @@ English: [README.md](README.md)
 - `--toggle-mode individual`（默认）：通过 `toggle_<stream>` 逐路关闭和恢复。
 - `--toggle-mode all`：通过每台相机的 `set_streams_enable` 整体关闭和恢复全部流。
 
+还可通过 `--switch-stream-profile 1` 启用分辨率和帧率切换。工具接受 A、B 两组
+`图像话题=宽x高@帧率` 配置，按相机调用 `set_stream_profile`，在每个完整循环开始时
+交替切换配置。切换后会验证全部目标流恢复、配置流的分辨率精确匹配且实测帧率处于
+允许偏差内；随后继续执行原有开关流验证和存图，并再次确认配置没有在开关流后丢失。
+
 工具支持单相机和预配置的多相机 launch。开关模式的 ROS 版本支持情况如下：
 
 | 开关模式 | ROS 1 | ROS 2 |
 | --- | --- | --- |
 | `individual` 逐路开关 | 支持 | 支持 |
 | `all` 整体开关 | **不支持** | 支持 |
+
+运行时切换分辨率/帧率使用独立的 `set_stream_profile` 服务，当前 ROS1 v2.9.3 和 ROS2
+驱动均支持；它不会改变 ROS1 不支持 `all` 整体开关模式的限制。
 
 当前 ROS1 v2.9.3 驱动只提供 `toggle_<stream>` 逐路服务，没有整体开关所需的
 `set_streams_enable` 服务。因此 ROS1 必须使用默认的 `individual` 模式；若指定
@@ -77,6 +85,25 @@ python3 ./stream_toggle_stress_test/stream_toggle_stress_test.py \
   --run-count 10
 ```
 
+逐路开关并在两组分辨率/帧率间切换：
+
+```bash
+python3 ./stream_toggle_stress_test/stream_toggle_stress_test.py \
+  --ros-version 2 \
+  --driver-setup /path/to/camera_ws/install/setup.bash \
+  --launch-file gemini_330_series.launch.py \
+  --camera name=camera,usb-port=2-1 \
+  --switch-stream-profile 1 \
+  --stream-profile-a /camera/color/image_raw=1280x720@30 \
+  --stream-profile-a /camera/depth/image_raw=640x480@30 \
+  --stream-profile-b /camera/color/image_raw=640x480@15 \
+  --stream-profile-b /camera/depth/image_raw=320x240@15 \
+  --run-count 10
+```
+
+单相机配置中也可使用 `/{camera}/color/image_raw=...` 占位符；工具会使用
+`--camera` 的 `name` 展开它。
+
 ROS 1：
 
 ```bash
@@ -135,6 +162,20 @@ python3 ./stream_toggle_stress_test/stream_toggle_stress_test.py \
 `sensor_msgs/Image`，且对应 `toggle_<stream>` 服务必须存在，否则前置检查失败。
 `{camera}` 占位符仅在传入单个 `--camera` 时可用。
 
+多相机切换 profile 时，A、B 两组必须包含完全相同的话题集合；每台相机的一组配置会
+在一次 `/<camera_name>/set_stream_profile` 请求中批量提交。例如：
+
+```bash
+  --switch-stream-profile 1 \
+  --stream-profile-a /camera_01/color/image_raw=1280x720@30 \
+  --stream-profile-a /camera_02/color/image_raw=640x480@30 \
+  --stream-profile-b /camera_01/color/image_raw=640x480@15 \
+  --stream-profile-b /camera_02/color/image_raw=320x240@15
+```
+
+两组配置的话题必须属于最终选中的目标流，且至少一个分辨率或帧率不同。不在 A/B
+配置中的其他目标流不会改变 profile，但仍参与全局稳定性检查。
+
 ## 循环、重试与停止
 
 逐路模式的一个完整循环表示所有目标流各完成一次“关闭→验证→开启→验证→存图”；
@@ -162,6 +203,9 @@ python3 ./stream_toggle_stress_test/stream_toggle_stress_test.py \
 | `--camera` | 空 | 单相机 launch 参数，最多一个 |
 | `--image-topic` | 自动发现 | 严格指定目标原始图像流，可重复传入 |
 | `--toggle-mode` | `individual` | `individual` 逐路开关（ROS1/ROS2）；`all` 整体开关（当前仅 ROS2） |
+| `--switch-stream-profile` | `0` | `0` 不切换；`1` 在 A/B 两组分辨率和帧率间交替切换 |
+| `--stream-profile-a` | 空 | A 组配置，格式 `TOPIC=WIDTHxHEIGHT@FPS`，可重复传入 |
+| `--stream-profile-b` | 空 | B 组配置，格式同上，话题集合必须与 A 组相同 |
 | `--duration` | `300` | 最长运行时间，支持 `15m`、`2h` |
 | `--run-count` | 空 | 最大完整循环数 |
 | `--topic-discovery-timeout` | `30` | 话题/服务发现最长等待时间 |
@@ -172,6 +216,7 @@ python3 ./stream_toggle_stress_test/stream_toggle_stress_test.py \
 | `--max-gap-seconds` | `1.5` | 稳定窗口内最大帧接收间隔 |
 | `--service-timeout` | `15` | 单次 toggle 服务调用超时 |
 | `--service-retry-delay` | `1` | 首次服务失败后的重试等待时间 |
+| `--profile-fps-tolerance` | `0.15` | profile 验证允许的实测帧率相对偏差，范围 0–1，最小绝对容差为 1 FPS |
 | `--save-image-count` | `1` | 每路每循环保存 JPG 数量，`0` 为关闭 |
 | `--save-image-timeout` | `30` | 每路存图最长等待时间 |
 | `--jpg-quality` | `95` | JPG 质量，1–100 |

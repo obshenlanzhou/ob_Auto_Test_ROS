@@ -30,7 +30,7 @@ from _test_protocol import (
 
 ENV_READY_VAR = "STREAM_TOGGLE_STRESS_TEST_ENV_READY"
 INTERRUPTED = False
-TOOL_VERSION = "1.0"
+TOOL_VERSION = "1.1"
 TEST_ID = "stream_toggle_stress_test"
 DEFAULT_STRESS_LAUNCH_ARGS = {
     "enable_heartbeat": "true",
@@ -38,6 +38,10 @@ DEFAULT_STRESS_LAUNCH_ARGS = {
 }
 RAW_IMAGE_TYPES = {"sensor_msgs/msg/Image", "sensor_msgs/Image"}
 SET_BOOL_TYPES = {"std_srvs/srv/SetBool", "std_srvs/SetBool"}
+SET_STREAM_PROFILE_TYPES = {
+    "orbbec_camera_msgs/srv/SetStreamProfile",
+    "orbbec_camera/SetStreamProfile",
+}
 
 
 def timestamp() -> str:
@@ -300,6 +304,25 @@ class StreamGroupTarget:
         return f"{self.camera_namespace}/*"
 
 
+@dataclass(frozen=True)
+class StreamProfileSpec:
+    topic: str
+    camera_namespace: str
+    camera_name: str
+    stream: str
+    width: int
+    height: int
+    fps: int
+
+
+@dataclass(frozen=True)
+class StreamProfileGroup:
+    camera_namespace: str
+    camera_name: str
+    service: str
+    profiles: Tuple[StreamProfileSpec, ...]
+
+
 def stream_target_from_topic(topic: str) -> StreamTarget:
     normalized = normalize_topic(topic)
     parts = [item for item in normalized.split("/") if item]
@@ -317,12 +340,85 @@ def stream_target_from_topic(topic: str) -> StreamTarget:
     return StreamTarget(normalized, camera_namespace, camera_name, stream, service)
 
 
+def parse_stream_profile_spec(raw: str, camera_name: str = "") -> StreamProfileSpec:
+    text = expand_camera_topic(str(raw or "").strip(), camera_name)
+    if "=" not in text:
+        raise ValueError(
+            "stream profile must be TOPIC=WIDTHxHEIGHT@FPS: " + str(raw)
+        )
+    topic_text, profile_text = text.rsplit("=", 1)
+    target = stream_target_from_topic(topic_text.strip())
+    match = re.fullmatch(r"([1-9]\d*)[xX]([1-9]\d*)@([1-9]\d*)", profile_text.strip())
+    if not match:
+        raise ValueError(
+            "stream profile must be TOPIC=WIDTHxHEIGHT@FPS with positive integers: "
+            + str(raw)
+        )
+    width, height, fps = (int(item) for item in match.groups())
+    return StreamProfileSpec(
+        topic=target.topic,
+        camera_namespace=target.camera_namespace,
+        camera_name=target.camera_name,
+        stream=target.stream,
+        width=width,
+        height=height,
+        fps=fps,
+    )
+
+
 def is_raw_image_type(type_names: Sequence[str]) -> bool:
     return any(type_name in RAW_IMAGE_TYPES for type_name in type_names)
 
 
 def is_set_bool_type(type_names: Sequence[str]) -> bool:
     return any(type_name in SET_BOOL_TYPES for type_name in type_names)
+
+
+def is_set_stream_profile_type(type_names: Sequence[str]) -> bool:
+    return any(type_name in SET_STREAM_PROFILE_TYPES for type_name in type_names)
+
+
+def build_profile_groups(
+    specs: Sequence[StreamProfileSpec],
+    targets: Sequence[StreamTarget],
+    service_types: Dict[str, List[str]],
+) -> List[StreamProfileGroup]:
+    target_topics = {target.topic for target in targets}
+    profiles_by_namespace: Dict[str, List[StreamProfileSpec]] = {}
+    camera_names: Dict[str, str] = {}
+    errors = []
+    for spec in specs:
+        if spec.topic not in target_topics:
+            errors.append(f"profile topic is not a selected target stream: {spec.topic}")
+            continue
+        profiles_by_namespace.setdefault(spec.camera_namespace, []).append(spec)
+        camera_names[spec.camera_namespace] = spec.camera_name
+    groups = []
+    for namespace in sorted(profiles_by_namespace):
+        service = f"{namespace}/set_stream_profile"
+        advertised_types = service_types.get(service, [])
+        if not advertised_types:
+            errors.append(f"stream-profile service not advertised: {service}")
+            continue
+        if not is_set_stream_profile_type(advertised_types):
+            errors.append(
+                f"stream-profile service has incompatible type: {service} "
+                f"({', '.join(advertised_types)})"
+            )
+            continue
+        groups.append(
+            StreamProfileGroup(
+                camera_namespace=namespace,
+                camera_name=camera_names[namespace],
+                service=service,
+                profiles=tuple(
+                    sorted(profiles_by_namespace[namespace], key=lambda item: item.stream)
+                ),
+            )
+        )
+    if errors:
+        raise RuntimeError("stream-profile preflight failed: " + "; ".join(errors))
+    return groups
 
 
 def build_stream_groups(
@@ -361,14 +457,24 @@ def build_stream_groups(
 
 
 class RosHarness:
-    def __init__(self, ros_version: str, node_name: str, queue_size: int) -> None:
+    def __init__(
+        self,
+        ros_version: str,
+        node_name: str,
+        queue_size: int,
+        enable_profile_switch: bool = False,
+    ) -> None:
         self.ros_version = ros_version
         self.node_name = node_name
         self.queue_size = queue_size
+        self.enable_profile_switch = enable_profile_switch
         self._rclpy = None
         self._rospy = None
         self._image_type = None
         self._set_bool_type = None
+        self._set_stream_profile_type = None
+        self._set_stream_profile_request_type = None
+        self._stream_profile_message_type = None
         self._rosservice = None
         self._sensor_qos = None
         self.node = None
@@ -393,6 +499,18 @@ class RosHarness:
             self._image_type = Image
             self._set_bool_type = SetBool
             self._sensor_qos = qos_profile_sensor_data
+            if self.enable_profile_switch:
+                try:
+                    from orbbec_camera_msgs.msg import StreamProfile
+                    from orbbec_camera_msgs.srv import SetStreamProfile
+                except Exception as exc:  # noqa: BLE001
+                    raise RuntimeError(
+                        "failed to import ROS2 set_stream_profile interfaces from "
+                        f"orbbec_camera_msgs: {exc}"
+                    ) from exc
+                self._set_stream_profile_type = SetStreamProfile
+                self._set_stream_profile_request_type = SetStreamProfile.Request
+                self._stream_profile_message_type = StreamProfile
         else:
             try:
                 import rosservice
@@ -410,6 +528,18 @@ class RosHarness:
             self._rosservice = rosservice
             self._image_type = Image
             self._set_bool_type = SetBool
+            if self.enable_profile_switch:
+                try:
+                    from orbbec_camera.msg import StreamProfile
+                    from orbbec_camera.srv import SetStreamProfile, SetStreamProfileRequest
+                except Exception as exc:  # noqa: BLE001
+                    raise RuntimeError(
+                        "failed to import ROS1 set_stream_profile interfaces from "
+                        f"orbbec_camera: {exc}"
+                    ) from exc
+                self._set_stream_profile_type = SetStreamProfile
+                self._set_stream_profile_request_type = SetStreamProfileRequest
+                self._stream_profile_message_type = StreamProfile
         return self
 
     def get_topic_names_and_types(self) -> Dict[str, List[str]]:
@@ -498,6 +628,70 @@ class RosHarness:
             try:
                 proxy = self._rospy.ServiceProxy(service_name, self._set_bool_type)
                 holder["response"] = proxy(enabled)
+            except BaseException as exc:  # noqa: BLE001
+                holder["error"] = exc
+
+        thread = threading.Thread(target=invoke, daemon=True)
+        thread.start()
+        thread.join(timeout)
+        if thread.is_alive():
+            raise TimeoutError(f"service call timed out after {timeout:.1f}s")
+        if "error" in holder:
+            raise RuntimeError(str(holder["error"]))
+        response = holder["response"]
+        return {
+            "success": bool(response.success),
+            "message": str(response.message or ""),
+        }
+
+    def call_set_stream_profile(
+        self,
+        service_name: str,
+        profiles: Sequence[StreamProfileSpec],
+        timeout: float,
+    ) -> Dict[str, Any]:
+        if not self.enable_profile_switch or self._set_stream_profile_type is None:
+            raise RuntimeError("stream-profile support was not initialized")
+        request = self._set_stream_profile_request_type()
+        for profile in profiles:
+            message = self._stream_profile_message_type()
+            message.stream_name = profile.stream
+            message.width = profile.width
+            message.height = profile.height
+            message.fps = profile.fps
+            message.format = ""
+            request.profiles.append(message)
+
+        if self.ros_version == "2":
+            client = self.node.create_client(self._set_stream_profile_type, service_name)
+            try:
+                started = time.monotonic()
+                if not client.wait_for_service(timeout_sec=timeout):
+                    raise TimeoutError(f"service not available within {timeout:.1f}s")
+                remaining = max(timeout - (time.monotonic() - started), 0.001)
+                future = client.call_async(request)
+                deadline = time.monotonic() + remaining
+                while not future.done() and time.monotonic() < deadline:
+                    self.spin_once(min(0.1, max(deadline - time.monotonic(), 0.001)))
+                if not future.done():
+                    raise TimeoutError(f"service call timed out after {timeout:.1f}s")
+                response = future.result()
+                if response is None:
+                    raise RuntimeError("service returned no response")
+                return {
+                    "success": bool(response.success),
+                    "message": str(response.message or ""),
+                }
+            finally:
+                self.node.destroy_client(client)
+
+        self._rospy.wait_for_service(service_name, timeout=timeout)
+        holder: Dict[str, Any] = {}
+
+        def invoke() -> None:
+            try:
+                proxy = self._rospy.ServiceProxy(service_name, self._set_stream_profile_type)
+                holder["response"] = proxy(request)
             except BaseException as exc:  # noqa: BLE001
                 holder["error"] = exc
 
@@ -762,6 +956,14 @@ class StreamMonitor:
         with self.lock:
             for topic in selected:
                 item = self.state[topic]
+                first = item["window_first_message_at"]
+                last = item["window_last_message_at"]
+                frame_span = (last - first) if first is not None and last is not None else 0.0
+                window_fps = (
+                    (item["window_message_count"] - 1) / frame_span
+                    if item["window_message_count"] > 1 and frame_span > 0.0
+                    else 0.0
+                )
                 rows.append(
                     {
                         "topic": topic,
@@ -778,6 +980,7 @@ class StreamMonitor:
                             else 0.0
                         ),
                         "window_max_gap_seconds": item["window_max_gap_seconds"],
+                        "window_fps": window_fps,
                         "width": item["width"],
                         "height": item["height"],
                         "encoding": item["encoding"],
@@ -931,6 +1134,224 @@ def wait_for_enabled_state(
             "topics": monitor.snapshot(),
         },
     )
+
+
+def evaluate_profile_state(
+    specs: Sequence[StreamProfileSpec],
+    snapshot: Sequence[Dict[str, Any]],
+    fps_tolerance_ratio: float,
+) -> Dict[str, Any]:
+    rows_by_topic = {str(row.get("topic", "")): row for row in snapshot}
+    checks = []
+    for spec in specs:
+        row = rows_by_topic.get(spec.topic, {})
+        actual_width = int(row.get("width", 0) or 0)
+        actual_height = int(row.get("height", 0) or 0)
+        actual_fps = float(row.get("window_fps", 0.0) or 0.0)
+        fps_tolerance = max(1.0, spec.fps * fps_tolerance_ratio)
+        resolution_match = actual_width == spec.width and actual_height == spec.height
+        fps_match = actual_fps > 0.0 and abs(actual_fps - spec.fps) <= fps_tolerance
+        checks.append(
+            {
+                "topic": spec.topic,
+                "stream": spec.stream,
+                "expected_width": spec.width,
+                "expected_height": spec.height,
+                "expected_fps": spec.fps,
+                "actual_width": actual_width,
+                "actual_height": actual_height,
+                "actual_fps": actual_fps,
+                "fps_tolerance": fps_tolerance,
+                "resolution_match": resolution_match,
+                "fps_match": fps_match,
+                "passed": resolution_match and fps_match,
+            }
+        )
+    return {
+        "all_profiles_match": bool(checks) and all(item["passed"] for item in checks),
+        "profiles": checks,
+    }
+
+
+def wait_for_profile_state(
+    *,
+    session: LaunchSession,
+    harness: RosHarness,
+    monitor: StreamMonitor,
+    specs: Sequence[StreamProfileSpec],
+    stable_seconds: float,
+    max_gap_seconds: float,
+    fps_tolerance_ratio: float,
+    timeout: float,
+) -> Dict[str, Any]:
+    started = time.monotonic()
+    deadline = started + timeout
+    last_state: Dict[str, Any] = {"all_profiles_match": False, "profiles": []}
+    while time.monotonic() < deadline:
+        session.assert_running()
+        harness.spin_once(0.1)
+        if not monitor.topics_are_stable(
+            monitor.topics, stable_seconds, max_gap_seconds
+        ):
+            continue
+        snapshot = monitor.snapshot()
+        last_state = evaluate_profile_state(specs, snapshot, fps_tolerance_ratio)
+        if last_state["all_profiles_match"]:
+            return {
+                "elapsed_seconds": time.monotonic() - started,
+                **last_state,
+                "topics": snapshot,
+            }
+    raise StreamVerificationError(
+        f"stream-profile verification timed out after {timeout:.1f}s",
+        {
+            "elapsed_seconds": time.monotonic() - started,
+            **last_state,
+            "topics": monitor.snapshot(),
+        },
+    )
+
+
+def verify_profile_snapshot(
+    specs: Sequence[StreamProfileSpec],
+    snapshot: Sequence[Dict[str, Any]],
+    fps_tolerance_ratio: float,
+) -> Dict[str, Any]:
+    state = evaluate_profile_state(specs, snapshot, fps_tolerance_ratio)
+    if not state["all_profiles_match"]:
+        raise StreamVerificationError(
+            "stream profile changed or did not recover after toggle",
+            {**state, "topics": list(snapshot)},
+        )
+    return state
+
+
+class ProfileCallError(RuntimeError):
+    def __init__(self, message: str, attempts: List[Dict[str, Any]]) -> None:
+        super().__init__(message)
+        self.attempts = attempts
+
+
+def call_profile_with_retry(
+    *,
+    session: LaunchSession,
+    harness: RosHarness,
+    group: StreamProfileGroup,
+    timeout: float,
+    retry_delay: float,
+    sleep: Callable[[float], None] = time.sleep,
+) -> Dict[str, Any]:
+    attempts = []
+    for attempt_index in (1, 2):
+        session.assert_running()
+        started = time.monotonic()
+        try:
+            response = harness.call_set_stream_profile(
+                group.service, group.profiles, timeout
+            )
+            success = bool(response.get("success"))
+            message = str(response.get("message", ""))
+            error = "" if success else (message or "service returned success=false")
+        except Exception as exc:  # noqa: BLE001
+            success = False
+            message = ""
+            error = str(exc)
+        attempts.append(
+            {
+                "attempt": attempt_index,
+                "success": success,
+                "message": message,
+                "error": error,
+                "elapsed_seconds": time.monotonic() - started,
+            }
+        )
+        if success:
+            return {
+                "success": True,
+                "retried": attempt_index > 1,
+                "attempts": attempts,
+            }
+        if attempt_index == 1:
+            sleep(retry_delay)
+    raise ProfileCallError(
+        f"failed to set stream profiles for {group.camera_namespace} after 2 service "
+        f"attempts: {attempts[-1]['error']}",
+        attempts,
+    )
+
+
+def apply_profile_set(
+    *,
+    session: LaunchSession,
+    harness: RosHarness,
+    monitor: StreamMonitor,
+    groups: Sequence[StreamProfileGroup],
+    specs: Sequence[StreamProfileSpec],
+    label: str,
+    cycle_index: int,
+    service_timeout: float,
+    retry_delay: float,
+    stable_seconds: float,
+    max_gap_seconds: float,
+    fps_tolerance_ratio: float,
+    stream_timeout: float,
+    warnings: List[Dict[str, Any]],
+    emit: StatusLogger,
+) -> Dict[str, Any]:
+    service_results = []
+    current_snapshot = monitor.snapshot()
+    for group in groups:
+        current = evaluate_profile_state(group.profiles, current_snapshot, 0.03)
+        if current["all_profiles_match"]:
+            service_results.append(
+                {
+                    "camera_namespace": group.camera_namespace,
+                    "service": group.service,
+                    "already_active": True,
+                    "success": True,
+                }
+            )
+            continue
+        call = call_profile_with_retry(
+            session=session,
+            harness=harness,
+            group=group,
+            timeout=service_timeout,
+            retry_delay=retry_delay,
+        )
+        call["camera_namespace"] = group.camera_namespace
+        call["service"] = group.service
+        call["already_active"] = False
+        service_results.append(call)
+        if call["retried"]:
+            warning = {
+                "cycle": cycle_index,
+                "camera_namespace": group.camera_namespace,
+                "action": "set-stream-profile",
+                "profile_set": label,
+                "message": (
+                    f"cycle {cycle_index} {group.camera_namespace}: profile set {label} "
+                    "succeeded only after retry"
+                ),
+            }
+            warnings.append(warning)
+            emit(warning["message"])
+    monitor.reset_window()
+    state = wait_for_profile_state(
+        session=session,
+        harness=harness,
+        monitor=monitor,
+        specs=specs,
+        stable_seconds=stable_seconds,
+        max_gap_seconds=max_gap_seconds,
+        fps_tolerance_ratio=fps_tolerance_ratio,
+        timeout=stream_timeout,
+    )
+    return {
+        "profile_set": label,
+        "services": service_results,
+        "verification": state,
+    }
 
 
 class ToggleCallError(RuntimeError):
@@ -1232,6 +1653,10 @@ def build_summary(result: Dict[str, Any]) -> str:
         f"- Status: {result.get('status', '')}",
         f"- Tool version: {result.get('tool_version', '')}",
         f"- Toggle mode: {result.get('toggle_mode', 'individual')}",
+        f"- Stream profile switching: "
+        f"{'enabled' if result.get('profile_switch_enabled') else 'disabled'}",
+        f"- Initial profile set: {result.get('initial_profile_set', 'disabled')}",
+        f"- Last active profile set: {result.get('active_profile_set', '') or 'none'}",
         f"- Completed cycles: {result.get('completed_cycles', 0)}",
         f"- Completed stream operations: {result.get('completed_operations', 0)}",
         f"- Service retry warnings: {len(result.get('warnings', []))}",
@@ -1280,6 +1705,47 @@ def validate_args(args) -> Dict[str, Any]:
         )
     if len(set(explicit_topics)) != len(explicit_topics):
         raise ValueError("--image-topic contains duplicate topics")
+    profile_switch_enabled = args.switch_stream_profile == 1
+    profile_sets: Dict[str, List[StreamProfileSpec]] = {"A": [], "B": []}
+    for label, raw_specs in (
+        ("A", args.stream_profile_a),
+        ("B", args.stream_profile_b),
+    ):
+        if not camera and any(
+            "{camera}" in raw or "${camera}" in raw for raw in raw_specs
+        ):
+            raise ValueError(
+                f"stream profile set {label} {{camera}} placeholder requires one --camera"
+            )
+        parsed_specs = [
+            parse_stream_profile_spec(raw, template_camera) for raw in raw_specs
+        ]
+        topics = [spec.topic for spec in parsed_specs]
+        if len(set(topics)) != len(topics):
+            raise ValueError(f"--stream-profile-{label.lower()} contains duplicate topics")
+        profile_sets[label] = parsed_specs
+    if not profile_switch_enabled and (profile_sets["A"] or profile_sets["B"]):
+        raise ValueError(
+            "--stream-profile-a/--stream-profile-b require --switch-stream-profile 1"
+        )
+    if profile_switch_enabled:
+        if not profile_sets["A"] or not profile_sets["B"]:
+            raise ValueError(
+                "--switch-stream-profile 1 requires both --stream-profile-a and "
+                "--stream-profile-b"
+            )
+        topics_a = {spec.topic for spec in profile_sets["A"]}
+        topics_b = {spec.topic for spec in profile_sets["B"]}
+        if topics_a != topics_b:
+            raise ValueError("stream profile sets A and B must configure the same topics")
+        values_a = {
+            spec.topic: (spec.width, spec.height, spec.fps) for spec in profile_sets["A"]
+        }
+        values_b = {
+            spec.topic: (spec.width, spec.height, spec.fps) for spec in profile_sets["B"]
+        }
+        if values_a == values_b:
+            raise ValueError("stream profile sets A and B must be different")
     run_count = args.run_count
     if run_count is not None and run_count <= 0:
         raise ValueError("--run-count must be > 0")
@@ -1292,6 +1758,9 @@ def validate_args(args) -> Dict[str, Any]:
     retry_delay = float(args.service_retry_delay)
     if retry_delay < 0:
         raise ValueError("--service-retry-delay must be >= 0")
+    fps_tolerance_ratio = float(args.profile_fps_tolerance)
+    if fps_tolerance_ratio < 0.0 or fps_tolerance_ratio > 1.0:
+        raise ValueError("--profile-fps-tolerance must be in range 0-1")
     return {
         "camera": camera,
         "explicit_topics": explicit_topics,
@@ -1305,6 +1774,9 @@ def validate_args(args) -> Dict[str, Any]:
         "service_timeout": parse_duration(args.service_timeout, 15.0),
         "service_retry_delay": retry_delay,
         "save_image_timeout": parse_duration(args.save_image_timeout, 30.0),
+        "profile_switch_enabled": profile_switch_enabled,
+        "profile_sets": profile_sets,
+        "profile_fps_tolerance": fps_tolerance_ratio,
     }
 
 
@@ -1351,6 +1823,15 @@ def run(args) -> int:
         "launch_args": launch_args,
         "camera": camera,
         "toggle_mode": args.toggle_mode,
+        "profile_switch_enabled": config["profile_switch_enabled"],
+        "profile_fps_tolerance": config["profile_fps_tolerance"],
+        "stream_profile_sets": {
+            label: [asdict(spec) for spec in specs]
+            for label, specs in config["profile_sets"].items()
+        },
+        "profile_groups": {},
+        "initial_profile_set": "disabled",
+        "active_profile_set": "",
         "topic_mode": "manual" if config["explicit_topics"] else "auto",
         "requested_image_topics": config["explicit_topics"],
         "targets": [],
@@ -1388,7 +1869,12 @@ def run(args) -> int:
         emit(f"results dir: {results_dir}")
         emit("launch command: " + " ".join(shlex.quote(item) for item in command))
         session.start()
-        with RosHarness(args.ros_version, "stream_toggle_stress_test", args.queue_size) as harness:
+        with RosHarness(
+            args.ros_version,
+            "stream_toggle_stress_test",
+            args.queue_size,
+            enable_profile_switch=config["profile_switch_enabled"],
+        ) as harness:
             targets, skipped = discover_stream_targets(
                 session=session,
                 harness=harness,
@@ -1398,15 +1884,30 @@ def run(args) -> int:
             )
             result["targets"] = [asdict(target) for target in targets]
             result["skipped_image_topics"] = skipped
+            service_types = harness.get_service_names_and_types()
             groups: List[StreamGroupTarget] = []
             if args.toggle_mode == "all":
-                groups = build_stream_groups(
-                    targets, harness.get_service_names_and_types()
-                )
+                groups = build_stream_groups(targets, service_types)
                 result["stream_groups"] = [asdict(group) for group in groups]
                 emit(
                     "all-stream services: "
                     + ", ".join(group.service for group in groups)
+                )
+            profile_groups: Dict[str, List[StreamProfileGroup]] = {"A": [], "B": []}
+            if config["profile_switch_enabled"]:
+                for label in ("A", "B"):
+                    profile_groups[label] = build_profile_groups(
+                        config["profile_sets"][label], targets, service_types
+                    )
+                result["profile_groups"] = {
+                    label: [asdict(group) for group in profile_groups[label]]
+                    for label in ("A", "B")
+                }
+                emit(
+                    "stream profile switching enabled: "
+                    + ", ".join(
+                        spec.topic for spec in config["profile_sets"]["A"]
+                    )
                 )
             emit(
                 "target streams: " + ", ".join(target.topic for target in targets),
@@ -1424,6 +1925,22 @@ def run(args) -> int:
                 max_gap_seconds=config["max_gap"],
                 timeout=config["stream_timeout"],
             )
+            profile_sequence = ("A", "B")
+            if config["profile_switch_enabled"]:
+                initial_a = evaluate_profile_state(
+                    config["profile_sets"]["A"], result["baseline"], 0.03
+                )["all_profiles_match"]
+                initial_b = evaluate_profile_state(
+                    config["profile_sets"]["B"], result["baseline"], 0.03
+                )["all_profiles_match"]
+                if initial_a and not initial_b:
+                    result["initial_profile_set"] = "A"
+                    profile_sequence = ("B", "A")
+                elif initial_b and not initial_a:
+                    result["initial_profile_set"] = "B"
+                    profile_sequence = ("A", "B")
+                else:
+                    result["initial_profile_set"] = "unknown"
             emit("all baseline streams are stable", event="phase", phase="running")
 
             cycle_index = 0
@@ -1442,6 +1959,54 @@ def run(args) -> int:
                     "operations": [],
                 }
                 result["cycles"].append(cycle)
+                active_profile_specs: Sequence[StreamProfileSpec] = ()
+                if config["profile_switch_enabled"]:
+                    profile_label = profile_sequence[(cycle_index - 1) % 2]
+                    active_profile_specs = config["profile_sets"][profile_label]
+                    emit(
+                        f"cycle {cycle_index}: switch to stream profile set {profile_label}",
+                        event="progress",
+                        current=cycle_index,
+                        total=args.run_count,
+                        cycle=cycle_index,
+                        phase="switching-stream-profile",
+                    )
+                    try:
+                        cycle["profile_switch"] = apply_profile_set(
+                            session=session,
+                            harness=harness,
+                            monitor=monitor,
+                            groups=profile_groups[profile_label],
+                            specs=active_profile_specs,
+                            label=profile_label,
+                            cycle_index=cycle_index,
+                            service_timeout=config["service_timeout"],
+                            retry_delay=config["service_retry_delay"],
+                            stable_seconds=config["stable"],
+                            max_gap_seconds=config["max_gap"],
+                            fps_tolerance_ratio=config["profile_fps_tolerance"],
+                            stream_timeout=config["stream_timeout"],
+                            warnings=result["warnings"],
+                            emit=emit,
+                        )
+                        cycle["profile_switch"]["status"] = "passed"
+                        result["active_profile_set"] = profile_label
+                    except ProfileCallError as exc:
+                        cycle["profile_switch"] = {
+                            "profile_set": profile_label,
+                            "status": "failed",
+                            "error": str(exc),
+                            "attempts": exc.attempts,
+                        }
+                        raise
+                    except StreamVerificationError as exc:
+                        cycle["profile_switch"] = {
+                            "profile_set": profile_label,
+                            "status": "failed",
+                            "error": str(exc),
+                            "verification_failure": exc.details,
+                        }
+                        raise
                 if args.toggle_mode == "all":
                     operation = {
                         "index": 1,
@@ -1540,6 +2105,12 @@ def run(args) -> int:
                             max_gap_seconds=config["max_gap"],
                             timeout=config["stream_timeout"],
                         )
+                        if active_profile_specs:
+                            operation["profile_state_after_toggle"] = verify_profile_snapshot(
+                                active_profile_specs,
+                                operation["enabled_state"]["topics"],
+                                config["profile_fps_tolerance"],
+                            )
                         groups_may_be_disabled = False
                         if image_writer is not None:
                             for target in targets:
@@ -1703,6 +2274,12 @@ def run(args) -> int:
                             max_gap_seconds=config["max_gap"],
                             timeout=config["stream_timeout"],
                         )
+                        if active_profile_specs:
+                            operation["profile_state_after_toggle"] = verify_profile_snapshot(
+                                active_profile_specs,
+                                operation["enabled_state"]["topics"],
+                                config["profile_fps_tolerance"],
+                            )
                         target_may_be_disabled = False
                         if image_writer is not None:
                             operation["images"] = save_target_images(
@@ -1896,6 +2473,27 @@ def parse_args(argv: Optional[Sequence[str]] = None):
             "set_streams_enable service"
         ),
     )
+    parser.add_argument(
+        "--switch-stream-profile",
+        type=int,
+        choices=(0, 1),
+        default=0,
+        help="0 keeps launch stream profiles; 1 alternates configured profile sets A and B",
+    )
+    parser.add_argument(
+        "--stream-profile-a",
+        action="append",
+        default=[],
+        metavar="TOPIC=WIDTHxHEIGHT@FPS",
+        help="Profile-set A entry; repeat for multiple streams/cameras",
+    )
+    parser.add_argument(
+        "--stream-profile-b",
+        action="append",
+        default=[],
+        metavar="TOPIC=WIDTHxHEIGHT@FPS",
+        help="Profile-set B entry; repeat for multiple streams/cameras",
+    )
     parser.add_argument("--duration", default="300")
     parser.add_argument("--run-count", type=int, default=None)
     parser.add_argument("--topic-discovery-timeout", default="30")
@@ -1906,6 +2504,11 @@ def parse_args(argv: Optional[Sequence[str]] = None):
     parser.add_argument("--max-gap-seconds", default="1.5")
     parser.add_argument("--service-timeout", default="15")
     parser.add_argument("--service-retry-delay", default="1")
+    parser.add_argument(
+        "--profile-fps-tolerance",
+        default="0.15",
+        help="Allowed measured FPS deviation ratio for profile verification (0-1)",
+    )
     parser.add_argument("--save-image-count", type=int, default=1)
     parser.add_argument("--save-image-timeout", default="30")
     parser.add_argument("--jpg-quality", type=int, default=95)
