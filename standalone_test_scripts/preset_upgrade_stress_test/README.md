@@ -99,8 +99,9 @@ camera namespace is discovered. To restrict the selection, pass
 --launch-arg enable_right_ir=true
 ```
 
-`sensor_msgs/Image` messages are saved as pixel-lossless PNG files at fixed lossless compression
-level 1, preserving 16-bit depth values. `sensor_msgs/CompressedImage` messages are not decoded or validated; their `data` bytes
+Raw color/IR `sensor_msgs/Image` messages are saved as pixel-lossless PNG files at fixed
+lossless compression level 1. Raw depth images are saved only as colorized PNGs.
+`sensor_msgs/CompressedImage` messages are not decoded or validated; their `data` bytes
 are written directly to `.jpg`. Auto-discovery selects only `Image`; compressed topics must be
 specified explicitly.
 
@@ -138,7 +139,7 @@ preset_upgrade_stress_test/results/YYYYMMDD_HHMMSS_preset_upgrade/
 ├── logs/test_XXXX/<camera>/upgrade.log     # firmware_update_tool output
 ├── logs/test_XXXX/<camera>/<camera>.launch.log  # launch output
 ├── logs/test_XXXX/<camera>/sdk/Log/         # Upgrade-tool and camera SDK debug logs
-└── images/                                # Raw PNG and byte-for-byte CompressedImage JPG files
+└── images/                                # Raw color/IR PNG, colorized depth PNG, and byte-for-byte CompressedImage JPG files
     ├── camera_01/color/image_0001.png
     ├── camera_01/color/image_0002.jpg
     ├── camera_01/depth/image_0001.png

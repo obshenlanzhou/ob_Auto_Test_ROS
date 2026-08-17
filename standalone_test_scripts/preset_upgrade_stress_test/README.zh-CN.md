@@ -94,7 +94,7 @@ python3 ./preset_upgrade_stress_test/preset_upgrade_stress_test.py \
 --launch-arg enable_right_ir=true
 ```
 
-`sensor_msgs/Image` 以像素值无损的 PNG 保存（固定无损压缩级别 1），16 位深度值保持不变；
+raw 彩色/IR `sensor_msgs/Image` 以像素值无损的 PNG 保存（固定无损压缩级别 1），raw 深度仅保存彩色渲染 PNG；
 `sensor_msgs/CompressedImage` 不解码、不校验，直接将消息 `data` 原始字节保存为 `.jpg`。
 自动发现只选择 `Image`，压缩话题必须显式指定。
 
@@ -130,7 +130,7 @@ preset_upgrade_stress_test/results/YYYYMMDD_HHMMSS_preset_upgrade/
 ├── logs/test_XXXX/<camera>/upgrade.log     # firmware_update_tool 输出
 ├── logs/test_XXXX/<camera>/<camera>.launch.log  # launch 输出
 ├── logs/test_XXXX/<camera>/sdk/Log/         # 升级工具及相机 SDK debug 日志
-└── images/                                # raw PNG 和 CompressedImage 原始 JPG
+└── images/                                # raw 彩色/IR PNG、彩色深度 PNG 和 CompressedImage 原始 JPG
     ├── camera_01/color/image_0001.png
     ├── camera_01/color/image_0002.jpg
     ├── camera_01/depth/image_0001.png

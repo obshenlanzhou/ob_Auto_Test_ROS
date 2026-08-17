@@ -514,7 +514,7 @@ def test_image_saving_uses_stream_directories_and_continuing_indices(tmp_path):
         assert compressed == output_root / "camera_01" / "color" / "image_0002.jpg"
 
 
-def test_all_image_savers_preserve_uint16_png_and_compressed_bytes(tmp_path):
+def test_all_image_savers_colorize_depth_png_and_preserve_compressed_bytes(tmp_path):
     cv2 = pytest.importorskip("cv2")
     np = pytest.importorskip("numpy")
     pixels = np.array([[0, 1, 1024], [4096, 32768, 65535]], dtype=np.uint16)
@@ -533,7 +533,12 @@ def test_all_image_savers_preserve_uint16_png_and_compressed_bytes(tmp_path):
             assert desired_encoding == "passthrough"
             return pixels.copy()
 
-    for test_id in ("export_load", "preset_upgrade", "launch_param_load"):
+    for test_id in (
+        "export_load",
+        "preset_upgrade",
+        "launch_param_load",
+        "launch_restart",
+    ):
         module = load_script(SCRIPTS[test_id])
         topic = "/camera_01/depth/image_raw"
         raw_path = tmp_path / test_id / "raw.png"
@@ -547,7 +552,7 @@ def test_all_image_savers_preserve_uint16_png_and_compressed_bytes(tmp_path):
             saver._write_image(topic, raw_message, raw_path)
             saver.metadata[topic]["topic_kind"] = "compressed"
             saver._write_image(topic, compressed_message, compressed_path)
-        else:
+        elif test_id in {"preset_upgrade", "launch_param_load"}:
             saver = object.__new__(module.ImageCaptureMonitor)
             saver.state = {topic: {"topic_kind": "raw"}}
             saver._bridge = FakeBridge()
@@ -555,10 +560,19 @@ def test_all_image_savers_preserve_uint16_png_and_compressed_bytes(tmp_path):
             saver._write_image(topic, raw_message, raw_path)
             saver.state[topic]["topic_kind"] = "compressed"
             saver._write_image(topic, compressed_message, compressed_path)
+        else:
+            saver = object.__new__(module.ImageSaver)
+            saver.state = {topic: {"topic_kind": "raw"}}
+            saver._bridge = FakeBridge()
+            saver._cv2 = cv2
+            saver._write(topic, raw_message, raw_path)
+            saver.state[topic]["topic_kind"] = "compressed"
+            saver._write(topic, compressed_message, compressed_path)
 
         decoded = cv2.imread(str(raw_path), cv2.IMREAD_UNCHANGED)
-        assert decoded.dtype == np.uint16
-        assert np.array_equal(decoded, pixels)
+        assert decoded.dtype == np.uint8
+        assert decoded.shape == (*pixels.shape, 3)
+        assert np.all(decoded[pixels == 0] == 0)
         assert compressed_path.read_bytes() == compressed_message.data
 
     module = load_script(SCRIPTS["stream_toggle"])
@@ -574,12 +588,10 @@ def test_all_image_savers_preserve_uint16_png_and_compressed_bytes(tmp_path):
     raw_record = writer.write(raw_target, raw_message)
     compressed_record = writer.write(compressed_target, compressed_message)
     decoded = cv2.imread(raw_record["path"], cv2.IMREAD_UNCHANGED)
-    assert decoded.dtype == np.uint16
-    assert np.array_equal(decoded, pixels)
-    preview = cv2.imread(raw_record["preview_path"], cv2.IMREAD_UNCHANGED)
-    assert preview.dtype == np.uint8
-    assert preview.shape == (*pixels.shape, 3)
-    assert np.all(preview[pixels == 0] == 0)
+    assert decoded.dtype == np.uint8
+    assert decoded.shape == (*pixels.shape, 3)
+    assert np.all(decoded[pixels == 0] == 0)
+    assert "preview_path" not in raw_record
     assert Path(compressed_record["path"]).read_bytes() == compressed_message.data
 
 

@@ -96,7 +96,7 @@ python3 ./launch_param_load_stress/launch_param_load_stress.py \
 
 默认自动发现每个相机命名空间下所有已发布的 `sensor_msgs/Image` 图像流。
 传入一个或多个 `--image-topic` 后，将只保存显式指定的 topic。
-原始 `Image` 以像素值无损的 PNG 保存（固定无损压缩级别 1），16 位深度值保持不变；`CompressedImage`
+raw 彩色/IR `Image` 以像素值无损的 PNG 保存（固定无损压缩级别 1），raw 深度仅保存彩色渲染 PNG；`CompressedImage`
 不解码、不校验，直接将消息 `data` 原始字节保存为 `.jpg`。自动发现不包含压缩话题。
 
 首轮还会自动发现各相机命名空间下的 `PointCloud2` 和 `Imu` 话题，

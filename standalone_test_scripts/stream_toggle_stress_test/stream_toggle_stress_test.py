@@ -1747,7 +1747,7 @@ class ImageWriter:
         self.bridge = CvBridge()
         return self.bridge, self.cv2
 
-    def _write_depth_preview(self, source_path: Path, image: Any) -> Path:
+    def _colorize_depth(self, image: Any) -> Any:
         import numpy as np
 
         values = np.asarray(image)
@@ -1765,16 +1765,9 @@ class ImageWriter:
                 ).astype(np.uint8)
             else:
                 normalized[valid] = 255
-        preview = self.cv2.applyColorMap(normalized, self.cv2.COLORMAP_TURBO)
-        preview[~valid] = 0
-        preview_path = source_path.with_name(f"{source_path.stem}_preview.png")
-        if not self.cv2.imwrite(
-            str(preview_path),
-            preview,
-            [int(self.cv2.IMWRITE_PNG_COMPRESSION), 1],
-        ):
-            raise RuntimeError(f"failed to write depth preview PNG: {preview_path}")
-        return preview_path
+        rendered = self.cv2.applyColorMap(normalized, self.cv2.COLORMAP_TURBO)
+        rendered[~valid] = 0
+        return rendered
 
     def write(self, target: SaveImageTarget, message: Any) -> Dict[str, Any]:
         path = self.paths.next_path(target)
@@ -1789,7 +1782,9 @@ class ImageWriter:
         bridge, cv2 = self._ensure_cv_tools()
         encoding = str(getattr(message, "encoding", "") or "")
         image = bridge.imgmsg_to_cv2(message, desired_encoding="passthrough")
-        if encoding.lower() == "rgb8":
+        if target.stream == "depth" and encoding.lower() in {"16uc1", "mono16"}:
+            image = self._colorize_depth(image)
+        elif encoding.lower() == "rgb8":
             image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
         elif encoding.lower() == "rgba8":
             image = cv2.cvtColor(image, cv2.COLOR_RGBA2BGRA)
@@ -1798,14 +1793,11 @@ class ImageWriter:
         )
         if not ok:
             raise RuntimeError(f"failed to write PNG image: {path}")
-        record = {
+        return {
             "path": str(path),
             "topic": target.topic,
             "topic_kind": target.topic_kind,
         }
-        if target.stream == "depth" and encoding.lower() in {"16uc1", "mono16"}:
-            record["preview_path"] = str(self._write_depth_preview(path, image))
-        return record
 
 
 def save_target_images(

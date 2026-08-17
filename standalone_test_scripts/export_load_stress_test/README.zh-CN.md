@@ -80,7 +80,7 @@ python3 ./export_load_stress_test/export_load_stress_test.py \
 --image-topic /{camera}/ir/image_raw
 ```
 
-`sensor_msgs/Image` 以像素值无损的 PNG 保存（固定无损压缩级别 1），16 位深度值保持不变；
+raw 彩色/IR `sensor_msgs/Image` 以像素值无损的 PNG 保存（固定无损压缩级别 1），raw 深度仅保存彩色渲染 PNG；
 `sensor_msgs/CompressedImage` 不解码、不校验，直接将消息 `data` 原始字节保存为 `.jpg`。
 自动发现只选择 `Image`；压缩话题必须通过 `--image-topic` 显式指定。
 
@@ -114,7 +114,7 @@ export_load_stress_test/results/YYYYMMDD_HHMMSS_export_load/
 ├── summary.md       # 最终结果和每次压测通过/失败状态
 ├── result.json      # 完整机器可读结果
 ├── events.jsonl     # 结构化生命周期和进度事件
-├── images/          # raw 为 PNG；CompressedImage 原始字节为 JPG
+├── images/          # raw 彩色/IR 为无损 PNG，raw 深度为彩色渲染 PNG；CompressedImage 原始字节为 JPG
 │   ├── camera_01/color/image_0001.png
 │   ├── camera_01/color/image_0002.jpg
 │   ├── camera_01/depth/image_0001.png

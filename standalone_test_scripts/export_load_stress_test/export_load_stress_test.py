@@ -721,6 +721,34 @@ class StableImageMonitor:
         self.subscriptions = []
 
 
+def colorize_depth_image(image: Any, cv2: Any) -> Any:
+    import numpy as np
+
+    values = np.asarray(image)
+    valid = np.isfinite(values) & (values > 0)
+    normalized = np.zeros(values.shape, dtype=np.uint8)
+    if np.any(valid):
+        low, high = np.percentile(values[valid], [1, 99])
+        if high > low:
+            normalized[valid] = np.clip(
+                (values[valid].astype(np.float64) - low) / (high - low) * 255.0,
+                0,
+                255,
+            ).astype(np.uint8)
+        else:
+            normalized[valid] = 255
+    rendered = cv2.applyColorMap(normalized, cv2.COLORMAP_TURBO)
+    rendered[~valid] = 0
+    return rendered
+
+
+def is_depth_image_topic(topic: str) -> bool:
+    return any(
+        part == "depth" or part.startswith("depth_")
+        for part in topic.strip("/").lower().split("/")
+    )
+
+
 class ImageSaver:
     def __init__(
         self,
@@ -786,7 +814,9 @@ class ImageSaver:
         bridge, cv2 = self._ensure_cv_tools()
         encoding = str(getattr(message, "encoding", "") or "")
         image = bridge.imgmsg_to_cv2(message, desired_encoding="passthrough")
-        if encoding.lower() == "rgb8":
+        if is_depth_image_topic(topic_name) and encoding.lower() in {"16uc1", "mono16"}:
+            image = colorize_depth_image(image, cv2)
+        elif encoding.lower() == "rgb8":
             image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
         elif encoding.lower() == "rgba8":
             image = cv2.cvtColor(image, cv2.COLOR_RGBA2BGRA)

@@ -14,7 +14,7 @@ Starts a ROS launch and repeatedly stops streams, restores them, verifies output
 | Target streams | Auto-discovered or selected with `--image-topic` |
 | Stream profiles | Alternates between A/B resolution, FPS, and output-format sets |
 | Toggle timing | Off and on/preview durations are independently configurable; both default to 4 seconds |
-| Image saving | Raw `Image` as lossless PNG; `CompressedImage.data` unchanged as JPG |
+| Image saving | Raw color/IR as lossless PNG, raw depth as colorized PNG; `CompressedImage.data` unchanged as JPG |
 
 The per-stream workflow is:
 
@@ -138,7 +138,7 @@ Each run creates:
 stream_toggle_stress_test/results/YYYYMMDD_HHMMSS_stream_toggle/
 ├── logs/camera.launch.log     # ROS launch log
 ├── logs/sdk/                  # SDK logs
-├── images/                    # Raw images, point-cloud previews, and IMU plots
+├── images/                    # Raw color/IR, colorized depth, point-cloud, and IMU artifacts
 ├── summary.md                 # Test summary
 ├── events.jsonl               # Structured run events
 └── result.json                # Per-cycle, per-stream, and image results

@@ -84,8 +84,9 @@ monitoring and saving to an explicit set:
 --image-topic /{camera}/ir/image_raw
 ```
 
-`sensor_msgs/Image` messages are saved as pixel-lossless PNG files at fixed lossless compression
-level 1, preserving 16-bit depth values. `sensor_msgs/CompressedImage` messages are not decoded or validated; their `data` bytes
+Raw color/IR `sensor_msgs/Image` messages are saved as pixel-lossless PNG files at fixed
+lossless compression level 1. Raw depth images are saved only as colorized PNGs.
+`sensor_msgs/CompressedImage` messages are not decoded or validated; their `data` bytes
 are written directly to `.jpg`. Auto-discovery selects only `Image`; compressed topics must be
 specified explicitly with `--image-topic`.
 
@@ -121,7 +122,7 @@ export_load_stress_test/results/YYYYMMDD_HHMMSS_export_load/
 ├── summary.md       # Final result and per-test pass/fail status
 ├── result.json      # Full machine-readable result
 ├── events.jsonl     # Structured lifecycle and progress events
-├── images/          # Raw PNG and byte-for-byte CompressedImage JPG files
+├── images/          # Raw color/IR PNG, colorized depth PNG, and byte-for-byte CompressedImage JPG files
 │   ├── camera_01/color/image_0001.png
 │   ├── camera_01/color/image_0002.jpg
 │   ├── camera_01/depth/image_0001.png

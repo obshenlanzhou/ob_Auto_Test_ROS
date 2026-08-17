@@ -14,7 +14,7 @@ English: [README.md](README.md)
 | 目标流 | 自动发现，或通过 `--image-topic` 指定 |
 | 流配置切换 | A/B 两组分辨率、帧率和出流格式交替切换 |
 | 开关时间 | 关流和开流+预览时间可独立配置，默认均为 4 秒 |
-| 存图 | raw `Image` 保存无损 PNG；`CompressedImage.data` 原样保存为 JPG |
+| 存图 | raw 彩色/IR 保存无损 PNG，raw 深度仅保存彩色渲染 PNG；`CompressedImage.data` 原样保存为 JPG |
 
 逐路模式的典型流程：
 
@@ -132,7 +132,7 @@ A、B 两组必须配置相同的话题，且配置内容必须不同。
 stream_toggle_stress_test/results/YYYYMMDD_HHMMSS_stream_toggle/
 ├── logs/camera.launch.log     # ROS launch 日志
 ├── logs/sdk/                  # SDK 日志
-├── images/                    # raw 图像、点云预览和 IMU 曲线
+├── images/                    # raw 彩色/IR、彩色深度、点云和 IMU 证据
 ├── summary.md                 # 测试摘要
 ├── events.jsonl               # 结构化运行事件
 └── result.json                # 每轮、每路流及存图结果
