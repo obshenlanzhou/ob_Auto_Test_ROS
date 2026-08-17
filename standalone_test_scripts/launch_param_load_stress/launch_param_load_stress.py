@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import re
 import shlex
@@ -21,10 +20,16 @@ from _test_protocol import (
     atomic_write_json,
     collect_test_environment,
     contract_result,
+    install_terminal_log,
     iso_now,
     namespace_request,
     parse_camera,
     test_environment_markdown,
+)
+from _sensor_artifacts import (
+    capture_sensor_artifacts,
+    discover_sensor_topics,
+    expand_topic_templates,
 )
 
 try:
@@ -38,7 +43,7 @@ else:
 
 ENV_READY_VAR = "LAUNCH_PARAM_LOAD_STRESS_ENV_READY"
 INTERRUPTED = False
-TOOL_VERSION = "1.2"
+TOOL_VERSION = "1.7"
 TEST_ID = "launch_param_load_stress"
 DEFAULT_STRESS_LAUNCH_ARGS = {
     "enable_heartbeat": "true",
@@ -709,7 +714,7 @@ STREAM_DIRECTORY_NAMES = {
     "left_color": "color_left",
     "right_color": "color_right",
 }
-IMAGE_FILE_PATTERN = re.compile(r"^image_(\d+)\.jpg$", re.IGNORECASE)
+IMAGE_FILE_PATTERN = re.compile(r"^image_(\d+)\.(?:png|jpg)$", re.IGNORECASE)
 
 
 def image_stream_name(topic: str) -> str:
@@ -731,7 +736,7 @@ class ImagePathSequence:
         self.output_root = output_root
         self._next_indices: Dict[tuple[str, str], int] = {}
 
-    def next_path(self, topic: str, camera_name: str) -> Path:
+    def next_path(self, topic: str, camera_name: str, suffix: str = ".png") -> Path:
         stream_name = image_stream_name(topic)
         safe_camera_name = sanitize_path_part(camera_name or "unknown_camera")
         sequence_key = (safe_camera_name, stream_name)
@@ -744,10 +749,10 @@ class ImagePathSequence:
                 if path.is_file() and (match := IMAGE_FILE_PATTERN.match(path.name))
             ]
             next_index = max(existing_indices, default=0) + 1
-        target = stream_dir / f"image_{next_index:04d}.jpg"
+        target = stream_dir / f"image_{next_index:04d}{suffix}"
         while target.exists():
             next_index += 1
-            target = stream_dir / f"image_{next_index:04d}.jpg"
+            target = stream_dir / f"image_{next_index:04d}{suffix}"
         self._next_indices[sequence_key] = next_index + 1
         return target
 
@@ -760,14 +765,16 @@ class RosImageHarness:
         self._rclpy = None
         self._rospy = None
         self.node = None
+        self._sensor_qos = None
         self.subscriptions: list = []
-        self.image_type = None
+        self.message_types = {}
 
     def __enter__(self) -> "RosImageHarness":
         if self.ros_version == "2":
             try:
                 import rclpy
-                from sensor_msgs.msg import Image
+                from rclpy.qos import qos_profile_sensor_data
+                from sensor_msgs.msg import CompressedImage, Image, Imu, PointCloud2
             except Exception as exc:  # noqa: BLE001
                 raise RuntimeError(
                     "failed to import ROS2 Python modules. Source ROS2 and camera setup "
@@ -776,30 +783,76 @@ class RosImageHarness:
                 ) from exc
             rclpy.init(args=None)
             self._rclpy = rclpy
+            self._sensor_qos = qos_profile_sensor_data
             self.node = rclpy.create_node(self.node_name)
-            self.image_type = Image
+            self.message_types = {
+                "raw": Image,
+                "compressed": CompressedImage,
+                "point_cloud": PointCloud2,
+                "imu": Imu,
+            }
         else:
             try:
                 import rospy
-                from sensor_msgs.msg import Image
+                from sensor_msgs.msg import CompressedImage, Image, Imu, PointCloud2
             except Exception as exc:  # noqa: BLE001
                 raise RuntimeError(
                     "failed to import ROS1 Python modules. Source ROS1 and camera setup "
                     "before running, or pass --ros-setup/--driver-setup. "
                     f"Original error: {exc}"
                 ) from exc
-            rospy.init_node(self.node_name, anonymous=True, disable_signals=True)
+            if not rospy.core.is_initialized():
+                rospy.init_node(self.node_name, anonymous=True, disable_signals=True)
             self._rospy = rospy
-            self.image_type = Image
+            self.message_types = {
+                "raw": Image,
+                "compressed": CompressedImage,
+                "point_cloud": PointCloud2,
+                "imu": Imu,
+            }
         return self
 
-    def create_subscription(self, topic: str, callback):
+    def resolve_image_topic_kind(self, topic: str) -> str:
+        topic_types = self.get_topic_names_and_types()
+        candidate_names = [topic, "/" + topic.strip("/")]
+        for candidate_name in candidate_names:
+            for type_name in topic_types.get(candidate_name, []):
+                if type_name in {"sensor_msgs/msg/CompressedImage", "sensor_msgs/CompressedImage"}:
+                    return "compressed"
+                if type_name in {"sensor_msgs/msg/Image", "sensor_msgs/Image"}:
+                    return "raw"
+        return "compressed" if topic.rstrip("/").endswith("/compressed") else "raw"
+
+    def create_subscription(self, topic: str, callback, topic_kind: Optional[str] = None):
+        topic_kind = topic_kind or self.resolve_image_topic_kind(topic)
+        message_type = self.message_types[topic_kind]
         if self.ros_version == "2":
-            sub = self.node.create_subscription(self.image_type, topic, callback, self.queue_size)
+            sub = self.node.create_subscription(message_type, topic, callback, self.queue_size)
         else:
-            sub = self._rospy.Subscriber(topic, self.image_type, callback, queue_size=self.queue_size)
+            sub = self._rospy.Subscriber(topic, message_type, callback, queue_size=self.queue_size)
         self.subscriptions.append(sub)
         return sub
+
+    def create_sensor_subscription(self, topic: str, kind: str, callback):
+        message_type = self.message_types[kind]
+        if self.ros_version == "2":
+            sub = self.node.create_subscription(
+                message_type, topic, callback, self._sensor_qos
+            )
+        else:
+            sub = self._rospy.Subscriber(
+                topic, message_type, callback, queue_size=self.queue_size
+            )
+        self.subscriptions.append(sub)
+        return sub
+
+    def destroy_subscription(self, subscription) -> None:
+        if self.ros_version == "2":
+            self.node.destroy_subscription(subscription)
+        else:
+            subscription.unregister()
+        if subscription in self.subscriptions:
+            self.subscriptions.remove(subscription)
 
     def get_topic_names_and_types(self) -> Dict[str, List[str]]:
         if self.ros_version == "2":
@@ -878,13 +931,6 @@ def discover_image_topics(
     )
 
 
-def _valid_image(message: Any) -> bool:
-    width = int(getattr(message, "width", 0) or 0)
-    height = int(getattr(message, "height", 0) or 0)
-    data = getattr(message, "data", b"") or b""
-    return width > 0 and height > 0 and len(data) > 0
-
-
 class ImageCaptureMonitor:
     def __init__(
         self,
@@ -894,22 +940,26 @@ class ImageCaptureMonitor:
         topics: List[str],
         output_root: Path,
         save_images_count: int,
-        jpg_quality: int,
     ) -> None:
         self.harness = harness
         self.camera_name = camera_name
         self.save_images_count = save_images_count
-        self.jpg_quality = jpg_quality
         self.output_root = output_root
         self.state: Dict[str, Dict[str, Any]] = {}
         self._bridge = None
         self._cv2 = None
         self._image_paths = ImagePathSequence(output_root)
         for topic in topics:
-            self.state[topic] = {"saved_files": [], "first_at": None}
+            topic_kind = harness.resolve_image_topic_kind(topic)
+            self.state[topic] = {
+                "saved_files": [],
+                "first_at": None,
+                "topic_kind": topic_kind,
+            }
             harness.create_subscription(
                 topic,
                 lambda msg, t=topic: self._on_message(t, msg),
+                topic_kind=topic_kind,
             )
 
     def _ensure_cv_tools(self):
@@ -920,7 +970,7 @@ class ImageCaptureMonitor:
             from cv_bridge import CvBridge
         except Exception as exc:  # noqa: BLE001
             raise RuntimeError(
-                "saving JPG images requires cv_bridge and OpenCV. "
+                "saving raw images as PNG requires cv_bridge and OpenCV. "
                 "Source the camera driver environment or set --save-image-count 0. "
                 f"Original error: {exc}"
             ) from exc
@@ -928,29 +978,34 @@ class ImageCaptureMonitor:
         self._cv2 = cv2
         return self._bridge, self._cv2
 
-    def _write_jpg(self, message: Any, target_path: Path) -> None:
+    def _write_image(self, topic: str, message: Any, target_path: Path) -> None:
         ensure_dir(target_path.parent)
+        if self.state[topic]["topic_kind"] == "compressed":
+            target_path.write_bytes(bytes(getattr(message, "data", b"") or b""))
+            return
         bridge, cv2 = self._ensure_cv_tools()
         encoding = str(getattr(message, "encoding", "") or "")
         image = bridge.imgmsg_to_cv2(message, desired_encoding="passthrough")
         if encoding.lower() == "rgb8":
             image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-        elif encoding.lower() in {"mono16", "16uc1"}:
-            image = cv2.normalize(image, None, 0, 255, cv2.NORM_MINMAX)
-            image = image.astype("uint8")
-        if not cv2.imwrite(str(target_path), image, [int(cv2.IMWRITE_JPEG_QUALITY), self.jpg_quality]):
-            raise RuntimeError(f"failed to write JPG: {target_path}")
+        elif encoding.lower() == "rgba8":
+            image = cv2.cvtColor(image, cv2.COLOR_RGBA2BGRA)
+        if not cv2.imwrite(
+            str(target_path), image, [int(cv2.IMWRITE_PNG_COMPRESSION), 1]
+        ):
+            raise RuntimeError(f"failed to write PNG: {target_path}")
 
     def _on_message(self, topic: str, message: Any) -> None:
         item = self.state[topic]
-        if item["first_at"] is None and _valid_image(message):
+        if item["first_at"] is None:
             item["first_at"] = time.monotonic()
-        if self.save_images_count <= 0 or not _valid_image(message):
+        if self.save_images_count <= 0:
             return
         if len(item["saved_files"]) >= self.save_images_count:
             return
-        target = self._image_paths.next_path(topic, self.camera_name)
-        self._write_jpg(message, target)
+        suffix = ".jpg" if item["topic_kind"] == "compressed" else ".png"
+        target = self._image_paths.next_path(topic, self.camera_name, suffix)
+        self._write_image(topic, message, target)
         item["saved_files"].append(str(target))
 
     def all_done(self) -> bool:
@@ -975,7 +1030,6 @@ def save_topic_images(
     image_topic_templates: List[str],
     output_root: Path,
     save_images_count: int,
-    jpg_quality: int,
     timeout: float,
     emit: StatusLogger,
 ) -> tuple[List[str], List[str]]:
@@ -1004,7 +1058,6 @@ def save_topic_images(
                 topics=image_topics,
                 output_root=output_root,
                 save_images_count=save_images_count,
-                jpg_quality=jpg_quality,
             )
             deadline = time.monotonic() + timeout
             while time.monotonic() < deadline and not monitor.all_done():
@@ -1212,7 +1265,8 @@ def _summary_camera_section(cam: Dict[str, Any]) -> List[str]:
 def build_summary(result: Dict[str, Any]) -> str:
     command = result.get("command", [])
     command_text = " ".join(shlex.quote(str(item)) for item in command) if command else ""
-    run_count = result.get("run_count", 1)
+    run_count = result.get("run_count")
+    run_limit_label = run_count if run_count is not None else "duration"
     runs_passed = result.get("runs_passed", 0)
     runs = result.get("runs", [])
     lines = [
@@ -1235,6 +1289,11 @@ def build_summary(result: Dict[str, Any]) -> str:
         f"- Runs: {runs_passed}/{len(runs)} completed runs passed",
         "",
     ]
+    lines += ["## Point Cloud Topics", ""]
+    lines += [f"- {topic}" for topic in result.get("point_cloud_topics", [])] or ["- None"]
+    lines += ["", "## IMU Topics", ""]
+    lines += [f"- {topic}" for topic in result.get("imu_topics", [])] or ["- None"]
+    lines.append("")
     notes = result.get("notes", [])
     if notes:
         lines += ["## Notes", ""]
@@ -1243,7 +1302,7 @@ def build_summary(result: Dict[str, Any]) -> str:
     for run in result.get("runs", []):
         run_idx = run.get("run", "?")
         run_status = run.get("status", "")
-        lines.append(f"## Run {run_idx}/{run_count} — {run_status}")
+        lines.append(f"## Run {run_idx}/{run_limit_label} — {run_status}")
         if run.get("error"):
             lines += ["", f"**Error:** {run['error']}", ""]
             continue
@@ -1251,6 +1310,16 @@ def build_summary(result: Dict[str, Any]) -> str:
         for cam in run.get("cameras", []):
             lines += _summary_camera_section(cam)
             lines.append("")
+        if run.get("sensors"):
+            lines += [
+                "### Point Cloud and IMU Checks",
+                "",
+                *format_table(
+                    run["sensors"],
+                    ["topic", "kind", "message_count", "saved_count", "error"],
+                ),
+                "",
+            ]
     return "\n".join(lines) + "\n"
 
 
@@ -1268,7 +1337,6 @@ def _check_one_camera(
     skip_service_check: bool,
     save_images_count: int,
     image_topic_templates: List[str],
-    jpg_quality: int,
     images_dir: Optional[Path],
     emit: StatusLogger,
 ) -> Dict[str, Any]:
@@ -1319,7 +1387,6 @@ def _check_one_camera(
             image_topic_templates=image_topic_templates,
             output_root=images_dir,
             save_images_count=save_images_count,
-            jpg_quality=jpg_quality,
             timeout=topic_timeout,
             emit=emit,
         )
@@ -1387,17 +1454,26 @@ def run(args) -> int:
     topic_timeout = parse_duration(args.topic_timeout, 20.0)
     service_timeout = parse_duration(args.service_timeout, 15.0)
     run_count = args.run_count
+    duration_text = str(args.duration or "").strip()
+    if not duration_text and run_count is None:
+        raise ValueError("at least one of --duration or --run-count is required")
     duration_seconds = (
-        parse_duration(args.duration, 0.0) if str(args.duration or "").strip() else None
+        parse_duration(duration_text, 0.0) if duration_text else None
     )
     save_images_count = args.save_image_count
     image_topic_templates = [topic.strip() for topic in args.image_topic if topic.strip()]
-    jpg_quality = args.jpg_quality
+    camera_names = [camera.name for camera in cameras]
+    configured_point_cloud_topics = expand_topic_templates(
+        args.point_cloud_topic, camera_names
+    )
+    configured_imu_topics = expand_topic_templates(args.imu_topic, camera_names)
+    sensor_baseline: Optional[tuple[List[str], List[str], Dict[str, str]]] = None
 
     run_id = datetime.now().strftime("%Y%m%d_%H%M%S_launch_param_load_stress")
     run_started_at = iso_now()
     default_results_dir = Path(__file__).resolve().parent / "results" / run_id
     results_dir = ensure_dir(Path(args.results_dir).resolve() if args.results_dir else default_results_dir)
+    install_terminal_log(results_dir / "terminal.log")
     events = EventWriter(results_dir / "events.jsonl")
     emit = StatusLogger(events)
 
@@ -1412,6 +1488,8 @@ def run(args) -> int:
         "sdk_log_level": args.sdk_log_level,
         "image_topic_mode": "explicit" if image_topic_templates else "auto-discover",
         "configured_image_topics": image_topic_templates,
+        "point_cloud_topics": configured_point_cloud_topics,
+        "imu_topics": configured_imu_topics,
         "notes": [declaration_note],
         "run_count": run_count,
         "duration_limit_seconds": duration_seconds,
@@ -1424,7 +1502,7 @@ def run(args) -> int:
     emit(f"tool version: {TOOL_VERSION}")
     emit(f"results dir: {results_dir}")
     emit(f"cameras: {', '.join(c.name for c in cameras)}")
-    emit(f"run count: {run_count}")
+    emit(f"run count: {run_count if run_count is not None else 'duration-limited'}")
     emit(f"SDK log level: {args.sdk_log_level}")
     if image_topic_templates:
         emit(f"save image topics: {', '.join(image_topic_templates)}")
@@ -1439,14 +1517,14 @@ def run(args) -> int:
     )
     try:
         run_index = 0
-        while run_index < run_count:
+        while run_count is None or run_index < run_count:
             if deadline is not None and time.monotonic() >= deadline:
                 break
             if INTERRUPTED:
                 break
             run_index += 1
             emit(
-                f"--- run {run_index}/{run_count} ---",
+                f"--- run {run_index}/{run_count if run_count is not None else 'duration'} ---",
                 event="progress",
                 current=run_index,
                 total=run_count,
@@ -1454,7 +1532,12 @@ def run(args) -> int:
             )
             test_name = f"test_{run_index:04d}"
             run_dir = ensure_dir(results_dir / test_name)
-            run_result: Dict[str, Any] = {"run": run_index, "status": "failed", "cameras": []}
+            run_result: Dict[str, Any] = {
+                "run": run_index,
+                "status": "failed",
+                "cameras": [],
+                "sensors": [],
+            }
             sessions: List[LaunchSession] = []
             try:
                 # Start all camera launches
@@ -1508,11 +1591,55 @@ def run(args) -> int:
                         skip_service_check=args.skip_service_check,
                         save_images_count=save_images_count,
                         image_topic_templates=image_topic_templates,
-                        jpg_quality=jpg_quality,
                         images_dir=images_dir,
                         emit=emit,
                     )
                     run_result["cameras"].append(cam)
+
+                with RosImageHarness(
+                    args.ros_version,
+                    f"launch_param_sensor_capture_{run_index}",
+                ) as sensor_harness:
+                    if sensor_baseline is None:
+                        sensor_baseline = discover_sensor_topics(
+                            harness=sensor_harness,
+                            camera_names=camera_names,
+                            point_cloud_topics=configured_point_cloud_topics,
+                            imu_topics=configured_imu_topics,
+                            timeout=topic_timeout,
+                            ensure_running=lambda: [
+                                session.assert_running() for session in sessions
+                            ],
+                        )
+                        result["point_cloud_topics"] = sensor_baseline[0]
+                        result["imu_topics"] = sensor_baseline[1]
+                        emit(
+                            f"sensor baseline: {len(sensor_baseline[0])} point cloud, "
+                            f"{len(sensor_baseline[1])} IMU topic(s)"
+                        )
+                    point_cloud_topics, imu_topics, sensor_topic_cameras = sensor_baseline
+                    sensor_timeout = max(
+                        topic_timeout,
+                        2.0 * max(save_images_count, 1) + 5.0,
+                    )
+                    sensor_ok, sensor_snapshot, sensor_message = (
+                        capture_sensor_artifacts(
+                            harness=sensor_harness,
+                            point_cloud_topics=point_cloud_topics,
+                            imu_topics=imu_topics,
+                            topic_cameras=sensor_topic_cameras,
+                            output_root=results_dir / "images",
+                            save_count=save_images_count,
+                            timeout=sensor_timeout,
+                            ensure_running=lambda: [
+                                session.assert_running() for session in sessions
+                            ],
+                        )
+                    )
+                    run_result["sensors"] = sensor_snapshot
+                    if not sensor_ok:
+                        raise RuntimeError(sensor_message)
+                    emit(sensor_message)
 
                 failed = any(
                     status_has_failure(cam[k])
@@ -1534,7 +1661,11 @@ def run(args) -> int:
             result["runs"].append(run_result)
             if run_result["status"] == "passed":
                 result["runs_passed"] += 1
-            emit(f"run {run_index}/{run_count}: {run_result['status']}")
+            emit(
+                f"run {run_index}/"
+                f"{run_count if run_count is not None else 'duration'}: "
+                f"{run_result['status']}"
+            )
             if INTERRUPTED:
                 break
 
@@ -1581,7 +1712,7 @@ def run(args) -> int:
     return 1
 
 
-def parse_args():
+def parse_args(argv=None):
     parser = argparse.ArgumentParser(
         description="Stress-test Orbbec camera launch parameter loading via config_file_path.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -1641,8 +1772,8 @@ def parse_args():
     )
     parser.add_argument("--topic-timeout", default="20", help="Max wait time for each enabled stream topic")
     parser.add_argument("--service-timeout", default="15", help="Max wait time for each param/service command")
-    parser.add_argument("--run-count", type=int, default=1, metavar="N",
-                        help="Maximum complete test cycles")
+    parser.add_argument("--run-count", type=int, default=None, metavar="N",
+                        help="Optional maximum complete test cycles")
     parser.add_argument(
         "--duration",
         default="",
@@ -1656,8 +1787,26 @@ def parse_args():
         action="append",
         default=[],
         help=(
-            "Image topic to save; can repeat and supports {camera}. "
+            "Image or CompressedImage topic to save; can repeat and supports {camera}. "
             "When omitted, all published image streams under each camera are discovered."
+        ),
+    )
+    parser.add_argument(
+        "--point-cloud-topic",
+        action="append",
+        default=[],
+        help=(
+            "PointCloud2 topic template to require; can repeat and supports {camera}. "
+            "When omitted, point cloud topics are discovered on the first run."
+        ),
+    )
+    parser.add_argument(
+        "--imu-topic",
+        action="append",
+        default=[],
+        help=(
+            "Imu topic template to require; can repeat and supports {camera}. "
+            "When omitted, IMU topics are discovered on the first run."
         ),
     )
     parser.add_argument(
@@ -1665,32 +1814,28 @@ def parse_args():
         type=int,
         default=1,
         metavar="N",
-        help="Save N images per selected stream topic per camera (0 = disabled)",
-    )
-    parser.add_argument(
-        "--jpg-quality",
-        type=int,
-        default=80,
-        metavar="Q",
-        help="JPEG compression quality 1-100 for saved images (default: 80)",
+        help=(
+            "Save N PNG artifacts per image, point cloud, and IMU topic per run "
+            "(0 = validation only)"
+        ),
     )
     parser.add_argument(
         "--version",
         action="version",
         version="%(prog)s {}".format(TOOL_VERSION),
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if not args.show_verification_map:
         if not args.launch_file:
             parser.error("--launch-file is required unless --show-verification-map is used")
         if not args.camera:
             parser.error("at least one --camera with config-file-path is required")
-        if args.run_count < 1:
+        if not str(args.duration or "").strip() and args.run_count is None:
+            parser.error("at least one of --duration or --run-count is required")
+        if args.run_count is not None and args.run_count < 1:
             parser.error("--run-count must be >= 1")
         if args.save_image_count < 0:
             parser.error("--save-image-count must be >= 0")
-        if not 1 <= args.jpg_quality <= 100:
-            parser.error("--jpg-quality must be in range 1-100")
     return args
 
 

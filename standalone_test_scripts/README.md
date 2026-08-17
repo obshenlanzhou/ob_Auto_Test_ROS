@@ -84,7 +84,8 @@ The supported fields are `name`, `serial-number`, `usb-port`, `device-ip`,
 fields may be combined. Scripts that do not require explicit camera
 configuration provide their own default.
 
-Every completed run writes `result.json`, `summary.md`, and `events.jsonl`.
+Every run writes `terminal.log`, teeing the script's stdout and stderr without suppressing live terminal output.
+Every completed run also writes `result.json`, `summary.md`, and `events.jsonl`.
 `result.json` uses the common status values `passed`, `failed`, and
 `interrupted`; the corresponding process exit codes are `0`, `1`, and `130`.
 Invalid command-line usage returns `2`. Script-specific logs, images, CSV files,
@@ -108,11 +109,11 @@ not import the Web UI package.
 
 | Script directory | Purpose | Details |
 | --- | --- | --- |
-| [launch_restart_stream_check](launch_restart_stream_check/README.md) | Repeatedly restart a launch file and check image stream recovery | Launch restart stream stability stress test |
-| [stream_toggle_stress_test](stream_toggle_stress_test/README.md) | Toggle individual/all streams, optionally alternate two resolution/FPS/format sets, and verify recovery | Single/multi-camera with JPG evidence; individual/profile switching supports ROS1/ROS2, all mode is currently ROS2 only |
-| [launch_param_load_stress](launch_param_load_stress/README.md) | Stress-test launch parameter loading via `config_file_path` | Verifies ROS parameters, image topics, and getter services; supports multi-camera and repeated runs |
-| [export_load_stress_test](export_load_stress_test/README.md) | Alternate JSON import/export and compare parameters | Config JSON import/export consistency stress test |
-| [preset_upgrade_stress_test](preset_upgrade_stress_test/README.md) | Alternately update optional depth presets and verify streams | Optional depth preset upgrade stress test |
+| [launch_restart_stream_check](launch_restart_stream_check/README.md) | Repeatedly restart a launch file and check stream recovery | Saves image, point-cloud, and IMU evidence after every restart |
+| [stream_toggle_stress_test](stream_toggle_stress_test/README.md) | Toggle individual/all image streams and verify recovery | Verifies point-cloud/IMU recovery during on states; supports ROS1/ROS2 |
+| [launch_param_load_stress](launch_param_load_stress/README.md) | Stress-test launch parameter loading via `config_file_path` | Verifies parameters, services, images, point clouds, and IMU streams |
+| [export_load_stress_test](export_load_stress_test/README.md) | Alternate JSON import/export and compare parameters | Also fixes and verifies a point-cloud/IMU baseline |
+| [preset_upgrade_stress_test](preset_upgrade_stress_test/README.md) | Alternately update optional depth presets and verify streams | Saves image, point-cloud, and IMU evidence per preset test |
 | [firmware_update_stress_test](firmware_update_stress_test/README.md) | Repeatedly call `firmware_update_tool --firmware_path` and check success logs | Firmware update command stress test; supports serial-number batch updates |
 | [image_receive_stats_test](image_receive_stats_test/README.md) | Subscribe image topics and record receive-gap statistics | ROS1/ROS2 subscriber-side stream stall and timestamp monitor |
 

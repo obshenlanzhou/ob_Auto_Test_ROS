@@ -20,6 +20,7 @@ from _test_protocol import (
     atomic_write_json,
     collect_test_environment,
     contract_result,
+    install_terminal_log,
     iso_now,
     namespace_request,
     parse_camera,
@@ -29,7 +30,7 @@ from _test_protocol import (
 ENV_READY_VAR = "FIRMWARE_UPDATE_STRESS_TEST_ENV_READY"
 INTERRUPTED = False
 SCRIPT_DIR = Path(__file__).resolve().parent
-TOOL_VERSION = "1.0"
+TOOL_VERSION = "1.2"
 TEST_ID = "firmware_update_stress_test"
 SUCCESS_RE = re.compile(
     r"Firmware tool completed successfully\. Updated (?P<updated>\d+)/(?P<total>\d+) target device\(s\)\."
@@ -329,11 +330,14 @@ def run(args) -> int:
     device_ip = next(iter(device_ips), "")
     device_port = next(iter(device_ports), "8090")
 
-    run_count = int(args.run_count)
-    if run_count <= 0:
+    run_count = args.run_count
+    duration_text = str(args.duration or "").strip()
+    if not duration_text and run_count is None:
+        raise ValueError("at least one of --duration or --run-count is required")
+    if run_count is not None and run_count <= 0:
         raise ValueError("--run-count must be > 0")
     duration_seconds = (
-        parse_duration(args.duration, 0.0) if str(args.duration or "").strip() else None
+        parse_duration(duration_text, 0.0) if duration_text else None
     )
     restart_delay = float(args.restart_delay)
     if restart_delay < 0:
@@ -344,6 +348,7 @@ def run(args) -> int:
     results_dir = ensure_dir(
         Path(args.results_dir or (SCRIPT_DIR / "results" / run_id)).expanduser().resolve()
     )
+    install_terminal_log(results_dir / "terminal.log")
     events = EventWriter(results_dir / "events.jsonl")
     emit = StatusLogger(events)
     result: Dict[str, Any] = {
@@ -375,7 +380,7 @@ def run(args) -> int:
         emit(f"target device ip: {device_ip}")
     else:
         emit("target selector: default device")
-    emit(f"run count: {run_count}")
+    emit(f"run count: {run_count if run_count is not None else 'duration-limited'}")
 
     start_monotonic = time.monotonic()
     deadline = (
@@ -395,7 +400,7 @@ def run(args) -> int:
                     phase="stopped-at-safe-point",
                 )
                 break
-            if test_index >= run_count:
+            if run_count is not None and test_index >= run_count:
                 break
             if deadline is not None and time.monotonic() >= deadline:
                 break
@@ -403,7 +408,7 @@ def run(args) -> int:
             firmware_path = firmwares[test_index % len(firmwares)]
             test_index += 1
             test_name = f"test_{test_index:04d}"
-            progress_label = f"{test_index}/{run_count}"
+            progress_label = f"{test_index}/{run_count if run_count is not None else 'duration'}"
             log_file = results_dir / "logs" / test_name / "update.log"
             command = build_update_command(
                 ros_version=args.ros_version,
@@ -483,7 +488,9 @@ def run(args) -> int:
                     phase="stopped-at-safe-point",
                 )
                 break
-            if restart_delay > 0 and test_index < run_count:
+            if restart_delay > 0 and (
+                run_count is None or test_index < run_count
+            ):
                 time.sleep(restart_delay)
     except KeyboardInterrupt:
         result["status"] = "interrupted"
@@ -540,7 +547,7 @@ def run(args) -> int:
     return 1
 
 
-def parse_args():
+def parse_args(argv=None):
     parser = argparse.ArgumentParser(
         description=(
             "Repeatedly call orbbec_camera firmware_update_tool with a firmware list and "
@@ -575,7 +582,9 @@ def parse_args():
             "name, serial-number, usb-port, device-ip, device-port, config-file-path."
         ),
     )
-    parser.add_argument("--run-count", type=int, default=10, help="Maximum update cycles")
+    parser.add_argument(
+        "--run-count", type=int, default=None, help="Optional maximum update cycles"
+    )
     parser.add_argument(
         "--duration",
         default="",
@@ -597,7 +606,10 @@ def parse_args():
         action="version",
         version="%(prog)s {}".format(TOOL_VERSION),
     )
-    return parser.parse_args()
+    args = parser.parse_args(argv)
+    if not str(args.duration or "").strip() and args.run_count is None:
+        parser.error("at least one of --duration or --run-count is required")
+    return args
 
 
 def main() -> None:

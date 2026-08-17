@@ -6,6 +6,9 @@
   "script": "export_load_stress_test.py",
   "risk": "normal",
   "stop_policy": "immediate",
+  "required_any": [
+    {"fields": ["duration", "run_count"], "message": "压测时间和压测次数至少填写一项"}
+  ],
   "fields": [
     {"name": "ros_version", "option": "--ros-version", "type": "select", "label": "ROS 版本", "label_en": "ROS Version", "group": "environment", "section": "basic", "default": "2", "choices": [{"value": "2", "label": "ROS 2"}, {"value": "1", "label": "ROS 1"}]},
     {"name": "ros_setup", "option": "--ros-setup", "type": "path", "label": "ROS 环境脚本", "label_en": "ROS Setup", "group": "environment", "section": "basic", "default": "/opt/ros/humble/setup.bash"},
@@ -13,10 +16,12 @@
     {"name": "launch_file", "option": "--launch-file", "type": "path", "label": "Launch 文件", "label_en": "Launch File", "group": "configuration", "section": "basic", "default": "gemini_330_series_sdk_json.launch.py"},
     {"name": "config_jsons", "option": "--config-json", "type": "list", "label": "配置 JSON", "label_en": "Config JSON Files", "group": "configuration", "section": "basic", "default": [], "placeholder": "/path/to/Gemini_336L_1.json\n/path/to/Gemini_336L_2.json"},
     {"name": "cameras", "option": "--camera", "type": "camera-list", "label": "目标相机", "label_en": "Target Cameras", "group": "cameras", "section": "basic", "default": []},
-    {"name": "run_count", "option": "--run-count", "type": "integer", "label": "最大循环次数", "label_en": "Run Count", "group": "limits", "section": "basic", "default": "10", "min": 1},
-    {"name": "duration", "option": "--duration", "type": "duration", "label": "最长运行时间", "label_en": "Duration", "group": "limits", "section": "basic", "default": ""},
-    {"name": "image_topics", "option": "--image-topic", "type": "list", "label": "图像话题模板", "label_en": "Image Topic Templates", "group": "configuration", "section": "basic", "default": [], "placeholder": "留空则自动发现全部图像流\n/{camera}/color/image_raw"},
-    {"name": "save_image_count", "option": "--save-image-count", "type": "integer", "label": "每话题存图数", "label_en": "Images per Topic", "group": "configuration", "section": "basic", "default": "1", "min": 0},
+    {"name": "run_count", "option": "--run-count", "type": "integer", "label": "最大循环次数", "label_en": "Run Count", "group": "limits", "section": "basic", "default": "", "min": 1, "placeholder": "10", "note": "与最长运行时间至少填写一项，可同时填写。"},
+    {"name": "duration", "option": "--duration", "type": "duration", "label": "最长运行时间", "label_en": "Duration", "group": "limits", "section": "basic", "default": "", "placeholder": "300", "note": "与最大循环次数至少填写一项，可同时填写。"},
+    {"name": "image_topics", "option": "--image-topic", "type": "list", "label": "图像话题模板", "label_en": "Image Topic Templates", "group": "configuration", "section": "basic", "default": [], "placeholder": "留空则自动发现全部原始图像流\n/{camera}/color/image_raw\n/{camera}/color/image_raw/compressed", "note": "Image 保存像素无损 PNG；CompressedImage 的 data 原始字节保存为 JPG。压缩话题必须显式指定。"},
+    {"name": "point_cloud_topics", "option": "--point-cloud-topic", "type": "list", "label": "点云话题模板", "label_en": "Point Cloud Topics", "group": "configuration", "section": "basic", "default": [], "placeholder": "留空则首轮自动发现\n/{camera}/depth/points\n/{camera}/depth_registered/points"},
+    {"name": "imu_topics", "option": "--imu-topic", "type": "list", "label": "IMU 话题模板", "label_en": "IMU Topics", "group": "configuration", "section": "basic", "default": [], "placeholder": "留空则首轮自动发现\n/{camera}/accel/sample\n/{camera}/gyro/sample\n/{camera}/gyro_accel/sample"},
+    {"name": "save_image_count", "option": "--save-image-count", "type": "integer", "label": "每话题存图数", "label_en": "Artifacts per Topic", "group": "configuration", "section": "basic", "default": "1", "min": 0, "note": "统一控制图像、点云预览和 IMU 曲线；0 仅检测不存图。"},
     {"name": "launch_package", "option": "--launch-package", "type": "text", "label": "Launch 包", "label_en": "Launch Package", "group": "advanced", "section": "advanced", "default": "orbbec_camera"},
     {"name": "launch_args", "option": "--launch-arg", "type": "list", "label": "附加 Launch 参数", "label_en": "Launch Arguments", "group": "advanced", "section": "advanced", "default": ["enable_heartbeat=true", "enable_firmware_log=true"], "placeholder": "enable_heartbeat=true\nenable_firmware_log=true"},
     {"name": "sdk_log_level", "option": "--sdk-log-level", "type": "select", "label": "SDK 日志级别", "label_en": "SDK Log Level", "group": "advanced", "section": "advanced", "default": "debug", "choices": ["debug", "info", "warn", "error", "fatal", "none"]},
@@ -27,7 +32,6 @@
     {"name": "launch_start_interval", "option": "--launch-start-interval", "type": "number", "label": "相机启动间隔", "label_en": "Launch Start Interval", "group": "advanced", "section": "advanced", "default": "2", "min": 0},
     {"name": "queue_size", "option": "--queue-size", "type": "integer", "label": "队列大小", "label_en": "Queue Size", "group": "advanced", "section": "advanced", "default": "10", "min": 1},
     {"name": "save_image_timeout", "option": "--save-image-timeout", "type": "duration", "label": "存图超时", "label_en": "Image Save Timeout", "group": "advanced", "section": "advanced", "default": "30"},
-    {"name": "jpg_quality", "option": "--jpg-quality", "type": "integer", "label": "JPG 质量", "label_en": "JPG Quality", "group": "advanced", "section": "advanced", "default": "95", "min": 1, "max": 100},
     {"name": "export_service", "option": "--export-service", "type": "text", "label": "导出服务", "label_en": "Export Service", "group": "advanced", "section": "advanced", "default": "/{camera}/export_config_json"},
     {"name": "export_service_type", "option": "--export-service-type", "type": "text", "label": "导出服务类型", "label_en": "Export Service Type", "group": "advanced", "section": "advanced", "default": "orbbec_camera_msgs/srv/SetString"},
     {"name": "service_timeout", "option": "--service-timeout", "type": "duration", "label": "服务超时", "label_en": "Service Timeout", "group": "advanced", "section": "advanced", "default": "30"}

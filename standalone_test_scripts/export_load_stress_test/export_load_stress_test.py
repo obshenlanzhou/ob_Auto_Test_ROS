@@ -21,15 +21,21 @@ from _test_protocol import (
     atomic_write_json,
     collect_test_environment,
     contract_result,
+    install_terminal_log,
     iso_now,
     namespace_request,
     parse_camera,
     test_environment_markdown,
 )
+from _sensor_artifacts import (
+    capture_sensor_artifacts,
+    discover_sensor_topics,
+    expand_topic_templates,
+)
 
 ENV_READY_VAR = "EXPORT_LOAD_STRESS_TEST_ENV_READY"
 INTERRUPTED = False
-TOOL_VERSION = "1.2"
+TOOL_VERSION = "1.7"
 TEST_ID = "export_load_stress_test"
 DEFAULT_STRESS_LAUNCH_ARGS = {
     "enable_heartbeat": "true",
@@ -124,7 +130,7 @@ STREAM_DIRECTORY_NAMES = {
     "left_color": "color_left",
     "right_color": "color_right",
 }
-IMAGE_FILE_PATTERN = re.compile(r"^image_(\d+)\.jpg$", re.IGNORECASE)
+IMAGE_FILE_PATTERN = re.compile(r"^image_(\d+)\.(?:png|jpg)$", re.IGNORECASE)
 
 
 def image_stream_name(topic: str) -> str:
@@ -146,7 +152,7 @@ class ImagePathSequence:
         self.output_root = output_root
         self._next_indices: Dict[tuple[str, str], int] = {}
 
-    def next_path(self, topic: str, camera_name: str) -> Path:
+    def next_path(self, topic: str, camera_name: str, suffix: str = ".png") -> Path:
         stream_name = image_stream_name(topic)
         safe_camera_name = sanitize_path_part(camera_name or "unknown_camera")
         sequence_key = (safe_camera_name, stream_name)
@@ -159,10 +165,10 @@ class ImagePathSequence:
                 if path.is_file() and (match := IMAGE_FILE_PATTERN.match(path.name))
             ]
             next_index = max(existing_indices, default=0) + 1
-        target = stream_dir / f"image_{next_index:04d}.jpg"
+        target = stream_dir / f"image_{next_index:04d}{suffix}"
         while target.exists():
             next_index += 1
-            target = stream_dir / f"image_{next_index:04d}.jpg"
+            target = stream_dir / f"image_{next_index:04d}{suffix}"
         self._next_indices[sequence_key] = next_index + 1
         return target
 
@@ -406,6 +412,7 @@ class RosHarness:
         self._rclpy = None
         self._rospy = None
         self.node = None
+        self._sensor_qos = None
         self.subscriptions = []
         self.message_types = {}
 
@@ -413,7 +420,8 @@ class RosHarness:
         if self.ros_version == "2":
             try:
                 import rclpy
-                from sensor_msgs.msg import CompressedImage, Image
+                from rclpy.qos import qos_profile_sensor_data
+                from sensor_msgs.msg import CompressedImage, Image, Imu, PointCloud2
             except Exception as exc:  # noqa: BLE001
                 raise RuntimeError(
                     "failed to import ROS2 Python modules. Source ROS2 and camera setup "
@@ -422,12 +430,18 @@ class RosHarness:
                 ) from exc
             rclpy.init(args=None)
             self._rclpy = rclpy
+            self._sensor_qos = qos_profile_sensor_data
             self.node = rclpy.create_node(self.node_name)
-            self.message_types = {"raw": Image, "compressed": CompressedImage}
+            self.message_types = {
+                "raw": Image,
+                "compressed": CompressedImage,
+                "point_cloud": PointCloud2,
+                "imu": Imu,
+            }
         else:
             try:
                 import rospy
-                from sensor_msgs.msg import CompressedImage, Image
+                from sensor_msgs.msg import CompressedImage, Image, Imu, PointCloud2
             except Exception as exc:  # noqa: BLE001
                 raise RuntimeError(
                     "failed to import ROS1 Python modules. Source ROS1 and camera setup "
@@ -436,7 +450,12 @@ class RosHarness:
                 ) from exc
             rospy.init_node(self.node_name, anonymous=True, disable_signals=True)
             self._rospy = rospy
-            self.message_types = {"raw": Image, "compressed": CompressedImage}
+            self.message_types = {
+                "raw": Image,
+                "compressed": CompressedImage,
+                "point_cloud": PointCloud2,
+                "imu": Imu,
+            }
         return self
 
     def get_topic_names_and_types(self) -> Dict[str, List[str]]:
@@ -471,6 +490,19 @@ class RosHarness:
             sub = self.node.create_subscription(message_type, topic, callback, self.queue_size)
         else:
             sub = self._rospy.Subscriber(topic, message_type, callback, queue_size=self.queue_size)
+        self.subscriptions.append(sub)
+        return sub
+
+    def create_sensor_subscription(self, topic: str, kind: str, callback):
+        message_type = self.message_types[kind]
+        if self.ros_version == "2":
+            sub = self.node.create_subscription(
+                message_type, topic, callback, self._sensor_qos
+            )
+        else:
+            sub = self._rospy.Subscriber(
+                topic, message_type, callback, queue_size=self.queue_size
+            )
         self.subscriptions.append(sub)
         return sub
 
@@ -639,12 +671,7 @@ class StableImageMonitor:
         item["last_width"] = width
         item["last_height"] = height
         item["last_data_size"] = data_size
-        has_valid_payload = (
-            data_size > 0
-            if item["topic_kind"] == "compressed"
-            else width > 0 and height > 0
-        )
-        if item["first_message_at"] is None and has_valid_payload:
+        if item["first_message_at"] is None:
             item["first_message_at"] = now
 
     def all_streams_detected(self) -> bool:
@@ -694,7 +721,7 @@ class StableImageMonitor:
         self.subscriptions = []
 
 
-class JpgImageSaver:
+class ImageSaver:
     def __init__(
         self,
         *,
@@ -703,14 +730,12 @@ class JpgImageSaver:
         topic_cameras: Dict[str, str],
         output_root: Path,
         count_per_topic: int,
-        jpg_quality: int,
     ) -> None:
         self.harness = harness
         self.topics = topics
         self.topic_cameras = topic_cameras
         self.output_root = output_root
         self.count_per_topic = count_per_topic
-        self.jpg_quality = jpg_quality
         self.saved: Dict[str, List[str]] = {topic: [] for topic in topics}
         self.metadata: Dict[str, Dict[str, Any]] = {topic: {} for topic in topics}
         self.subscriptions = []
@@ -737,7 +762,7 @@ class JpgImageSaver:
             from cv_bridge import CvBridge
         except Exception as exc:  # noqa: BLE001
             raise RuntimeError(
-                "saving JPG images requires cv_bridge and OpenCV Python modules. "
+                "saving raw images as PNG requires cv_bridge and OpenCV Python modules. "
                 "Source the camera driver environment or set --save-image-count 0 "
                 f"to disable image saving. Original error: {exc}"
             ) from exc
@@ -747,22 +772,15 @@ class JpgImageSaver:
 
     def _target_path(self, topic_name: str) -> Path:
         camera_name = self.topic_cameras.get(topic_name, "unknown_camera")
-        return self._image_paths.next_path(topic_name, camera_name)
+        topic_kind = self.metadata[topic_name].get("topic_kind", "raw")
+        suffix = ".jpg" if topic_kind == "compressed" else ".png"
+        return self._image_paths.next_path(topic_name, camera_name, suffix)
 
-    def _write_jpg(self, topic_name: str, message: Any, target_path: Path) -> None:
+    def _write_image(self, topic_name: str, message: Any, target_path: Path) -> None:
         topic_kind = self.metadata[topic_name].get("topic_kind", "raw")
         ensure_dir(target_path.parent)
         if topic_kind == "compressed":
-            data = bytes(getattr(message, "data", b"") or b"")
-            fmt = str(getattr(message, "format", "") or "").lower()
-            if "jpeg" in fmt or "jpg" in fmt or data.startswith(b"\xff\xd8"):
-                target_path.write_bytes(data)
-                return
-
-            bridge, cv2 = self._ensure_cv_tools()
-            image = bridge.compressed_imgmsg_to_cv2(message, desired_encoding="bgr8")
-            if not cv2.imwrite(str(target_path), image, [int(cv2.IMWRITE_JPEG_QUALITY), self.jpg_quality]):
-                raise RuntimeError(f"failed to write JPG image: {target_path}")
+            target_path.write_bytes(bytes(getattr(message, "data", b"") or b""))
             return
 
         bridge, cv2 = self._ensure_cv_tools()
@@ -770,18 +788,19 @@ class JpgImageSaver:
         image = bridge.imgmsg_to_cv2(message, desired_encoding="passthrough")
         if encoding.lower() == "rgb8":
             image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-        elif encoding.lower() in {"mono16", "16uc1"}:
-            image = cv2.normalize(image, None, 0, 255, cv2.NORM_MINMAX)
-            image = image.astype("uint8")
-        if not cv2.imwrite(str(target_path), image, [int(cv2.IMWRITE_JPEG_QUALITY), self.jpg_quality]):
-            raise RuntimeError(f"failed to write JPG image: {target_path}")
+        elif encoding.lower() == "rgba8":
+            image = cv2.cvtColor(image, cv2.COLOR_RGBA2BGRA)
+        if not cv2.imwrite(
+            str(target_path), image, [int(cv2.IMWRITE_PNG_COMPRESSION), 1]
+        ):
+            raise RuntimeError(f"failed to write PNG image: {target_path}")
 
     def _on_message(self, topic_name: str, message: Any) -> None:
         saved_files = self.saved[topic_name]
         if len(saved_files) >= self.count_per_topic:
             return
         target_path = self._target_path(topic_name)
-        self._write_jpg(topic_name, message, target_path)
+        self._write_image(topic_name, message, target_path)
         saved_files.append(str(target_path))
         self.metadata[topic_name].update(
             {
@@ -816,7 +835,7 @@ class JpgImageSaver:
         self.subscriptions = []
 
 
-def save_jpg_images(
+def save_images(
     *,
     sessions: List[LaunchSession],
     harness: RosHarness,
@@ -825,18 +844,16 @@ def save_jpg_images(
     output_root: Path,
     count_per_topic: int,
     timeout: float,
-    jpg_quality: int,
     emit: StatusLogger,
 ) -> tuple[bool, List[Dict[str, Any]], str]:
     if count_per_topic <= 0:
         return True, [], "image saving disabled"
-    saver = JpgImageSaver(
+    saver = ImageSaver(
         harness=harness,
         topics=topics,
         topic_cameras=topic_cameras,
         output_root=output_root,
         count_per_topic=count_per_topic,
-        jpg_quality=jpg_quality,
     )
     deadline = time.monotonic() + timeout
     try:
@@ -847,11 +864,11 @@ def save_jpg_images(
             if saver.complete():
                 snapshot = saver.snapshot()
                 saved_count = sum(item["saved_count"] for item in snapshot)
-                return True, snapshot, f"saved {saved_count} JPG images"
+                return True, snapshot, f"saved {saved_count} image files"
         return (
             False,
             saver.snapshot(),
-            f"did not save {count_per_topic} JPG image(s) per topic within {timeout:.1f}s",
+            f"did not save {count_per_topic} image(s) per topic within {timeout:.1f}s",
         )
     finally:
         saver.close()
@@ -1064,6 +1081,7 @@ def build_summary(result: Dict[str, Any]) -> str:
         if status != "passed":
             failed_tests.append(test)
 
+    planned_runs = result.get("run_count")
     lines = [
         "# Export Load Stress Test",
         "",
@@ -1073,11 +1091,11 @@ def build_summary(result: Dict[str, Any]) -> str:
         f"- Status: {result.get('status', '')}",
         f"- Tool version: {result.get('tool_version', '')}",
         f"- Passed tests: {result.get('passed_tests', 0)}",
-        f"- Planned runs: {result.get('run_count', 0)}",
+        f"- Planned runs: {planned_runs if planned_runs is not None else 'duration-limited'}",
         f"- Completed tests: {len(tests)}",
         f"- Failed tests: {len(failed_tests)}",
         f"- Elapsed seconds: {float(result.get('elapsed_seconds', 0.0) or 0.0):.1f}",
-        f"- JPG images per topic per test: {result.get('save_image_count', 0)}",
+        f"- Visual artifacts per topic per test: {result.get('save_image_count', 0)}",
         "",
         "## Cameras",
         "",
@@ -1087,6 +1105,14 @@ def build_summary(result: Dict[str, Any]) -> str:
     lines.extend(["", "## Config JSON Cycle", ""])
     for path in result.get("config_jsons", []):
         lines.append(f"- {path}")
+    lines.extend(["", "## Point Cloud Topics", ""])
+    lines.extend(f"- {topic}" for topic in result.get("point_cloud_topics", []))
+    if not result.get("point_cloud_topics"):
+        lines.append("- None")
+    lines.extend(["", "## IMU Topics", ""])
+    lines.extend(f"- {topic}" for topic in result.get("imu_topics", []))
+    if not result.get("imu_topics"):
+        lines.append("- None")
     if result.get("manual_confirmation_message"):
         lines.extend(["", "## Manual Confirmation", "", result["manual_confirmation_message"]])
     if result.get("error"):
@@ -1197,11 +1223,14 @@ def run(args) -> int:
     config_jsons = normalize_config_paths(args.config_json)
     cameras = [parse_camera_spec(raw) for raw in (args.camera or ["name=camera"])]
     common_launch_args = build_common_launch_args(args.launch_arg)
-    run_count = int(args.run_count)
-    if run_count <= 0:
+    run_count = args.run_count
+    duration_text = str(args.duration or "").strip()
+    if not duration_text and run_count is None:
+        raise ValueError("at least one of --duration or --run-count is required")
+    if run_count is not None and run_count <= 0:
         raise ValueError("--run-count must be > 0")
     duration_seconds = (
-        parse_duration(args.duration, 0.0) if str(args.duration or "").strip() else None
+        parse_duration(duration_text, 0.0) if duration_text else None
     )
 
     stable_seconds = parse_duration(args.stable_seconds, 5.0)
@@ -1214,14 +1243,12 @@ def run(args) -> int:
     if save_image_count < 0:
         raise ValueError("--save-image-count must be >= 0")
     save_image_timeout = parse_duration(args.save_image_timeout, 30.0)
-    jpg_quality = int(args.jpg_quality)
-    if jpg_quality < 1 or jpg_quality > 100:
-        raise ValueError("--jpg-quality must be between 1 and 100")
 
     run_id = datetime.now().strftime("%Y%m%d_%H%M%S_export_load")
     run_started_at = iso_now()
     default_results_dir = Path(__file__).resolve().parent / "results" / run_id
     results_dir = ensure_dir(Path(args.results_dir).resolve() if args.results_dir else default_results_dir)
+    install_terminal_log(results_dir / "terminal.log")
     exports_dir = ensure_dir(results_dir / "exports")
     events = EventWriter(results_dir / "events.jsonl")
     emit = StatusLogger(events)
@@ -1238,6 +1265,12 @@ def run(args) -> int:
         for camera in cameras
         for topic_template in image_topic_templates
     }
+    camera_names = [camera.name for camera in cameras]
+    configured_point_cloud_topics = expand_topic_templates(
+        args.point_cloud_topic, camera_names
+    )
+    configured_imu_topics = expand_topic_templates(args.imu_topic, camera_names)
+    sensor_baseline: Optional[tuple[List[str], List[str], Dict[str, str]]] = None
 
     result: Dict[str, Any] = {
         "status": "passed",
@@ -1252,13 +1285,14 @@ def run(args) -> int:
         "config_jsons": [str(path) for path in config_jsons],
         "cameras": [asdict(camera) for camera in cameras],
         "image_topics": image_topics,
+        "point_cloud_topics": configured_point_cloud_topics,
+        "imu_topics": configured_imu_topics,
         "stable_seconds_required": stable_seconds,
         "stream_timeout_seconds": stream_timeout,
         "max_gap_seconds": max_gap_seconds,
         "restart_delay_seconds": restart_delay,
         "save_image_count": save_image_count,
         "save_image_timeout_seconds": save_image_timeout,
-        "jpg_quality": jpg_quality,
         "tests": [],
         "elapsed_seconds": 0.0,
     }
@@ -1266,7 +1300,7 @@ def run(args) -> int:
     emit(f"tool version: {TOOL_VERSION}")
     emit(f"results dir: {results_dir}")
     emit("test started", event="phase", phase="starting")
-    emit(f"run count: {run_count}")
+    emit(f"run count: {run_count if run_count is not None else 'duration-limited'}")
     emit(f"cameras: {', '.join(camera.name for camera in cameras)}")
     emit(f"config JSON cycle: {', '.join(str(path) for path in config_jsons)}")
     if auto_discover_image_topics:
@@ -1274,9 +1308,9 @@ def run(args) -> int:
     else:
         emit(f"monitor topics: {', '.join(image_topics)}")
     if save_image_count > 0:
-        emit(f"save JPG images: {save_image_count} per topic")
+        emit(f"save images and sensor plots: {save_image_count} per topic")
     else:
-        emit("save JPG images: disabled")
+        emit("save images: disabled")
 
     test_start_monotonic = time.monotonic()
     deadline = (
@@ -1290,7 +1324,7 @@ def run(args) -> int:
     try:
         with RosHarness(args.ros_version, "export_load_stress_test", args.queue_size) as harness:
             test_index = 0
-            while test_index < run_count:
+            while run_count is None or test_index < run_count:
                 if deadline is not None and time.monotonic() >= deadline:
                     break
                 test_index += 1
@@ -1308,6 +1342,7 @@ def run(args) -> int:
                     "launches": [],
                     "topics": [],
                     "images": [],
+                    "sensors": [],
                     "exports": [],
                 }
                 current_test = test_payload
@@ -1370,7 +1405,7 @@ def run(args) -> int:
                 if auto_discover_image_topics:
                     image_topics, topic_cameras = discover_image_topics(
                         harness=harness,
-                        camera_names=[camera.name for camera in cameras],
+                        camera_names=camera_names,
                         sessions=sessions,
                         timeout=stream_timeout,
                     )
@@ -1405,7 +1440,7 @@ def run(args) -> int:
                         time.sleep(1.0)
                     break
 
-                ok, image_snapshot, image_message = save_jpg_images(
+                ok, image_snapshot, image_message = save_images(
                     sessions=sessions,
                     harness=harness,
                     topics=image_topics,
@@ -1413,7 +1448,6 @@ def run(args) -> int:
                     output_root=results_dir / "images",
                     count_per_topic=save_image_count,
                     timeout=save_image_timeout,
-                    jpg_quality=jpg_quality,
                     emit=emit,
                 )
                 test_payload["images"] = image_snapshot
@@ -1427,12 +1461,47 @@ def run(args) -> int:
                         "check finished"
                     )
                     keep_launch_running = True
-                    emit(f"{test_name}: JPG image save failed")
+                    emit(f"{test_name}: image save failed")
                     emit("please manually check the launches, press Ctrl+C to stop them and finish")
                     while any(session.poll() is None for session in sessions):
                         time.sleep(1.0)
                     break
                 emit(f"{test_name}: {image_message}")
+
+                if sensor_baseline is None:
+                    sensor_baseline = discover_sensor_topics(
+                        harness=harness,
+                        camera_names=camera_names,
+                        point_cloud_topics=configured_point_cloud_topics,
+                        imu_topics=configured_imu_topics,
+                        timeout=stream_timeout,
+                        ensure_running=lambda: [session.assert_running() for session in sessions],
+                    )
+                    result["point_cloud_topics"] = sensor_baseline[0]
+                    result["imu_topics"] = sensor_baseline[1]
+                    emit(
+                        f"sensor baseline: {len(sensor_baseline[0])} point cloud, "
+                        f"{len(sensor_baseline[1])} IMU topic(s)"
+                    )
+                point_cloud_topics, imu_topics, sensor_topic_cameras = sensor_baseline
+                sensor_timeout = max(
+                    save_image_timeout,
+                    2.0 * max(save_image_count, 1) + 5.0,
+                )
+                ok, sensor_snapshot, sensor_message = capture_sensor_artifacts(
+                    harness=harness,
+                    point_cloud_topics=point_cloud_topics,
+                    imu_topics=imu_topics,
+                    topic_cameras=sensor_topic_cameras,
+                    output_root=results_dir / "images",
+                    save_count=save_image_count,
+                    timeout=sensor_timeout,
+                    ensure_running=lambda: [session.assert_running() for session in sessions],
+                )
+                test_payload["sensors"] = sensor_snapshot
+                if not ok:
+                    raise RuntimeError(sensor_message)
+                emit(f"{test_name}: {sensor_message}")
 
                 emit(f"{test_name}: streams stable, export and compare JSON")
                 camera_results = []
@@ -1483,7 +1552,7 @@ def run(args) -> int:
                 test_payload["ended_at"] = datetime.now().isoformat(timespec="seconds")
                 result["passed_tests"] += 1
                 current_test = None
-                if test_index < run_count and (
+                if (run_count is None or test_index < run_count) and (
                     deadline is None or time.monotonic() < deadline
                 ):
                     time.sleep(restart_delay)
@@ -1550,7 +1619,7 @@ def run(args) -> int:
     return 1
 
 
-def parse_args():
+def parse_args(argv=None):
     parser = argparse.ArgumentParser(
         description=(
             "Repeatedly load config JSON files through single-camera launches, "
@@ -1589,7 +1658,9 @@ def parse_args():
             "device-port, config-file-path."
         ),
     )
-    parser.add_argument("--run-count", type=int, default=10, help="Maximum complete test cycles")
+    parser.add_argument(
+        "--run-count", type=int, default=None, help="Optional maximum complete test cycles"
+    )
     parser.add_argument(
         "--duration",
         default="",
@@ -1600,8 +1671,27 @@ def parse_args():
         action="append",
         default=[],
         help=(
-            "Image topic template to monitor and save, supports {camera}; can repeat. "
+            "Image or CompressedImage topic template to monitor and save, supports "
+            "{camera}; can repeat. "
             "When omitted, all published image streams under each camera are discovered."
+        ),
+    )
+    parser.add_argument(
+        "--point-cloud-topic",
+        action="append",
+        default=[],
+        help=(
+            "PointCloud2 topic template to require, supports {camera}; can repeat. "
+            "When omitted, published point cloud topics are discovered on the first test."
+        ),
+    )
+    parser.add_argument(
+        "--imu-topic",
+        action="append",
+        default=[],
+        help=(
+            "Imu topic template to require, supports {camera}; can repeat. "
+            "When omitted, published IMU topics are discovered on the first test."
         ),
     )
     parser.add_argument("--stable-seconds", default="5")
@@ -1618,10 +1708,12 @@ def parse_args():
         "--save-image-count",
         type=int,
         default=1,
-        help="JPG images to save per image topic for each test; use 0 to disable",
+        help=(
+            "PNG artifacts to save per image, point cloud, and IMU topic for each "
+            "test; use 0 to disable saving while keeping stream validation"
+        ),
     )
-    parser.add_argument("--save-image-timeout", default="30", help="Max wait time for JPG image saving")
-    parser.add_argument("--jpg-quality", type=int, default=95, help="JPG quality, 1-100")
+    parser.add_argument("--save-image-timeout", default="30", help="Max wait time for image saving")
     parser.add_argument("--export-service", default="/{camera}/export_config_json")
     parser.add_argument("--export-service-type", default="orbbec_camera_msgs/srv/SetString")
     parser.add_argument("--service-timeout", default="30")
@@ -1631,7 +1723,10 @@ def parse_args():
         action="version",
         version="%(prog)s {}".format(TOOL_VERSION),
     )
-    return parser.parse_args()
+    args = parser.parse_args(argv)
+    if not str(args.duration or "").strip() and args.run_count is None:
+        parser.error("at least one of --duration or --run-count is required")
+    return args
 
 
 def main() -> None:

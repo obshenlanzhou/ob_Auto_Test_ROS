@@ -28,6 +28,7 @@ from _test_protocol import (
     atomic_write_json,
     collect_test_environment,
     contract_result,
+    install_terminal_log,
     iso_now,
     namespace_request,
     test_environment_markdown,
@@ -39,7 +40,7 @@ DEFAULT_BUFF_SIZE_MB = 16
 DEFAULT_WARMUP_SEC = 2.0
 DEFAULT_SAVE_CSV = True
 DEFAULT_QOS = "sensor_data"
-TOOL_VERSION = "1.0"
+TOOL_VERSION = "1.1"
 TEST_ID = "image_receive_stats_test"
 ENV_READY_VAR = "IMAGE_RECEIVE_STATS_ENV_READY"
 SUMMARY_UPDATE_INTERVAL_SEC = 10.0
@@ -709,6 +710,7 @@ class ReceiveStatsCore:
         self.closed = False
 
         ensure_dir(self.output_dir)
+        install_terminal_log(Path(self.output_dir) / "terminal.log")
         self.events = EventWriter(Path(self.output_dir) / "events.jsonl")
         self.events.emit("phase", "image receive statistics started", phase="running")
         self.warning_log_writer = WarningLogWriter(os.path.join(self.output_dir, "warnings.log"))

@@ -138,12 +138,16 @@ def test_toggle_mode_defaults_to_individual_and_accepts_all():
 def test_stream_off_and_on_preview_times_default_to_four_and_keep_legacy_aliases():
     module = load_script()
 
-    defaults = module.validate_args(module.parse_args(["--launch-file", "test.launch.py"]))
+    defaults = module.validate_args(
+        module.parse_args(["--launch-file", "test.launch.py", "--run-count", "1"])
+    )
     configured = module.validate_args(
         module.parse_args(
             [
                 "--launch-file",
                 "test.launch.py",
+                "--run-count",
+                "1",
                 "--stream-off-seconds",
                 "2.5",
                 "--stream-on-preview-seconds",
@@ -168,6 +172,32 @@ def test_stream_off_and_on_preview_times_default_to_four_and_keep_legacy_aliases
     assert configured["stream_on_preview"] == 7.0
     assert legacy.stream_off_seconds == "3"
     assert legacy.stream_on_preview_seconds == "8"
+
+
+def test_save_image_topics_accept_raw_and_matching_compressed_sources():
+    module = load_script()
+
+    config = module.validate_args(
+        module.parse_args(
+            [
+                "--launch-file",
+                "test.launch.py",
+                "--run-count",
+                "1",
+                "--image-topic",
+                "/camera/color/image_raw",
+                "--save-image-topic",
+                "/camera/color/image_raw",
+                "--save-image-topic",
+                "/camera/color/image_raw/compressed",
+            ]
+        )
+    )
+
+    assert config["save_image_topics"] == [
+        "/camera/color/image_raw",
+        "/camera/color/image_raw/compressed",
+    ]
 
 
 def test_stream_profile_parser_supports_nested_namespace_and_camera_placeholder():
@@ -195,6 +225,8 @@ def test_stream_profile_switch_requires_two_different_matching_sets():
     common = [
         "--launch-file",
         "test.launch.py",
+        "--run-count",
+        "1",
         "--switch-stream-profile",
         "1",
         "--stream-profile-a",
@@ -241,6 +273,8 @@ def test_stream_profile_switch_requires_two_different_matching_sets():
             [
                 "--launch-file",
                 "test.launch.py",
+                "--run-count",
+                "1",
                 "--switch-stream-profile",
                 "1",
                 "--stream-profile-a",
@@ -258,6 +292,8 @@ def test_stream_profile_switch_requires_two_different_matching_sets():
                 [
                     "--launch-file",
                     "test.launch.py",
+                    "--run-count",
+                    "1",
                     "--switch-stream-profile",
                     "1",
                     "--stream-profile-a",
@@ -295,7 +331,7 @@ def test_profile_groups_require_service_and_selected_target():
         module.build_profile_groups([other], targets, services)
 
 
-def test_profile_state_checks_resolution_and_measured_fps():
+def test_profile_state_checks_resolution_without_fps_statistics():
     module = load_script()
     spec = module.parse_stream_profile_spec("/camera/color/image_raw=640x480@30")
 
@@ -306,10 +342,8 @@ def test_profile_state_checks_resolution_and_measured_fps():
                 "topic": spec.topic,
                 "width": 640,
                 "height": 480,
-                "window_fps": 29.5,
             }
         ],
-        0.15,
     )
     bad_resolution = module.evaluate_profile_state(
         [spec],
@@ -318,27 +352,14 @@ def test_profile_state_checks_resolution_and_measured_fps():
                 "topic": spec.topic,
                 "width": 1280,
                 "height": 720,
-                "window_fps": 29.5,
             }
         ],
-        0.15,
-    )
-    bad_fps = module.evaluate_profile_state(
-        [spec],
-        [
-            {
-                "topic": spec.topic,
-                "width": 640,
-                "height": 480,
-                "window_fps": 15.0,
-            }
-        ],
-        0.15,
     )
 
     assert passed["all_profiles_match"] is True
     assert bad_resolution["all_profiles_match"] is False
-    assert bad_fps["all_profiles_match"] is False
+    assert "actual_fps" not in passed["profiles"][0]
+    assert "fps_match" not in passed["profiles"][0]
 
 
 def test_profile_state_checks_ros_encoding_compatibility_for_sdk_format():
@@ -354,21 +375,19 @@ def test_profile_state_checks_ros_encoding_compatibility_for_sdk_format():
             "topic": color.topic,
             "width": 640,
             "height": 480,
-            "window_fps": 30.0,
             "encoding": "rgb8",
         },
         {
             "topic": depth.topic,
             "width": 640,
             "height": 480,
-            "window_fps": 30.0,
             "encoding": "16UC1",
         },
     ]
 
-    passed = module.evaluate_profile_state([color, depth], snapshot, 0.15)
+    passed = module.evaluate_profile_state([color, depth], snapshot)
     snapshot[0]["encoding"] = "mono16"
-    failed = module.evaluate_profile_state([color, depth], snapshot, 0.15)
+    failed = module.evaluate_profile_state([color, depth], snapshot)
 
     assert passed["all_profiles_match"] is True
     assert passed["profiles"][0]["expected_format"] == "MJPG"
@@ -513,7 +532,14 @@ def test_single_camera_args_are_injected_only_when_provided():
 def test_camera_placeholder_requires_single_camera():
     module = load_script()
     args = module.parse_args(
-        ["--launch-file", "test.launch.py", "--image-topic", "/{camera}/color/image_raw"]
+        [
+            "--launch-file",
+            "test.launch.py",
+            "--run-count",
+            "1",
+            "--image-topic",
+            "/{camera}/color/image_raw",
+        ]
     )
     with pytest.raises(ValueError, match="placeholder requires one --camera"):
         module.validate_args(args)
@@ -522,6 +548,8 @@ def test_camera_placeholder_requires_single_camera():
         [
             "--launch-file",
             "test.launch.py",
+            "--run-count",
+            "1",
             "--camera",
             "name=camera_01",
             "--image-topic",
@@ -531,6 +559,45 @@ def test_camera_placeholder_requires_single_camera():
     assert module.validate_args(args)["explicit_topics"] == [
         "/camera_01/color/image_raw"
     ]
+
+
+def test_duration_and_run_count_default_empty_and_require_at_least_one():
+    module = load_script()
+    defaults = module.parse_args(["--launch-file", "test.launch.py"])
+
+    assert defaults.duration == ""
+    assert defaults.run_count is None
+    with pytest.raises(
+        ValueError, match="at least one of --duration or --run-count is required"
+    ):
+        module.validate_args(defaults)
+
+    duration_only = module.validate_args(
+        module.parse_args(
+            ["--launch-file", "test.launch.py", "--duration", "15m"]
+        )
+    )
+    count_only = module.validate_args(
+        module.parse_args(
+            ["--launch-file", "test.launch.py", "--run-count", "10"]
+        )
+    )
+    both = module.validate_args(
+        module.parse_args(
+            [
+                "--launch-file",
+                "test.launch.py",
+                "--duration",
+                "1h",
+                "--run-count",
+                "20",
+            ]
+        )
+    )
+
+    assert duration_only["duration"] == 900.0
+    assert count_only["duration"] is None
+    assert both["duration"] == 3600.0
 
 
 def test_toggle_retries_once_and_reports_degraded_success():
@@ -643,7 +710,10 @@ def test_all_disabled_state_requires_every_target_to_be_quiet(monkeypatch):
 
 def test_image_paths_are_per_camera_stream_and_never_overwrite(tmp_path):
     module = load_script()
-    target = module.stream_target_from_topic("/camera_01/depth/image_raw")
+    target = module.save_image_target_from_topic("/camera_01/depth/image_raw")
+    compressed = module.save_image_target_from_topic(
+        "/camera_01/depth/image_raw/compressed"
+    )
     existing = tmp_path / "camera_01" / "depth" / "image_0003.jpg"
     existing.parent.mkdir(parents=True)
     existing.write_bytes(b"existing")
@@ -651,11 +721,42 @@ def test_image_paths_are_per_camera_stream_and_never_overwrite(tmp_path):
     sequence = module.ImagePathSequence(tmp_path)
 
     assert sequence.next_path(target) == (
-        tmp_path / "camera_01" / "depth" / "image_0004.jpg"
+        tmp_path / "camera_01" / "depth" / "image_0004.png"
     )
-    assert sequence.next_path(target) == (
+    assert sequence.next_path(compressed) == (
         tmp_path / "camera_01" / "depth" / "image_0005.jpg"
     )
+
+
+def test_save_image_topics_map_strictly_to_selected_raw_streams():
+    module = load_script()
+    targets = [module.stream_target_from_topic("/camera_01/color/image_raw")]
+    topic_types = {
+        "/camera_01/color/image_raw": ["sensor_msgs/msg/Image"],
+        "/camera_01/color/image_raw/compressed": [
+            "sensor_msgs/msg/CompressedImage"
+        ],
+    }
+
+    mapped = module.build_save_image_targets(
+        targets,
+        [
+            "/camera_01/color/image_raw",
+            "/camera_01/color/image_raw/compressed",
+        ],
+        topic_types,
+    )
+
+    assert [item.topic_kind for item in mapped[targets[0].topic]] == [
+        "raw",
+        "compressed",
+    ]
+    with pytest.raises(RuntimeError, match="does not match a selected stream"):
+        module.build_save_image_targets(
+            targets,
+            ["/camera_01/depth/image_raw/compressed"],
+            topic_types,
+        )
 
 
 def test_stream_monitor_tracks_quiet_stability_and_max_gap(monkeypatch):

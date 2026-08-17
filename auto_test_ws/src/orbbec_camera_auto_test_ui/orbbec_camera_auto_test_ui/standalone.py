@@ -131,6 +131,24 @@ def _validate_manifest(manifest: Dict[str, Any], manifest_path: Path) -> Dict[st
         seen_names.add(name)
         seen_options.add(option)
 
+    required_any = manifest.get("required_any", [])
+    if not isinstance(required_any, list):
+        raise ManifestError(f"{manifest_path}: required_any must be a list")
+    for requirement in required_any:
+        if not isinstance(requirement, dict):
+            raise ManifestError(f"{manifest_path}: required_any entry must be an object")
+        names = requirement.get("fields")
+        if (
+            not isinstance(names, list)
+            or len(names) < 2
+            or any(not isinstance(name, str) or name not in seen_names for name in names)
+        ):
+            raise ManifestError(
+                f"{manifest_path}: required_any fields must reference at least two fields"
+            )
+        if not _safe_text(requirement.get("message")):
+            raise ManifestError(f"{manifest_path}: required_any entry requires a message")
+
     result = dict(manifest)
     result["manifest_path"] = str(manifest_path)
     result["script_path"] = str(script_path)
@@ -265,6 +283,10 @@ def validate_request(manifest: Dict[str, Any], raw_values: Any) -> tuple[Dict[st
                         errors.append(
                             f"{field.get('label', name)} #{index} requires config-file-path"
                         )
+    for requirement in manifest.get("required_any", []):
+        names = requirement["fields"]
+        if not any(values.get(name) not in ("", None, [], False) for name in names):
+            errors.append(requirement["message"])
     return values, errors
 
 

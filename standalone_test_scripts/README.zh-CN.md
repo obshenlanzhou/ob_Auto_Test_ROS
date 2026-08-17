@@ -78,7 +78,8 @@ standalone_test_scripts/
 `config-file-path`。每个字段都可以填写或不填，兼容的字段可以组合。无需显式相机配置
 的脚本会使用自己的默认值。
 
-每次完成的运行都会生成 `result.json`、`summary.md` 和 `events.jsonl`。
+每次运行都会生成 `terminal.log`，实时保存脚本自身的标准输出和标准错误，同时保持终端正常输出。
+每次完成的运行还会生成 `result.json`、`summary.md` 和 `events.jsonl`。
 `result.json` 的状态统一为 `passed`、`failed`、`interrupted`，对应退出码分别为
 `0`、`1`、`130`；命令行参数错误返回 `2`。脚本特有的日志、图片、CSV 和导出文件
 统一在 `result.json` 的 `artifacts` 中列出。
@@ -99,11 +100,11 @@ CLI，但脚本本身不能导入 Web UI 包。
 
 | 脚本目录 | 用途 | 说明 |
 | --- | --- | --- |
-| [launch_restart_stream_check](launch_restart_stream_check/README.zh-CN.md) | 反复重启 launch 并检查图像流恢复 | 适合重启出流稳定性压测 |
-| [stream_toggle_stress_test](stream_toggle_stress_test/README.zh-CN.md) | 逐路或整体开关图像流，可在两组分辨率/帧率/格式间切换并验证恢复 | 单/多相机和逐路 JPG 证据；逐路及 profile 切换支持 ROS1/ROS2，整体模式当前仅支持 ROS2 |
-| [launch_param_load_stress](launch_param_load_stress/README.zh-CN.md) | 通过 `config_file_path` 压测 launch 参数加载 | 验证 ROS 参数、图像 topic 和 getter service，支持多相机和压测重复 |
-| [export_load_stress_test](export_load_stress_test/README.zh-CN.md) | 交替导入/导出 JSON 并比较参数 | 适合参数导入导出一致性压测 |
-| [preset_upgrade_stress_test](preset_upgrade_stress_test/README.zh-CN.md) | 交替升级 preset 并验证出流 | 适合 optional depth preset 升级压测 |
+| [launch_restart_stream_check](launch_restart_stream_check/README.zh-CN.md) | 反复重启 launch 并检查出流恢复 | 每次重启保存图像、点云和 IMU 证据 |
+| [stream_toggle_stress_test](stream_toggle_stress_test/README.zh-CN.md) | 逐路或整体开关图像流并验证恢复 | on 阶段同时验证点云和 IMU，支持 ROS1/ROS2 |
+| [launch_param_load_stress](launch_param_load_stress/README.zh-CN.md) | 通过 `config_file_path` 压测 launch 参数加载 | 验证参数、服务、图像、点云和 IMU |
+| [export_load_stress_test](export_load_stress_test/README.zh-CN.md) | 交替导入/导出 JSON 并比较参数 | 同时固定并验证点云/IMU 基线 |
+| [preset_upgrade_stress_test](preset_upgrade_stress_test/README.zh-CN.md) | 交替升级 preset 并验证出流 | 每次 preset 测试保存图像、点云和 IMU 证据 |
 | [firmware_update_stress_test](firmware_update_stress_test/README.zh-CN.md) | 反复调用 `firmware_update_tool --firmware_path` 并检查成功日志 | 适合固件升级命令压测，支持按 SN 批量升级 |
 | [image_receive_stats_test](image_receive_stats_test/README.zh-CN.md) | 订阅图像话题并统计接收间隔 | 适合 ROS1/ROS2 订阅端停流、卡顿和时间戳监测 |
 
