@@ -37,7 +37,6 @@
     {"name": "max_gap_seconds", "option": "--max-gap-seconds", "type": "duration", "label": "最大帧间隔", "label_en": "Maximum Frame Gap", "group": "advanced", "section": "advanced", "default": "1.5"},
     {"name": "service_timeout", "option": "--service-timeout", "type": "duration", "label": "服务调用超时", "label_en": "Service Timeout", "group": "advanced", "section": "advanced", "default": "15"},
     {"name": "service_retry_delay", "option": "--service-retry-delay", "type": "number", "label": "服务重试间隔", "label_en": "Service Retry Delay", "group": "advanced", "section": "advanced", "default": "1", "min": 0},
-    {"name": "profile_fps_tolerance", "option": "--profile-fps-tolerance", "type": "number", "label": "配置帧率允许偏差", "label_en": "Profile FPS Tolerance", "group": "advanced", "section": "advanced", "default": "0.15", "min": 0, "max": 1, "note": "实际接收帧率相对目标帧率的允许偏差比例，最小绝对容差为 1 FPS。"},
     {"name": "save_image_timeout", "option": "--save-image-timeout", "type": "duration", "label": "存图超时", "label_en": "Image Save Timeout", "group": "advanced", "section": "advanced", "default": "30"},
     {"name": "queue_size", "option": "--queue-size", "type": "integer", "label": "订阅队列大小", "label_en": "Queue Size", "group": "advanced", "section": "advanced", "default": 10, "min": 1}
   ]

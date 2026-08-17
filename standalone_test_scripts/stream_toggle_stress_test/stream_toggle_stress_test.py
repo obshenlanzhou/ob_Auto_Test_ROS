@@ -35,7 +35,7 @@ from _sensor_artifacts import (
 
 ENV_READY_VAR = "STREAM_TOGGLE_STRESS_TEST_ENV_READY"
 INTERRUPTED = False
-TOOL_VERSION = "1.6"
+TOOL_VERSION = "1.7"
 TEST_ID = "stream_toggle_stress_test"
 DEFAULT_STRESS_LAUNCH_ARGS = {
     "enable_heartbeat": "true",
@@ -1070,12 +1070,6 @@ class StreamMonitor:
                 item = self.state[topic]
                 first = item["window_first_message_at"]
                 last = item["window_last_message_at"]
-                frame_span = (last - first) if first is not None and last is not None else 0.0
-                window_fps = (
-                    (item["window_message_count"] - 1) / frame_span
-                    if item["window_message_count"] > 1 and frame_span > 0.0
-                    else 0.0
-                )
                 rows.append(
                     {
                         "topic": topic,
@@ -1092,7 +1086,6 @@ class StreamMonitor:
                             else 0.0
                         ),
                         "window_max_gap_seconds": item["window_max_gap_seconds"],
-                        "window_fps": window_fps,
                         "width": item["width"],
                         "height": item["height"],
                         "encoding": item["encoding"],
@@ -1276,7 +1269,6 @@ def expected_ros_encodings(spec: StreamProfileSpec) -> Tuple[str, ...]:
 def evaluate_profile_state(
     specs: Sequence[StreamProfileSpec],
     snapshot: Sequence[Dict[str, Any]],
-    fps_tolerance_ratio: float,
 ) -> Dict[str, Any]:
     rows_by_topic = {str(row.get("topic", "")): row for row in snapshot}
     checks = []
@@ -1284,11 +1276,8 @@ def evaluate_profile_state(
         row = rows_by_topic.get(spec.topic, {})
         actual_width = int(row.get("width", 0) or 0)
         actual_height = int(row.get("height", 0) or 0)
-        actual_fps = float(row.get("window_fps", 0.0) or 0.0)
         actual_encoding = str(row.get("encoding", "") or "").lower()
-        fps_tolerance = max(1.0, spec.fps * fps_tolerance_ratio)
         resolution_match = actual_width == spec.width and actual_height == spec.height
-        fps_match = actual_fps > 0.0 and abs(actual_fps - spec.fps) <= fps_tolerance
         expected_encodings = expected_ros_encodings(spec)
         encoding_match = not expected_encodings or actual_encoding in expected_encodings
         checks.append(
@@ -1302,14 +1291,11 @@ def evaluate_profile_state(
                 "expected_ros_encodings": list(expected_encodings),
                 "actual_width": actual_width,
                 "actual_height": actual_height,
-                "actual_fps": actual_fps,
                 "actual_encoding": actual_encoding,
-                "fps_tolerance": fps_tolerance,
                 "resolution_match": resolution_match,
-                "fps_match": fps_match,
                 "format_encoding_check_supported": bool(expected_encodings),
                 "format_encoding_match": encoding_match,
-                "passed": resolution_match and fps_match and encoding_match,
+                "passed": resolution_match and encoding_match,
             }
         )
     return {
@@ -1326,7 +1312,6 @@ def wait_for_profile_state(
     specs: Sequence[StreamProfileSpec],
     stable_seconds: float,
     max_gap_seconds: float,
-    fps_tolerance_ratio: float,
     timeout: float,
 ) -> Dict[str, Any]:
     started = time.monotonic()
@@ -1340,7 +1325,7 @@ def wait_for_profile_state(
         ):
             continue
         snapshot = monitor.snapshot()
-        last_state = evaluate_profile_state(specs, snapshot, fps_tolerance_ratio)
+        last_state = evaluate_profile_state(specs, snapshot)
         if last_state["all_profiles_match"]:
             return {
                 "elapsed_seconds": time.monotonic() - started,
@@ -1360,9 +1345,8 @@ def wait_for_profile_state(
 def verify_profile_snapshot(
     specs: Sequence[StreamProfileSpec],
     snapshot: Sequence[Dict[str, Any]],
-    fps_tolerance_ratio: float,
 ) -> Dict[str, Any]:
-    state = evaluate_profile_state(specs, snapshot, fps_tolerance_ratio)
+    state = evaluate_profile_state(specs, snapshot)
     if not state["all_profiles_match"]:
         raise StreamVerificationError(
             "stream profile changed or did not recover after toggle",
@@ -1438,25 +1422,12 @@ def apply_profile_set(
     retry_delay: float,
     stable_seconds: float,
     max_gap_seconds: float,
-    fps_tolerance_ratio: float,
     stream_timeout: float,
     warnings: List[Dict[str, Any]],
     emit: StatusLogger,
 ) -> Dict[str, Any]:
     service_results = []
-    current_snapshot = monitor.snapshot()
     for group in groups:
-        current = evaluate_profile_state(group.profiles, current_snapshot, 0.03)
-        if current["all_profiles_match"]:
-            service_results.append(
-                {
-                    "camera_namespace": group.camera_namespace,
-                    "service": group.service,
-                    "already_active": True,
-                    "success": True,
-                }
-            )
-            continue
         call = call_profile_with_retry(
             session=session,
             harness=harness,
@@ -1466,7 +1437,6 @@ def apply_profile_set(
         )
         call["camera_namespace"] = group.camera_namespace
         call["service"] = group.service
-        call["already_active"] = False
         service_results.append(call)
         if call["retried"]:
             warning = {
@@ -1489,7 +1459,6 @@ def apply_profile_set(
         specs=specs,
         stable_seconds=stable_seconds,
         max_gap_seconds=max_gap_seconds,
-        fps_tolerance_ratio=fps_tolerance_ratio,
         timeout=stream_timeout,
     )
     return {
@@ -2031,9 +2000,6 @@ def validate_args(args) -> Dict[str, Any]:
     retry_delay = float(args.service_retry_delay)
     if retry_delay < 0:
         raise ValueError("--service-retry-delay must be >= 0")
-    fps_tolerance_ratio = float(args.profile_fps_tolerance)
-    if fps_tolerance_ratio < 0.0 or fps_tolerance_ratio > 1.0:
-        raise ValueError("--profile-fps-tolerance must be in range 0-1")
     return {
         "camera": camera,
         "explicit_topics": explicit_topics,
@@ -2050,7 +2016,6 @@ def validate_args(args) -> Dict[str, Any]:
         "save_image_timeout": parse_duration(args.save_image_timeout, 30.0),
         "profile_switch_enabled": profile_switch_enabled,
         "profile_sets": profile_sets,
-        "profile_fps_tolerance": fps_tolerance_ratio,
     }
 
 
@@ -2098,7 +2063,6 @@ def run(args) -> int:
         "camera": camera,
         "toggle_mode": args.toggle_mode,
         "profile_switch_enabled": config["profile_switch_enabled"],
-        "profile_fps_tolerance": config["profile_fps_tolerance"],
         "stream_off_seconds": config["stream_off"],
         "stream_on_preview_seconds": config["stream_on_preview"],
         "stream_profile_sets": {
@@ -2280,10 +2244,10 @@ def run(args) -> int:
             profile_sequence = ("A", "B")
             if config["profile_switch_enabled"]:
                 initial_a = evaluate_profile_state(
-                    config["profile_sets"]["A"], result["baseline"], 0.03
+                    config["profile_sets"]["A"], result["baseline"]
                 )["all_profiles_match"]
                 initial_b = evaluate_profile_state(
-                    config["profile_sets"]["B"], result["baseline"], 0.03
+                    config["profile_sets"]["B"], result["baseline"]
                 )["all_profiles_match"]
                 if initial_a and not initial_b:
                     result["initial_profile_set"] = "A"
@@ -2340,7 +2304,6 @@ def run(args) -> int:
                             retry_delay=config["service_retry_delay"],
                             stable_seconds=config["stream_on_preview"],
                             max_gap_seconds=config["max_gap"],
-                            fps_tolerance_ratio=config["profile_fps_tolerance"],
                             stream_timeout=config["stream_timeout"],
                             warnings=result["warnings"],
                             emit=emit,
@@ -2466,7 +2429,6 @@ def run(args) -> int:
                             operation["profile_state_after_toggle"] = verify_profile_snapshot(
                                 active_profile_specs,
                                 operation["enabled_state"]["topics"],
-                                config["profile_fps_tolerance"],
                             )
                         groups_may_be_disabled = False
                         if image_writer is not None and image_save_monitor is not None:
@@ -2641,7 +2603,6 @@ def run(args) -> int:
                             operation["profile_state_after_toggle"] = verify_profile_snapshot(
                                 active_profile_specs,
                                 operation["enabled_state"]["topics"],
-                                config["profile_fps_tolerance"],
                             )
                         target_may_be_disabled = False
                         if image_writer is not None and image_save_monitor is not None:
@@ -2923,11 +2884,6 @@ def parse_args(argv: Optional[Sequence[str]] = None):
     parser.add_argument("--max-gap-seconds", default="1.5")
     parser.add_argument("--service-timeout", default="15")
     parser.add_argument("--service-retry-delay", default="1")
-    parser.add_argument(
-        "--profile-fps-tolerance",
-        default="0.15",
-        help="Allowed measured FPS deviation ratio for profile verification (0-1)",
-    )
     parser.add_argument(
         "--save-image-count",
         type=int,

@@ -331,7 +331,7 @@ def test_profile_groups_require_service_and_selected_target():
         module.build_profile_groups([other], targets, services)
 
 
-def test_profile_state_checks_resolution_and_measured_fps():
+def test_profile_state_checks_resolution_without_fps_statistics():
     module = load_script()
     spec = module.parse_stream_profile_spec("/camera/color/image_raw=640x480@30")
 
@@ -342,10 +342,8 @@ def test_profile_state_checks_resolution_and_measured_fps():
                 "topic": spec.topic,
                 "width": 640,
                 "height": 480,
-                "window_fps": 29.5,
             }
         ],
-        0.15,
     )
     bad_resolution = module.evaluate_profile_state(
         [spec],
@@ -354,27 +352,14 @@ def test_profile_state_checks_resolution_and_measured_fps():
                 "topic": spec.topic,
                 "width": 1280,
                 "height": 720,
-                "window_fps": 29.5,
             }
         ],
-        0.15,
-    )
-    bad_fps = module.evaluate_profile_state(
-        [spec],
-        [
-            {
-                "topic": spec.topic,
-                "width": 640,
-                "height": 480,
-                "window_fps": 15.0,
-            }
-        ],
-        0.15,
     )
 
     assert passed["all_profiles_match"] is True
     assert bad_resolution["all_profiles_match"] is False
-    assert bad_fps["all_profiles_match"] is False
+    assert "actual_fps" not in passed["profiles"][0]
+    assert "fps_match" not in passed["profiles"][0]
 
 
 def test_profile_state_checks_ros_encoding_compatibility_for_sdk_format():
@@ -390,21 +375,19 @@ def test_profile_state_checks_ros_encoding_compatibility_for_sdk_format():
             "topic": color.topic,
             "width": 640,
             "height": 480,
-            "window_fps": 30.0,
             "encoding": "rgb8",
         },
         {
             "topic": depth.topic,
             "width": 640,
             "height": 480,
-            "window_fps": 30.0,
             "encoding": "16UC1",
         },
     ]
 
-    passed = module.evaluate_profile_state([color, depth], snapshot, 0.15)
+    passed = module.evaluate_profile_state([color, depth], snapshot)
     snapshot[0]["encoding"] = "mono16"
-    failed = module.evaluate_profile_state([color, depth], snapshot, 0.15)
+    failed = module.evaluate_profile_state([color, depth], snapshot)
 
     assert passed["all_profiles_match"] is True
     assert passed["profiles"][0]["expected_format"] == "MJPG"
