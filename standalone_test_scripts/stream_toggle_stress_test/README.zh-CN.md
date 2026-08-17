@@ -107,15 +107,21 @@ A、B 两组必须配置相同的话题，且配置内容必须不同。
 | `--camera` | 空 | 单相机 launch 参数，最多一个 |
 | `--image-topic` | 自动发现 | 需要测试的原始图像流，可重复传入 |
 | `--save-image-topic` | 目标 raw 话题 | 存图来源，可重复传入 |
+| `--point-cloud-topic` | 循环前自动发现 | 每次开流后必检的 `PointCloud2` topic，可重复传入并支持 `{camera}` |
+| `--imu-topic` | 循环前自动发现 | 每次开流后必检的 `Imu` topic，可重复传入并支持 `{camera}` |
 | `--toggle-mode` | `individual` | `individual` 逐路；`all` 整体开关 |
 | `--switch-stream-profile` | `0` | 设为 `1` 时在 A/B 流配置间切换 |
 | `--stream-off-seconds` | `4` | 关流保持和验证时间，单位秒 |
 | `--stream-on-preview-seconds` | `4` | 开流后的预览和验证时间，单位秒 |
-| `--save-image-count` | `1` | 每个存图话题每循环保存数量；`0` 表示不存图 |
+| `--save-image-count` | `1` | 每个图像、点云和 IMU topic 的 PNG 数量；`0` 仅检测 |
 | `--run-count` | 空 | 最大完整循环数 |
 | `--duration` | 空 | 最长运行时间，支持 `15m`、`2h` |
 
 `--run-count` 和 `--duration` 至少传入一个，也可以同时传入；同时传入时，任一条件先达到即结束。
+
+点云和 IMU 在循环开始前发现并固定为基线，每次重新开流后都必须恢复。
+关流阶段不统一断言它们是否静默：点云通常依赖深度流，IMU 可能独立运行。
+点云生成 XY/XZ/YZ 三视图，IMU 根据 accel、gyro 或同步话题生成曲线。
 
 ## 结果文件
 
@@ -125,7 +131,7 @@ A、B 两组必须配置相同的话题，且配置内容必须不同。
 stream_toggle_stress_test/results/YYYYMMDD_HHMMSS_stream_toggle/
 ├── logs/camera.launch.log     # ROS launch 日志
 ├── logs/sdk/                  # SDK 日志
-├── images/                    # raw PNG 和压缩图原始 JPG
+├── images/                    # raw 图像、点云预览和 IMU 曲线
 ├── summary.md                 # 测试摘要
 ├── events.jsonl               # 结构化运行事件
 └── result.json                # 每轮、每路流及存图结果

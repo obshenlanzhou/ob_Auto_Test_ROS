@@ -76,6 +76,9 @@ python3 ./launch_restart_stream_check/launch_restart_stream_check.py \
 | `--camera-model` | empty | Camera model with a built-in default launch, such as `gemini_301` |
 | `--launch-file` | empty | Launch filename or path; required unless a built-in `--camera-model` is used |
 | `--image-topic` | auto-discovered | Image topic to monitor; repeatable |
+| `--point-cloud-topic` | first-launch discovery | Required `PointCloud2` topic after every restart; repeatable, supports `{camera}` |
+| `--imu-topic` | first-launch discovery | Required `Imu` topic after every restart; repeatable, supports `{camera}` |
+| `--save-image-count` | `1` | PNG artifacts per image, point-cloud, and IMU topic after each restart; `0` = validation only |
 | `--launch-arg` | — | Extra launch argument (e.g. `enable_ir=true`); repeatable, format `KEY=VALUE` or `KEY:=VALUE` |
 | `--sdk-log-level` | `debug` | Orbbec SDK log level |
 | `--duration` | empty | Total run time; supports seconds, `30m`, `2h`, and similar formats |
@@ -88,6 +91,11 @@ python3 ./launch_restart_stream_check/launch_restart_stream_check.py \
 At least one of `--run-count` and `--duration` is required. Both may be supplied; the first limit
 reached stops the test.
 
+The first successful launch fixes the point-cloud and IMU baseline reused by
+all later restarts. Each successful restart saves ordinary images, three-view
+point-cloud previews, and adaptive IMU plots. Explicit sensor topics are
+mandatory from the first launch.
+
 ## Result Files
 
 Each run creates:
@@ -96,6 +104,7 @@ Each run creates:
 launch_restart_stream_check/results/YYYYMMDD_HHMMSS_restart_stream/
 ├── logs/test_XXXX/<camera>.launch.log      # ROS launch log for each restart
 ├── logs/test_XXXX/sdk/Log/<camera>/        # SDK debug log for each restart
+├── images/<camera>/<stream>/image_NNNN.png # Image, point-cloud, and IMU evidence
 ├── summary.md                              # Run command, final result, elapsed time, monitored streams
 ├── events.jsonl                            # Structured lifecycle and progress events
 └── result.json                             # Structured per-restart results and log paths

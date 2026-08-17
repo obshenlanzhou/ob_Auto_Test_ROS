@@ -18,6 +18,9 @@
     {"name": "duration", "option": "--duration", "type": "duration", "label": "最长运行时间", "label_en": "Duration", "group": "limits", "section": "basic", "default": "", "placeholder": "300", "note": "与最大循环次数至少填写一项，可同时填写。"},
     {"name": "run_count", "option": "--run-count", "type": "integer", "label": "最大循环次数", "label_en": "Run Count", "group": "limits", "section": "basic", "default": "", "min": 1, "placeholder": "10", "note": "与最长运行时间至少填写一项，可同时填写。"},
     {"name": "image_topics", "option": "--image-topic", "type": "list", "label": "图像话题", "label_en": "Image Topics", "group": "configuration", "section": "basic", "default": [], "placeholder": "/{camera}/color/image_raw\n/{camera}/depth/image_raw"},
+    {"name": "point_cloud_topics", "option": "--point-cloud-topic", "type": "list", "label": "点云话题", "label_en": "Point Cloud Topics", "group": "configuration", "section": "basic", "default": [], "placeholder": "留空则首次启动自动发现\n/{camera}/depth/points\n/{camera}/depth_registered/points"},
+    {"name": "imu_topics", "option": "--imu-topic", "type": "list", "label": "IMU 话题", "label_en": "IMU Topics", "group": "configuration", "section": "basic", "default": [], "placeholder": "留空则首次启动自动发现\n/{camera}/accel/sample\n/{camera}/gyro/sample\n/{camera}/gyro_accel/sample"},
+    {"name": "save_image_count", "option": "--save-image-count", "type": "integer", "label": "每话题存图数", "label_en": "Artifacts per Topic", "group": "configuration", "section": "basic", "default": "1", "min": 0, "note": "每次重启统一保存普通图像、点云预览和 IMU 曲线；0 仅检测不存图。"},
     {"name": "launch_package", "option": "--launch-package", "type": "text", "label": "Launch 包", "label_en": "Launch Package", "group": "advanced", "section": "advanced", "default": "orbbec_camera"},
     {"name": "launch_args", "option": "--launch-arg", "type": "list", "label": "附加 Launch 参数", "label_en": "Launch Arguments", "group": "advanced", "section": "advanced", "default": ["enable_heartbeat=true", "enable_firmware_log=true"], "placeholder": "enable_heartbeat=true\nenable_firmware_log=true"},
     {"name": "sdk_log_level", "option": "--sdk-log-level", "type": "select", "label": "SDK 日志级别", "label_en": "SDK Log Level", "group": "advanced", "section": "advanced", "default": "debug", "choices": ["debug", "info", "warn", "error", "fatal", "none"]},
@@ -26,6 +29,7 @@
     {"name": "stream_timeout", "option": "--stream-timeout", "type": "duration", "label": "出流超时", "label_en": "Stream Timeout", "group": "advanced", "section": "advanced", "default": "20"},
     {"name": "max_gap_seconds", "option": "--max-gap-seconds", "type": "duration", "label": "最大帧间隔", "label_en": "Maximum Frame Gap", "group": "advanced", "section": "advanced", "default": "1.5"},
     {"name": "restart_delay", "option": "--restart-delay", "type": "number", "label": "重启间隔", "label_en": "Restart Delay", "group": "advanced", "section": "advanced", "default": "2", "min": 0},
+    {"name": "save_image_timeout", "option": "--save-image-timeout", "type": "duration", "label": "存图超时", "label_en": "Artifact Save Timeout", "group": "advanced", "section": "advanced", "default": "30"},
     {"name": "queue_size", "option": "--queue-size", "type": "integer", "label": "队列大小", "label_en": "Queue Size", "group": "advanced", "section": "advanced", "default": "10", "min": 1}
   ]
 }

@@ -26,10 +26,15 @@ from _test_protocol import (
     parse_camera,
     test_environment_markdown,
 )
+from _sensor_artifacts import (
+    capture_sensor_artifacts,
+    discover_sensor_topics,
+    expand_topic_templates,
+)
 
 ENV_READY_VAR = "EXPORT_LOAD_STRESS_TEST_ENV_READY"
 INTERRUPTED = False
-TOOL_VERSION = "1.4"
+TOOL_VERSION = "1.6"
 TEST_ID = "export_load_stress_test"
 DEFAULT_STRESS_LAUNCH_ARGS = {
     "enable_heartbeat": "true",
@@ -406,6 +411,7 @@ class RosHarness:
         self._rclpy = None
         self._rospy = None
         self.node = None
+        self._sensor_qos = None
         self.subscriptions = []
         self.message_types = {}
 
@@ -413,7 +419,8 @@ class RosHarness:
         if self.ros_version == "2":
             try:
                 import rclpy
-                from sensor_msgs.msg import CompressedImage, Image
+                from rclpy.qos import qos_profile_sensor_data
+                from sensor_msgs.msg import CompressedImage, Image, Imu, PointCloud2
             except Exception as exc:  # noqa: BLE001
                 raise RuntimeError(
                     "failed to import ROS2 Python modules. Source ROS2 and camera setup "
@@ -422,12 +429,18 @@ class RosHarness:
                 ) from exc
             rclpy.init(args=None)
             self._rclpy = rclpy
+            self._sensor_qos = qos_profile_sensor_data
             self.node = rclpy.create_node(self.node_name)
-            self.message_types = {"raw": Image, "compressed": CompressedImage}
+            self.message_types = {
+                "raw": Image,
+                "compressed": CompressedImage,
+                "point_cloud": PointCloud2,
+                "imu": Imu,
+            }
         else:
             try:
                 import rospy
-                from sensor_msgs.msg import CompressedImage, Image
+                from sensor_msgs.msg import CompressedImage, Image, Imu, PointCloud2
             except Exception as exc:  # noqa: BLE001
                 raise RuntimeError(
                     "failed to import ROS1 Python modules. Source ROS1 and camera setup "
@@ -436,7 +449,12 @@ class RosHarness:
                 ) from exc
             rospy.init_node(self.node_name, anonymous=True, disable_signals=True)
             self._rospy = rospy
-            self.message_types = {"raw": Image, "compressed": CompressedImage}
+            self.message_types = {
+                "raw": Image,
+                "compressed": CompressedImage,
+                "point_cloud": PointCloud2,
+                "imu": Imu,
+            }
         return self
 
     def get_topic_names_and_types(self) -> Dict[str, List[str]]:
@@ -471,6 +489,19 @@ class RosHarness:
             sub = self.node.create_subscription(message_type, topic, callback, self.queue_size)
         else:
             sub = self._rospy.Subscriber(topic, message_type, callback, queue_size=self.queue_size)
+        self.subscriptions.append(sub)
+        return sub
+
+    def create_sensor_subscription(self, topic: str, kind: str, callback):
+        message_type = self.message_types[kind]
+        if self.ros_version == "2":
+            sub = self.node.create_subscription(
+                message_type, topic, callback, self._sensor_qos
+            )
+        else:
+            sub = self._rospy.Subscriber(
+                topic, message_type, callback, queue_size=self.queue_size
+            )
         self.subscriptions.append(sub)
         return sub
 
@@ -1063,7 +1094,7 @@ def build_summary(result: Dict[str, Any]) -> str:
         f"- Completed tests: {len(tests)}",
         f"- Failed tests: {len(failed_tests)}",
         f"- Elapsed seconds: {float(result.get('elapsed_seconds', 0.0) or 0.0):.1f}",
-        f"- Images per topic per test: {result.get('save_image_count', 0)}",
+        f"- Visual artifacts per topic per test: {result.get('save_image_count', 0)}",
         "",
         "## Cameras",
         "",
@@ -1073,6 +1104,14 @@ def build_summary(result: Dict[str, Any]) -> str:
     lines.extend(["", "## Config JSON Cycle", ""])
     for path in result.get("config_jsons", []):
         lines.append(f"- {path}")
+    lines.extend(["", "## Point Cloud Topics", ""])
+    lines.extend(f"- {topic}" for topic in result.get("point_cloud_topics", []))
+    if not result.get("point_cloud_topics"):
+        lines.append("- None")
+    lines.extend(["", "## IMU Topics", ""])
+    lines.extend(f"- {topic}" for topic in result.get("imu_topics", []))
+    if not result.get("imu_topics"):
+        lines.append("- None")
     if result.get("manual_confirmation_message"):
         lines.extend(["", "## Manual Confirmation", "", result["manual_confirmation_message"]])
     if result.get("error"):
@@ -1224,6 +1263,12 @@ def run(args) -> int:
         for camera in cameras
         for topic_template in image_topic_templates
     }
+    camera_names = [camera.name for camera in cameras]
+    configured_point_cloud_topics = expand_topic_templates(
+        args.point_cloud_topic, camera_names
+    )
+    configured_imu_topics = expand_topic_templates(args.imu_topic, camera_names)
+    sensor_baseline: Optional[tuple[List[str], List[str], Dict[str, str]]] = None
 
     result: Dict[str, Any] = {
         "status": "passed",
@@ -1238,6 +1283,8 @@ def run(args) -> int:
         "config_jsons": [str(path) for path in config_jsons],
         "cameras": [asdict(camera) for camera in cameras],
         "image_topics": image_topics,
+        "point_cloud_topics": configured_point_cloud_topics,
+        "imu_topics": configured_imu_topics,
         "stable_seconds_required": stable_seconds,
         "stream_timeout_seconds": stream_timeout,
         "max_gap_seconds": max_gap_seconds,
@@ -1259,7 +1306,7 @@ def run(args) -> int:
     else:
         emit(f"monitor topics: {', '.join(image_topics)}")
     if save_image_count > 0:
-        emit(f"save images: {save_image_count} per topic")
+        emit(f"save images and sensor plots: {save_image_count} per topic")
     else:
         emit("save images: disabled")
 
@@ -1293,6 +1340,7 @@ def run(args) -> int:
                     "launches": [],
                     "topics": [],
                     "images": [],
+                    "sensors": [],
                     "exports": [],
                 }
                 current_test = test_payload
@@ -1355,7 +1403,7 @@ def run(args) -> int:
                 if auto_discover_image_topics:
                     image_topics, topic_cameras = discover_image_topics(
                         harness=harness,
-                        camera_names=[camera.name for camera in cameras],
+                        camera_names=camera_names,
                         sessions=sessions,
                         timeout=stream_timeout,
                     )
@@ -1417,6 +1465,41 @@ def run(args) -> int:
                         time.sleep(1.0)
                     break
                 emit(f"{test_name}: {image_message}")
+
+                if sensor_baseline is None:
+                    sensor_baseline = discover_sensor_topics(
+                        harness=harness,
+                        camera_names=camera_names,
+                        point_cloud_topics=configured_point_cloud_topics,
+                        imu_topics=configured_imu_topics,
+                        timeout=stream_timeout,
+                        ensure_running=lambda: [session.assert_running() for session in sessions],
+                    )
+                    result["point_cloud_topics"] = sensor_baseline[0]
+                    result["imu_topics"] = sensor_baseline[1]
+                    emit(
+                        f"sensor baseline: {len(sensor_baseline[0])} point cloud, "
+                        f"{len(sensor_baseline[1])} IMU topic(s)"
+                    )
+                point_cloud_topics, imu_topics, sensor_topic_cameras = sensor_baseline
+                sensor_timeout = max(
+                    save_image_timeout,
+                    2.0 * max(save_image_count, 1) + 5.0,
+                )
+                ok, sensor_snapshot, sensor_message = capture_sensor_artifacts(
+                    harness=harness,
+                    point_cloud_topics=point_cloud_topics,
+                    imu_topics=imu_topics,
+                    topic_cameras=sensor_topic_cameras,
+                    output_root=results_dir / "images",
+                    save_count=save_image_count,
+                    timeout=sensor_timeout,
+                    ensure_running=lambda: [session.assert_running() for session in sessions],
+                )
+                test_payload["sensors"] = sensor_snapshot
+                if not ok:
+                    raise RuntimeError(sensor_message)
+                emit(f"{test_name}: {sensor_message}")
 
                 emit(f"{test_name}: streams stable, export and compare JSON")
                 camera_results = []
@@ -1591,6 +1674,24 @@ def parse_args(argv=None):
             "When omitted, all published image streams under each camera are discovered."
         ),
     )
+    parser.add_argument(
+        "--point-cloud-topic",
+        action="append",
+        default=[],
+        help=(
+            "PointCloud2 topic template to require, supports {camera}; can repeat. "
+            "When omitted, published point cloud topics are discovered on the first test."
+        ),
+    )
+    parser.add_argument(
+        "--imu-topic",
+        action="append",
+        default=[],
+        help=(
+            "Imu topic template to require, supports {camera}; can repeat. "
+            "When omitted, published IMU topics are discovered on the first test."
+        ),
+    )
     parser.add_argument("--stable-seconds", default="5")
     parser.add_argument("--stream-timeout", default="60")
     parser.add_argument("--max-gap-seconds", default="1.5")
@@ -1605,7 +1706,10 @@ def parse_args(argv=None):
         "--save-image-count",
         type=int,
         default=1,
-        help="Images to save per image topic for each test; use 0 to disable",
+        help=(
+            "PNG artifacts to save per image, point cloud, and IMU topic for each "
+            "test; use 0 to disable saving while keeping stream validation"
+        ),
     )
     parser.add_argument("--save-image-timeout", default="30", help="Max wait time for image saving")
     parser.add_argument("--export-service", default="/{camera}/export_config_json")

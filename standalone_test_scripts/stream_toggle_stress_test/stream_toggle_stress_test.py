@@ -26,11 +26,16 @@ from _test_protocol import (
     parse_camera,
     test_environment_markdown,
 )
+from _sensor_artifacts import (
+    capture_sensor_artifacts,
+    discover_sensor_topics,
+    expand_topic_templates,
+)
 
 
 ENV_READY_VAR = "STREAM_TOGGLE_STRESS_TEST_ENV_READY"
 INTERRUPTED = False
-TOOL_VERSION = "1.5"
+TOOL_VERSION = "1.6"
 TEST_ID = "stream_toggle_stress_test"
 DEFAULT_STRESS_LAUNCH_ARGS = {
     "enable_heartbeat": "true",
@@ -554,6 +559,8 @@ class RosHarness:
         self._rospy = None
         self._image_type = None
         self._compressed_image_type = None
+        self._point_cloud_type = None
+        self._imu_type = None
         self._set_bool_type = None
         self._set_stream_profile_type = None
         self._set_stream_profile_request_type = None
@@ -568,7 +575,7 @@ class RosHarness:
             try:
                 import rclpy
                 from rclpy.qos import qos_profile_sensor_data
-                from sensor_msgs.msg import CompressedImage, Image
+                from sensor_msgs.msg import CompressedImage, Image, Imu, PointCloud2
                 from std_srvs.srv import SetBool
             except Exception as exc:  # noqa: BLE001
                 raise RuntimeError(
@@ -581,6 +588,8 @@ class RosHarness:
             self.node = rclpy.create_node(self.node_name)
             self._image_type = Image
             self._compressed_image_type = CompressedImage
+            self._point_cloud_type = PointCloud2
+            self._imu_type = Imu
             self._set_bool_type = SetBool
             self._sensor_qos = qos_profile_sensor_data
             if self.enable_profile_switch:
@@ -599,7 +608,7 @@ class RosHarness:
             try:
                 import rosservice
                 import rospy
-                from sensor_msgs.msg import CompressedImage, Image
+                from sensor_msgs.msg import CompressedImage, Image, Imu, PointCloud2
                 from std_srvs.srv import SetBool
             except Exception as exc:  # noqa: BLE001
                 raise RuntimeError(
@@ -612,6 +621,8 @@ class RosHarness:
             self._rosservice = rosservice
             self._image_type = Image
             self._compressed_image_type = CompressedImage
+            self._point_cloud_type = PointCloud2
+            self._imu_type = Imu
             self._set_bool_type = SetBool
             if self.enable_profile_switch:
                 try:
@@ -658,6 +669,19 @@ class RosHarness:
         message_type = (
             self._compressed_image_type if topic_kind == "compressed" else self._image_type
         )
+        if self.ros_version == "2":
+            subscription = self.node.create_subscription(
+                message_type, topic, callback, self._sensor_qos
+            )
+        else:
+            subscription = self._rospy.Subscriber(
+                topic, message_type, callback, queue_size=self.queue_size
+            )
+        self.subscriptions.append(subscription)
+        return subscription
+
+    def create_sensor_subscription(self, topic: str, kind: str, callback):
+        message_type = self._point_cloud_type if kind == "point_cloud" else self._imu_type
         if self.ros_version == "2":
             subscription = self.node.create_subscription(
                 message_type, topic, callback, self._sensor_qos
@@ -1842,6 +1866,7 @@ def build_summary(result: Dict[str, Any]) -> str:
         f"- Completed stream operations: {result.get('completed_operations', 0)}",
         f"- Service retry warnings: {len(result.get('warnings', []))}",
         f"- Saved images: {result.get('saved_image_count', 0)}",
+        f"- Saved point cloud/IMU plots: {result.get('saved_sensor_plot_count', 0)}",
         f"- Elapsed seconds: {float(result.get('elapsed_seconds', 0.0) or 0.0):.1f}",
         "",
         "## Target Streams",
@@ -1852,6 +1877,14 @@ def build_summary(result: Dict[str, Any]) -> str:
         for target in targets:
             lines.append(f"- `{target.get('topic', '')}` → `{target.get('service', '')}`")
     else:
+        lines.append("- None")
+    lines.extend(["", "## Point Cloud Topics", ""])
+    lines.extend(f"- `{topic}`" for topic in result.get("point_cloud_topics", []))
+    if not result.get("point_cloud_topics"):
+        lines.append("- None")
+    lines.extend(["", "## IMU Topics", ""])
+    lines.extend(f"- `{topic}`" for topic in result.get("imu_topics", []))
+    if not result.get("imu_topics"):
         lines.append("- None")
     skipped = result.get("skipped_image_topics", [])
     if skipped:
@@ -2078,6 +2111,10 @@ def run(args) -> int:
         "topic_mode": "manual" if config["explicit_topics"] else "auto",
         "requested_image_topics": config["explicit_topics"],
         "requested_save_image_topics": config["save_image_topics"],
+        "requested_point_cloud_topics": list(args.point_cloud_topic),
+        "requested_imu_topics": list(args.imu_topic),
+        "point_cloud_topics": [],
+        "imu_topics": [],
         "save_image_topics": [],
         "targets": [],
         "stream_groups": [],
@@ -2087,6 +2124,7 @@ def run(args) -> int:
         "completed_cycles": 0,
         "completed_operations": 0,
         "saved_image_count": 0,
+        "saved_sensor_plot_count": 0,
         "warnings": [],
         "cycles": [],
         "elapsed_seconds": 0.0,
@@ -2193,6 +2231,52 @@ def run(args) -> int:
                 max_gap_seconds=config["max_gap"],
                 timeout=config["stream_timeout"],
             )
+            camera_names = sorted({target.camera_name for target in targets})
+            configured_point_cloud_topics = expand_topic_templates(
+                args.point_cloud_topic, camera_names
+            )
+            configured_imu_topics = expand_topic_templates(
+                args.imu_topic, camera_names
+            )
+            point_cloud_topics, imu_topics, sensor_topic_cameras = (
+                discover_sensor_topics(
+                    harness=harness,
+                    camera_names=camera_names,
+                    point_cloud_topics=configured_point_cloud_topics,
+                    imu_topics=configured_imu_topics,
+                    timeout=config["discovery_timeout"],
+                    ensure_running=session.assert_running,
+                    settle_seconds=config["discovery_settle"],
+                )
+            )
+            result["point_cloud_topics"] = point_cloud_topics
+            result["imu_topics"] = imu_topics
+            emit(
+                f"sensor baseline: {len(point_cloud_topics)} point cloud, "
+                f"{len(imu_topics)} IMU topic(s)"
+            )
+
+            def capture_on_state_sensors():
+                sensor_timeout = max(
+                    config["save_image_timeout"],
+                    2.0 * max(args.save_image_count, 1) + 5.0,
+                )
+                ok, snapshot, message = capture_sensor_artifacts(
+                    harness=harness,
+                    point_cloud_topics=point_cloud_topics,
+                    imu_topics=imu_topics,
+                    topic_cameras=sensor_topic_cameras,
+                    output_root=results_dir / "images",
+                    save_count=args.save_image_count,
+                    timeout=sensor_timeout,
+                    ensure_running=session.assert_running,
+                )
+                if not ok:
+                    raise StreamVerificationError(message, {"sensors": snapshot})
+                result["saved_sensor_plot_count"] += sum(
+                    len(row.get("files", [])) for row in snapshot
+                )
+                return snapshot
             profile_sequence = ("A", "B")
             if config["profile_switch_enabled"]:
                 initial_a = evaluate_profile_state(
@@ -2291,6 +2375,7 @@ def run(args) -> int:
                         "disable_services": [],
                         "enable_services": [],
                         "images": [],
+                        "sensors": [],
                     }
                     cycle["operations"].append(operation)
                     groups_may_be_disabled = True
@@ -2397,6 +2482,7 @@ def run(args) -> int:
                                 )
                                 operation["images"].extend(images)
                                 result["saved_image_count"] += len(images)
+                        operation["sensors"] = capture_on_state_sensors()
                         operation["status"] = "passed"
                         result["completed_operations"] += len(targets)
                         emit(
@@ -2466,6 +2552,7 @@ def run(args) -> int:
                         "started_at": iso_now(),
                         "ended_at": "",
                         "images": [],
+                        "sensors": [],
                     }
                     cycle["operations"].append(operation)
                     target_may_be_disabled = True
@@ -2568,6 +2655,7 @@ def run(args) -> int:
                                 timeout=config["save_image_timeout"],
                             )
                             result["saved_image_count"] += len(operation["images"])
+                        operation["sensors"] = capture_on_state_sensors()
                         operation["status"] = "passed"
                         result["completed_operations"] += 1
                         emit(
@@ -2676,6 +2764,7 @@ def run(args) -> int:
                 "completed_operations": result["completed_operations"],
                 "warning_count": len(result["warnings"]),
                 "saved_image_count": result["saved_image_count"],
+                "saved_sensor_plot_count": result["saved_sensor_plot_count"],
             },
             artifacts=artifact_list(results_dir),
         )
@@ -2756,6 +2845,24 @@ def parse_args(argv: Optional[Sequence[str]] = None):
         ),
     )
     parser.add_argument(
+        "--point-cloud-topic",
+        action="append",
+        default=[],
+        help=(
+            "PointCloud2 topic to require during each enabled state; can repeat and "
+            "supports {camera}. When omitted, topics are discovered before cycling."
+        ),
+    )
+    parser.add_argument(
+        "--imu-topic",
+        action="append",
+        default=[],
+        help=(
+            "Imu topic to require during each enabled state; can repeat and supports "
+            "{camera}. When omitted, topics are discovered before cycling."
+        ),
+    )
+    parser.add_argument(
         "--toggle-mode",
         choices=("individual", "all"),
         default="individual",
@@ -2821,7 +2928,15 @@ def parse_args(argv: Optional[Sequence[str]] = None):
         default="0.15",
         help="Allowed measured FPS deviation ratio for profile verification (0-1)",
     )
-    parser.add_argument("--save-image-count", type=int, default=1)
+    parser.add_argument(
+        "--save-image-count",
+        type=int,
+        default=1,
+        help=(
+            "PNG artifacts per image, point cloud, and IMU topic for each enabled "
+            "state; 0 keeps validation but disables saving"
+        ),
+    )
     parser.add_argument("--save-image-timeout", default="30")
     parser.add_argument("--queue-size", type=int, default=10)
     parser.add_argument("--results-dir", default="")

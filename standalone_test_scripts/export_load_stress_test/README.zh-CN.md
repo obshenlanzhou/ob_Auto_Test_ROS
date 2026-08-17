@@ -62,8 +62,10 @@ python3 ./export_load_stress_test/export_load_stress_test.py \
 | `--run-count` | 空 | 导入导出最大轮次数 |
 | `--duration` | 空 | 可选的最长运行时间；任一已配置上限先达到即结束 |
 | `--sdk-log-level` | `debug` | Orbbec SDK 日志级别 |
-| `--save-image-count` | `1` | 每轮每个 topic 保存的图片数（`0` = 不存图） |
+| `--save-image-count` | `1` | 每轮每个图像、点云和 IMU topic 的 PNG 产物数（`0` = 仅检测） |
 | `--image-topic` | 自动发现 | 指定后只监控并保存这些 `Image` 或 `CompressedImage` topic，可重复传入 |
+| `--point-cloud-topic` | 首轮自动发现 | 强制要求的 `PointCloud2` topic，可重复传入并支持 `{camera}` |
+| `--imu-topic` | 首轮自动发现 | 强制要求的 `Imu` topic，可重复传入并支持 `{camera}` |
 | `--config-json` | 见配置文件 | 交替使用的 JSON 文件，可重复传入 |
 
 `--run-count` 和 `--duration` 至少传入一个，也可以同时传入；同时传入时，任一条件先达到即结束。
@@ -80,6 +82,11 @@ python3 ./export_load_stress_test/export_load_stress_test.py \
 `sensor_msgs/Image` 以像素值无损的 PNG 保存（固定无损压缩级别 1），16 位深度值保持不变；
 `sensor_msgs/CompressedImage` 不解码、不校验，直接将消息 `data` 原始字节保存为 `.jpg`。
 自动发现只选择 `Image`；压缩话题必须通过 `--image-topic` 显式指定。
+
+首次成功启动时，会自动发现各相机命名空间下的 `PointCloud2` 和 `Imu`
+话题并固定为后续轮次的必检基线；显式传入的话题从首轮起强制要求。
+点云生成带 RGB 或深度着色的 XY/XZ/YZ 三视图；IMU 每张曲线至少采集
+2 秒和 10 条有效消息。`--save-image-count 0` 仍执行出流检测。
 
 ### 配置文件
 
@@ -110,6 +117,8 @@ export_load_stress_test/results/YYYYMMDD_HHMMSS_export_load/
 │   ├── camera_01/color/image_0001.png
 │   ├── camera_01/color/image_0002.jpg
 │   ├── camera_01/depth/image_0001.png
+│   ├── camera_01/point_cloud_depth/image_0001.png
+│   ├── camera_01/imu_accel/image_0001.png
 │   └── camera_02/ir_left/image_0001.png
 ├── exports/         # 每次压测/每台相机的导出 JSON 和失败 diff
 ├── logs/test_XXXX/<camera>/<camera>.launch.log  # 每轮 ROS launch 日志

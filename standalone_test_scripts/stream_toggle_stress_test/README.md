@@ -109,16 +109,24 @@ decode or validate compressed data; it writes `CompressedImage.data` directly to
 | `--camera` | empty | Single-camera launch arguments; at most one |
 | `--image-topic` | auto-discovered | Raw image stream to test; repeatable |
 | `--save-image-topic` | target raw topics | Image source to save; repeatable |
+| `--point-cloud-topic` | pre-cycle discovery | Required `PointCloud2` topic during each enabled state; repeatable, supports `{camera}` |
+| `--imu-topic` | pre-cycle discovery | Required `Imu` topic during each enabled state; repeatable, supports `{camera}` |
 | `--toggle-mode` | `individual` | `individual` per-stream; `all` all streams |
 | `--switch-stream-profile` | `0` | Set to `1` to alternate A/B stream profiles |
 | `--stream-off-seconds` | `4` | Off-state dwell and verification time in seconds |
 | `--stream-on-preview-seconds` | `4` | Preview and verification time after enabling |
-| `--save-image-count` | `1` | Files per save topic per cycle; `0` disables saving |
+| `--save-image-count` | `1` | PNG artifacts per image, point-cloud, and IMU topic; `0` keeps validation only |
 | `--run-count` | empty | Maximum completed cycles |
 | `--duration` | empty | Maximum duration; supports `15m` and `2h` |
 
 At least one of `--run-count` and `--duration` is required. Both may be supplied; the first limit
 reached stops the test.
+
+Point-cloud and IMU topics are discovered once before cycling and then checked
+after every stream-on recovery. Their off-state behavior is intentionally not
+asserted because point clouds depend on depth while IMU streams may remain
+independent. Point-cloud PNGs contain XY/XZ/YZ views; IMU PNGs contain adaptive
+acceleration and angular-velocity plots.
 
 ## Result files
 
@@ -128,7 +136,7 @@ Each run creates:
 stream_toggle_stress_test/results/YYYYMMDD_HHMMSS_stream_toggle/
 ├── logs/camera.launch.log     # ROS launch log
 ├── logs/sdk/                  # SDK logs
-├── images/                    # Raw PNG and original compressed JPG files
+├── images/                    # Raw images, point-cloud previews, and IMU plots
 ├── summary.md                 # Test summary
 ├── events.jsonl               # Structured run events
 └── result.json                # Per-cycle, per-stream, and image results

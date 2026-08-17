@@ -25,6 +25,11 @@ from _test_protocol import (
     parse_camera,
     test_environment_markdown,
 )
+from _sensor_artifacts import (
+    capture_sensor_artifacts,
+    discover_sensor_topics,
+    expand_topic_templates,
+)
 
 try:
     import yaml
@@ -37,7 +42,7 @@ else:
 
 ENV_READY_VAR = "LAUNCH_PARAM_LOAD_STRESS_ENV_READY"
 INTERRUPTED = False
-TOOL_VERSION = "1.4"
+TOOL_VERSION = "1.6"
 TEST_ID = "launch_param_load_stress"
 DEFAULT_STRESS_LAUNCH_ARGS = {
     "enable_heartbeat": "true",
@@ -759,6 +764,7 @@ class RosImageHarness:
         self._rclpy = None
         self._rospy = None
         self.node = None
+        self._sensor_qos = None
         self.subscriptions: list = []
         self.message_types = {}
 
@@ -766,7 +772,8 @@ class RosImageHarness:
         if self.ros_version == "2":
             try:
                 import rclpy
-                from sensor_msgs.msg import CompressedImage, Image
+                from rclpy.qos import qos_profile_sensor_data
+                from sensor_msgs.msg import CompressedImage, Image, Imu, PointCloud2
             except Exception as exc:  # noqa: BLE001
                 raise RuntimeError(
                     "failed to import ROS2 Python modules. Source ROS2 and camera setup "
@@ -775,21 +782,33 @@ class RosImageHarness:
                 ) from exc
             rclpy.init(args=None)
             self._rclpy = rclpy
+            self._sensor_qos = qos_profile_sensor_data
             self.node = rclpy.create_node(self.node_name)
-            self.message_types = {"raw": Image, "compressed": CompressedImage}
+            self.message_types = {
+                "raw": Image,
+                "compressed": CompressedImage,
+                "point_cloud": PointCloud2,
+                "imu": Imu,
+            }
         else:
             try:
                 import rospy
-                from sensor_msgs.msg import CompressedImage, Image
+                from sensor_msgs.msg import CompressedImage, Image, Imu, PointCloud2
             except Exception as exc:  # noqa: BLE001
                 raise RuntimeError(
                     "failed to import ROS1 Python modules. Source ROS1 and camera setup "
                     "before running, or pass --ros-setup/--driver-setup. "
                     f"Original error: {exc}"
                 ) from exc
-            rospy.init_node(self.node_name, anonymous=True, disable_signals=True)
+            if not rospy.core.is_initialized():
+                rospy.init_node(self.node_name, anonymous=True, disable_signals=True)
             self._rospy = rospy
-            self.message_types = {"raw": Image, "compressed": CompressedImage}
+            self.message_types = {
+                "raw": Image,
+                "compressed": CompressedImage,
+                "point_cloud": PointCloud2,
+                "imu": Imu,
+            }
         return self
 
     def resolve_image_topic_kind(self, topic: str) -> str:
@@ -812,6 +831,27 @@ class RosImageHarness:
             sub = self._rospy.Subscriber(topic, message_type, callback, queue_size=self.queue_size)
         self.subscriptions.append(sub)
         return sub
+
+    def create_sensor_subscription(self, topic: str, kind: str, callback):
+        message_type = self.message_types[kind]
+        if self.ros_version == "2":
+            sub = self.node.create_subscription(
+                message_type, topic, callback, self._sensor_qos
+            )
+        else:
+            sub = self._rospy.Subscriber(
+                topic, message_type, callback, queue_size=self.queue_size
+            )
+        self.subscriptions.append(sub)
+        return sub
+
+    def destroy_subscription(self, subscription) -> None:
+        if self.ros_version == "2":
+            self.node.destroy_subscription(subscription)
+        else:
+            subscription.unregister()
+        if subscription in self.subscriptions:
+            self.subscriptions.remove(subscription)
 
     def get_topic_names_and_types(self) -> Dict[str, List[str]]:
         if self.ros_version == "2":
@@ -1248,6 +1288,11 @@ def build_summary(result: Dict[str, Any]) -> str:
         f"- Runs: {runs_passed}/{len(runs)} completed runs passed",
         "",
     ]
+    lines += ["## Point Cloud Topics", ""]
+    lines += [f"- {topic}" for topic in result.get("point_cloud_topics", [])] or ["- None"]
+    lines += ["", "## IMU Topics", ""]
+    lines += [f"- {topic}" for topic in result.get("imu_topics", [])] or ["- None"]
+    lines.append("")
     notes = result.get("notes", [])
     if notes:
         lines += ["## Notes", ""]
@@ -1264,6 +1309,16 @@ def build_summary(result: Dict[str, Any]) -> str:
         for cam in run.get("cameras", []):
             lines += _summary_camera_section(cam)
             lines.append("")
+        if run.get("sensors"):
+            lines += [
+                "### Point Cloud and IMU Checks",
+                "",
+                *format_table(
+                    run["sensors"],
+                    ["topic", "kind", "message_count", "saved_count", "error"],
+                ),
+                "",
+            ]
     return "\n".join(lines) + "\n"
 
 
@@ -1406,6 +1461,12 @@ def run(args) -> int:
     )
     save_images_count = args.save_image_count
     image_topic_templates = [topic.strip() for topic in args.image_topic if topic.strip()]
+    camera_names = [camera.name for camera in cameras]
+    configured_point_cloud_topics = expand_topic_templates(
+        args.point_cloud_topic, camera_names
+    )
+    configured_imu_topics = expand_topic_templates(args.imu_topic, camera_names)
+    sensor_baseline: Optional[tuple[List[str], List[str], Dict[str, str]]] = None
 
     run_id = datetime.now().strftime("%Y%m%d_%H%M%S_launch_param_load_stress")
     run_started_at = iso_now()
@@ -1425,6 +1486,8 @@ def run(args) -> int:
         "sdk_log_level": args.sdk_log_level,
         "image_topic_mode": "explicit" if image_topic_templates else "auto-discover",
         "configured_image_topics": image_topic_templates,
+        "point_cloud_topics": configured_point_cloud_topics,
+        "imu_topics": configured_imu_topics,
         "notes": [declaration_note],
         "run_count": run_count,
         "duration_limit_seconds": duration_seconds,
@@ -1467,7 +1530,12 @@ def run(args) -> int:
             )
             test_name = f"test_{run_index:04d}"
             run_dir = ensure_dir(results_dir / test_name)
-            run_result: Dict[str, Any] = {"run": run_index, "status": "failed", "cameras": []}
+            run_result: Dict[str, Any] = {
+                "run": run_index,
+                "status": "failed",
+                "cameras": [],
+                "sensors": [],
+            }
             sessions: List[LaunchSession] = []
             try:
                 # Start all camera launches
@@ -1525,6 +1593,51 @@ def run(args) -> int:
                         emit=emit,
                     )
                     run_result["cameras"].append(cam)
+
+                with RosImageHarness(
+                    args.ros_version,
+                    f"launch_param_sensor_capture_{run_index}",
+                ) as sensor_harness:
+                    if sensor_baseline is None:
+                        sensor_baseline = discover_sensor_topics(
+                            harness=sensor_harness,
+                            camera_names=camera_names,
+                            point_cloud_topics=configured_point_cloud_topics,
+                            imu_topics=configured_imu_topics,
+                            timeout=topic_timeout,
+                            ensure_running=lambda: [
+                                session.assert_running() for session in sessions
+                            ],
+                        )
+                        result["point_cloud_topics"] = sensor_baseline[0]
+                        result["imu_topics"] = sensor_baseline[1]
+                        emit(
+                            f"sensor baseline: {len(sensor_baseline[0])} point cloud, "
+                            f"{len(sensor_baseline[1])} IMU topic(s)"
+                        )
+                    point_cloud_topics, imu_topics, sensor_topic_cameras = sensor_baseline
+                    sensor_timeout = max(
+                        topic_timeout,
+                        2.0 * max(save_images_count, 1) + 5.0,
+                    )
+                    sensor_ok, sensor_snapshot, sensor_message = (
+                        capture_sensor_artifacts(
+                            harness=sensor_harness,
+                            point_cloud_topics=point_cloud_topics,
+                            imu_topics=imu_topics,
+                            topic_cameras=sensor_topic_cameras,
+                            output_root=results_dir / "images",
+                            save_count=save_images_count,
+                            timeout=sensor_timeout,
+                            ensure_running=lambda: [
+                                session.assert_running() for session in sessions
+                            ],
+                        )
+                    )
+                    run_result["sensors"] = sensor_snapshot
+                    if not sensor_ok:
+                        raise RuntimeError(sensor_message)
+                    emit(sensor_message)
 
                 failed = any(
                     status_has_failure(cam[k])
@@ -1677,11 +1790,32 @@ def parse_args(argv=None):
         ),
     )
     parser.add_argument(
+        "--point-cloud-topic",
+        action="append",
+        default=[],
+        help=(
+            "PointCloud2 topic template to require; can repeat and supports {camera}. "
+            "When omitted, point cloud topics are discovered on the first run."
+        ),
+    )
+    parser.add_argument(
+        "--imu-topic",
+        action="append",
+        default=[],
+        help=(
+            "Imu topic template to require; can repeat and supports {camera}. "
+            "When omitted, IMU topics are discovered on the first run."
+        ),
+    )
+    parser.add_argument(
         "--save-image-count",
         type=int,
         default=1,
         metavar="N",
-        help="Save N images per selected stream topic per camera (0 = disabled)",
+        help=(
+            "Save N PNG artifacts per image, point cloud, and IMU topic per run "
+            "(0 = validation only)"
+        ),
     )
     parser.add_argument(
         "--version",

@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shlex
 import signal
 import subprocess
@@ -24,6 +25,11 @@ from _test_protocol import (
     parse_camera,
     test_environment_markdown,
 )
+from _sensor_artifacts import (
+    capture_sensor_artifacts,
+    discover_sensor_topics,
+    expand_topic_templates,
+)
 
 DEFAULT_CAMERA_LAUNCH = {
     ("2", "gemini_301"): "gemini_301_series.launch.py",
@@ -33,7 +39,7 @@ DEFAULT_CAMERA_LAUNCH = {
 }
 ENV_READY_VAR = "LAUNCH_RESTART_STREAM_CHECK_ENV_READY"
 INTERRUPTED = False
-TOOL_VERSION = "1.1"
+TOOL_VERSION = "1.2"
 TEST_ID = "launch_restart_stream_check"
 DEFAULT_STRESS_LAUNCH_ARGS = {
     "enable_heartbeat": "true",
@@ -301,6 +307,7 @@ class RosImageHarness:
         self._rclpy = None
         self._rospy = None
         self.node = None
+        self._sensor_qos = None
         self.subscriptions = []
         self.message_types = {}
 
@@ -308,7 +315,8 @@ class RosImageHarness:
         if self.ros_version == "2":
             try:
                 import rclpy
-                from sensor_msgs.msg import CompressedImage, Image
+                from rclpy.qos import qos_profile_sensor_data
+                from sensor_msgs.msg import CompressedImage, Image, Imu, PointCloud2
             except Exception as exc:  # noqa: BLE001
                 raise RuntimeError(
                     "failed to import ROS2 Python modules. Source ROS2 and camera setup "
@@ -317,12 +325,18 @@ class RosImageHarness:
                 ) from exc
             rclpy.init(args=None)
             self._rclpy = rclpy
+            self._sensor_qos = qos_profile_sensor_data
             self.node = rclpy.create_node(self.node_name)
-            self.message_types = {"raw": Image, "compressed": CompressedImage}
+            self.message_types = {
+                "raw": Image,
+                "compressed": CompressedImage,
+                "point_cloud": PointCloud2,
+                "imu": Imu,
+            }
         else:
             try:
                 import rospy
-                from sensor_msgs.msg import CompressedImage, Image
+                from sensor_msgs.msg import CompressedImage, Image, Imu, PointCloud2
             except Exception as exc:  # noqa: BLE001
                 raise RuntimeError(
                     "failed to import ROS1 Python modules. Source ROS1 and camera setup "
@@ -331,7 +345,12 @@ class RosImageHarness:
                 ) from exc
             rospy.init_node(self.node_name, anonymous=True, disable_signals=True)
             self._rospy = rospy
-            self.message_types = {"raw": Image, "compressed": CompressedImage}
+            self.message_types = {
+                "raw": Image,
+                "compressed": CompressedImage,
+                "point_cloud": PointCloud2,
+                "imu": Imu,
+            }
         return self
 
     def get_topic_names_and_types(self) -> Dict[str, List[str]]:
@@ -366,6 +385,19 @@ class RosImageHarness:
             sub = self.node.create_subscription(message_type, topic, callback, self.queue_size)
         else:
             sub = self._rospy.Subscriber(topic, message_type, callback, queue_size=self.queue_size)
+        self.subscriptions.append(sub)
+        return sub
+
+    def create_sensor_subscription(self, topic: str, kind: str, callback):
+        message_type = self.message_types[kind]
+        if self.ros_version == "2":
+            sub = self.node.create_subscription(
+                message_type, topic, callback, self._sensor_qos
+            )
+        else:
+            sub = self._rospy.Subscriber(
+                topic, message_type, callback, queue_size=self.queue_size
+            )
         self.subscriptions.append(sub)
         return sub
 
@@ -551,6 +583,172 @@ def discover_image_topics(
     raise RuntimeError(f"no sensor_msgs/Image topics discovered within {timeout:.1f}s")
 
 
+STREAM_DIRECTORY_NAMES = {
+    "color": "color",
+    "depth": "depth",
+    "ir": "ir",
+    "left_ir": "ir_left",
+    "right_ir": "ir_right",
+    "left_color": "color_left",
+    "right_color": "color_right",
+}
+IMAGE_FILE_PATTERN = re.compile(r"^image_(\d+)\.(?:png|jpg)$", re.IGNORECASE)
+
+
+def _image_topic_parts(topic: str) -> tuple[str, str]:
+    parts = [part for part in topic.strip().split("/") if part]
+    for index, part in enumerate(parts):
+        if part in STREAM_DIRECTORY_NAMES:
+            camera_name = parts[index - 1] if index > 0 else "unknown_camera"
+            return camera_name, STREAM_DIRECTORY_NAMES[part]
+    return (parts[0] if parts else "unknown_camera", parts[-1] if parts else "image")
+
+
+class ImagePathSequence:
+    def __init__(self, output_root: Path) -> None:
+        self.output_root = output_root
+        self._next_indices: Dict[tuple[str, str], int] = {}
+
+    def next_path(self, topic: str, suffix: str) -> Path:
+        camera_name, stream_name = _image_topic_parts(topic)
+        key = (camera_name, stream_name)
+        stream_dir = ensure_dir(self.output_root / camera_name / stream_name)
+        next_index = self._next_indices.get(key)
+        if next_index is None:
+            indices = [
+                int(match.group(1))
+                for path in stream_dir.iterdir()
+                if path.is_file() and (match := IMAGE_FILE_PATTERN.match(path.name))
+            ]
+            next_index = max(indices, default=0) + 1
+        target = stream_dir / f"image_{next_index:04d}{suffix}"
+        while target.exists():
+            next_index += 1
+            target = stream_dir / f"image_{next_index:04d}{suffix}"
+        self._next_indices[key] = next_index + 1
+        return target
+
+
+class ImageSaver:
+    def __init__(
+        self,
+        harness: RosImageHarness,
+        topics: List[str],
+        output_root: Path,
+        count: int,
+    ) -> None:
+        self.harness = harness
+        self.count = count
+        self.paths = ImagePathSequence(output_root)
+        self.state: Dict[str, Dict[str, Any]] = {}
+        self.subscriptions = []
+        self._bridge = None
+        self._cv2 = None
+        for topic in topics:
+            topic_kind = harness.resolve_image_topic_kind(topic)
+            self.state[topic] = {"topic_kind": topic_kind, "files": [], "error": ""}
+            self.subscriptions.append(
+                harness.create_image_subscription(
+                    topic,
+                    lambda message, topic_name=topic: self._on_message(
+                        topic_name, message
+                    ),
+                    topic_kind=topic_kind,
+                )
+            )
+
+    def _write(self, topic: str, message: Any, target: Path) -> None:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if self.state[topic]["topic_kind"] == "compressed":
+            target.write_bytes(bytes(getattr(message, "data", b"") or b""))
+            return
+        if self._bridge is None:
+            try:
+                import cv2
+                from cv_bridge import CvBridge
+            except Exception as exc:  # noqa: BLE001
+                raise RuntimeError(
+                    "saving raw images requires cv_bridge and OpenCV; set "
+                    f"--save-image-count 0 to disable saving: {exc}"
+                ) from exc
+            self._bridge = CvBridge()
+            self._cv2 = cv2
+        encoding = str(getattr(message, "encoding", "") or "")
+        image = self._bridge.imgmsg_to_cv2(message, desired_encoding="passthrough")
+        if encoding.lower() == "rgb8":
+            image = self._cv2.cvtColor(image, self._cv2.COLOR_RGB2BGR)
+        elif encoding.lower() == "rgba8":
+            image = self._cv2.cvtColor(image, self._cv2.COLOR_RGBA2BGRA)
+        if not self._cv2.imwrite(
+            str(target), image, [int(self._cv2.IMWRITE_PNG_COMPRESSION), 1]
+        ):
+            raise RuntimeError(f"failed to write PNG image: {target}")
+
+    def _on_message(self, topic: str, message: Any) -> None:
+        item = self.state[topic]
+        if len(item["files"]) >= self.count or item["error"]:
+            return
+        try:
+            suffix = ".jpg" if item["topic_kind"] == "compressed" else ".png"
+            target = self.paths.next_path(topic, suffix)
+            self._write(topic, message, target)
+            item["files"].append(str(target))
+        except Exception as exc:  # noqa: BLE001
+            item["error"] = str(exc)
+
+    def complete(self) -> bool:
+        return all(len(item["files"]) >= self.count for item in self.state.values())
+
+    def snapshot(self) -> List[Dict[str, Any]]:
+        return [
+            {
+                "topic": topic,
+                "topic_kind": item["topic_kind"],
+                "files": list(item["files"]),
+                "saved_count": len(item["files"]),
+                "expected_count": self.count,
+                "error": item["error"],
+            }
+            for topic, item in self.state.items()
+        ]
+
+    def close(self) -> None:
+        for subscription in list(self.subscriptions):
+            self.harness.destroy_subscription(subscription)
+        self.subscriptions = []
+
+
+def save_images(
+    *,
+    session: LaunchSession,
+    harness: RosImageHarness,
+    topics: List[str],
+    output_root: Path,
+    count: int,
+    timeout: float,
+) -> tuple[bool, List[Dict[str, Any]], str]:
+    if count <= 0:
+        return True, [], "image saving disabled"
+    saver = ImageSaver(harness, topics, output_root, count)
+    deadline = time.monotonic() + timeout
+    try:
+        while time.monotonic() < deadline:
+            session.assert_running()
+            harness.spin_once(0.1)
+            error = next(
+                (item["error"] for item in saver.state.values() if item["error"]),
+                "",
+            )
+            if error:
+                return False, saver.snapshot(), error
+            if saver.complete():
+                snapshot = saver.snapshot()
+                return True, snapshot, f"saved {sum(len(row['files']) for row in snapshot)} image file(s)"
+        return False, saver.snapshot(), f"image saving timed out after {timeout:.1f}s"
+    finally:
+        saver.close()
+
+
 def expand_camera_topic(topic: str, camera_name: str) -> str:
     return topic.replace("{camera}", camera_name).replace("${camera}", camera_name)
 
@@ -575,6 +773,7 @@ def build_summary(result: Dict[str, Any]) -> str:
         f"- Tool version: {result.get('tool_version', '')}",
         f"- Successful restarts: {result.get('successful_restarts', 0)}",
         f"- Launch attempts: {result.get('launch_attempts', 0)}",
+        f"- Visual artifacts per topic per restart: {result.get('save_image_count', 0)}",
         f"- Elapsed seconds: {float(result.get('elapsed_seconds', 0.0) or 0.0):.1f}",
         "",
         "## Monitored Streams",
@@ -583,6 +782,14 @@ def build_summary(result: Dict[str, Any]) -> str:
     if topics:
         lines.extend(f"- {topic}" for topic in topics)
     else:
+        lines.append("- None")
+    lines.extend(["", "## Point Cloud Streams", ""])
+    lines.extend(f"- {topic}" for topic in result.get("point_cloud_topics", []))
+    if not result.get("point_cloud_topics"):
+        lines.append("- None")
+    lines.extend(["", "## IMU Streams", ""])
+    lines.extend(f"- {topic}" for topic in result.get("imu_topics", []))
+    if not result.get("imu_topics"):
         lines.append("- None")
     if result.get("manual_confirmation_message"):
         lines.extend(
@@ -660,6 +867,10 @@ def run(args) -> int:
     stream_timeout = parse_duration(args.stream_timeout, 20.0)
     topic_discovery_timeout = parse_duration(args.topic_discovery_timeout, 15.0)
     max_gap_seconds = parse_duration(args.max_gap_seconds, 1.5)
+    save_image_count = int(args.save_image_count)
+    if save_image_count < 0:
+        raise ValueError("--save-image-count must be >= 0")
+    save_image_timeout = parse_duration(args.save_image_timeout, 30.0)
     restart_delay = float(args.restart_delay)
     if run_count is not None and run_count <= 0:
         raise ValueError("--run-count must be > 0")
@@ -689,6 +900,9 @@ def run(args) -> int:
         "topic_mode": "auto" if auto_discover_topics else "manual",
         "image_topics": explicit_topics,
         "discovered_image_topics": [],
+        "point_cloud_topics": [],
+        "imu_topics": [],
+        "save_image_count": save_image_count,
         "duration_seconds": duration_seconds,
         "run_count": run_count,
         "stable_seconds_required": stable_seconds,
@@ -719,6 +933,7 @@ def run(args) -> int:
 
     attempt_index = 0
     monitored_topics = list(explicit_topics)
+    sensor_baseline: Optional[tuple[List[str], List[str], Dict[str, str]]] = None
     test_start_monotonic = time.monotonic()
     active_session: Optional[LaunchSession] = None
     current_attempt: Optional[Dict[str, Any]] = None
@@ -747,6 +962,8 @@ def run(args) -> int:
                     "status": "running",
                     "message": "",
                     "topics": [],
+                    "images": [],
+                    "sensors": [],
                     "started_at": datetime.now().isoformat(timespec="seconds"),
                     "ended_at": "",
                     "stable_seconds": 0.0,
@@ -815,6 +1032,64 @@ def run(args) -> int:
                     while session.poll() is None:
                         time.sleep(1.0)
                     break
+
+                image_ok, image_snapshot, image_message = save_images(
+                    session=session,
+                    harness=harness,
+                    topics=monitored_topics,
+                    output_root=results_dir / "images",
+                    count=save_image_count,
+                    timeout=save_image_timeout,
+                )
+                attempt["images"] = image_snapshot
+                if not image_ok:
+                    raise RuntimeError(image_message)
+
+                if sensor_baseline is None:
+                    camera_names = sorted(
+                        {_image_topic_parts(topic)[0] for topic in monitored_topics}
+                    ) or [template_camera_name]
+                    configured_point_cloud_topics = expand_topic_templates(
+                        args.point_cloud_topic, camera_names
+                    )
+                    configured_imu_topics = expand_topic_templates(
+                        args.imu_topic, camera_names
+                    )
+                    sensor_baseline = discover_sensor_topics(
+                        harness=harness,
+                        camera_names=camera_names,
+                        point_cloud_topics=configured_point_cloud_topics,
+                        imu_topics=configured_imu_topics,
+                        timeout=topic_discovery_timeout,
+                        ensure_running=session.assert_running,
+                    )
+                    result["point_cloud_topics"] = sensor_baseline[0]
+                    result["imu_topics"] = sensor_baseline[1]
+                    emit(
+                        f"sensor baseline: {len(sensor_baseline[0])} point cloud, "
+                        f"{len(sensor_baseline[1])} IMU topic(s)"
+                    )
+                point_cloud_topics, imu_topics, sensor_topic_cameras = sensor_baseline
+                sensor_timeout = max(
+                    save_image_timeout,
+                    2.0 * max(save_image_count, 1) + 5.0,
+                )
+                sensor_ok, sensor_snapshot, sensor_message = capture_sensor_artifacts(
+                    harness=harness,
+                    point_cloud_topics=point_cloud_topics,
+                    imu_topics=imu_topics,
+                    topic_cameras=sensor_topic_cameras,
+                    output_root=results_dir / "images",
+                    save_count=save_image_count,
+                    timeout=sensor_timeout,
+                    ensure_running=session.assert_running,
+                )
+                attempt["sensors"] = sensor_snapshot
+                if not sensor_ok:
+                    raise RuntimeError(sensor_message)
+                attempt["message"] = (
+                    f"{message}; {image_message}; {sensor_message}"
+                )
 
                 attempt["status"] = "passed"
                 attempt["ended_at"] = datetime.now().isoformat(timespec="seconds")
@@ -950,6 +1225,24 @@ def parse_args(argv=None):
         ),
     )
     parser.add_argument(
+        "--point-cloud-topic",
+        action="append",
+        default=[],
+        help=(
+            "PointCloud2 topic template to require after every restart; can repeat and "
+            "supports {camera}. When omitted, topics are discovered on the first launch."
+        ),
+    )
+    parser.add_argument(
+        "--imu-topic",
+        action="append",
+        default=[],
+        help=(
+            "Imu topic template to require after every restart; can repeat and supports "
+            "{camera}. When omitted, topics are discovered on the first launch."
+        ),
+    )
+    parser.add_argument(
         "--topic-discovery-timeout",
         default="15",
         help="Max wait time for auto image topic discovery during the first launch attempt",
@@ -965,6 +1258,20 @@ def parse_args(argv=None):
     parser.add_argument("--stream-timeout", default="20", help="Max wait time for stable stream per launch")
     parser.add_argument("--max-gap-seconds", default="1.5", help="Max allowed receive gap between images")
     parser.add_argument("--restart-delay", default="2", help="Delay seconds between stop and next start")
+    parser.add_argument(
+        "--save-image-count",
+        type=int,
+        default=1,
+        help=(
+            "PNG artifacts per image, point cloud, and IMU topic after every restart; "
+            "0 keeps validation but disables saving"
+        ),
+    )
+    parser.add_argument(
+        "--save-image-timeout",
+        default="30",
+        help="Max wait time for image and sensor artifact capture",
+    )
     parser.add_argument("--queue-size", type=int, default=10)
     parser.add_argument("--results-dir", default="")
     parser.add_argument(

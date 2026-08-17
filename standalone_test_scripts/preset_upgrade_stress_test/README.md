@@ -75,8 +75,10 @@ python3 ./preset_upgrade_stress_test/preset_upgrade_stress_test.py \
 | `--preset-b-name` | `K High Accuracy` | `device_preset` name corresponding to preset B |
 | `--run-count` | empty | Optional maximum number of upgrade cycles |
 | `--duration` | empty | Maximum wall time; supports `300`, `15m`, and `2h` |
-| `--save-image-count` | `1` | Images saved per topic per test (`0` = disabled) |
+| `--save-image-count` | `1` | PNG artifacts per image, point-cloud, and IMU topic per test (`0` = validation only) |
 | `--image-topic` | auto-discovered | Explicit `Image` or `CompressedImage` topic to monitor and save; repeatable, supports `{camera}` |
+| `--point-cloud-topic` | first-test discovery | Required `PointCloud2` topic; repeatable, supports `{camera}` |
+| `--imu-topic` | first-test discovery | Required `Imu` topic; repeatable, supports `{camera}` |
 | `--launch-arg` | — | Extra launch argument (e.g. `enable_left_ir=true`); repeatable |
 | `--launch-start-interval` | `2` | Delay in seconds between starting each camera launch (`0` starts all cameras at once) |
 | `--restart-delay` | `2` | Delay in seconds after launch stops and before switching presets (`0` disables the extra delay) |
@@ -100,6 +102,12 @@ camera namespace is discovered. To restrict the selection, pass
 level 1, preserving 16-bit depth values. `sensor_msgs/CompressedImage` messages are not decoded or validated; their `data` bytes
 are written directly to `.jpg`. Auto-discovery selects only `Image`; compressed topics must be
 specified explicitly.
+
+The first successful preset test discovers `PointCloud2` and `Imu` topics
+and freezes them as the baseline for all later tests. Point clouds are rendered
+as RGB/depth-colored three-view PNGs; each IMU plot contains at least ten valid
+samples over at least two seconds. Explicit sensor topic options are mandatory
+from the first test.
 
 ### Config File
 
@@ -133,6 +141,8 @@ preset_upgrade_stress_test/results/YYYYMMDD_HHMMSS_preset_upgrade/
     ├── camera_01/color/image_0001.png
     ├── camera_01/color/image_0002.jpg
     ├── camera_01/depth/image_0001.png
+    ├── camera_01/point_cloud_depth/image_0001.png
+    ├── camera_01/imu_gyro_accel/image_0001.png
     └── camera_02/ir_left/image_0001.png
 ```
 

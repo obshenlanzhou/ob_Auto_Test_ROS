@@ -72,8 +72,10 @@ python3 ./preset_upgrade_stress_test/preset_upgrade_stress_test.py \
 | `--preset-b-name` | `K High Accuracy` | preset B 对应的 `device_preset` 名称 |
 | `--run-count` | 空 | 可选的升级最大轮次数 |
 | `--duration` | 空 | 最长运行时间，支持 `300`、`15m`、`2h` |
-| `--save-image-count` | `1` | 每轮每个 topic 保存的图片数（`0` = 不存图） |
+| `--save-image-count` | `1` | 每轮每个图像、点云和 IMU topic 的 PNG 产物数（`0` = 仅检测） |
 | `--image-topic` | 自动发现 | 指定后只监控并保存这些 `Image` 或 `CompressedImage` topic，可重复传入并支持 `{camera}` |
+| `--point-cloud-topic` | 首轮自动发现 | 强制要求的 `PointCloud2` topic，可重复传入并支持 `{camera}` |
+| `--imu-topic` | 首轮自动发现 | 强制要求的 `Imu` topic，可重复传入并支持 `{camera}` |
 | `--launch-arg` | — | 额外 launch 参数（如 `enable_left_ir=true`），可重复传入 |
 | `--launch-start-interval` | `2` | 各相机 launch 之间的启动间隔秒数（`0` = 所有相机同时启动） |
 | `--restart-delay` | `2` | launch 关闭后、切换到下一份 preset 前的等待秒数（`0` = 不额外等待） |
@@ -94,6 +96,10 @@ python3 ./preset_upgrade_stress_test/preset_upgrade_stress_test.py \
 `sensor_msgs/Image` 以像素值无损的 PNG 保存（固定无损压缩级别 1），16 位深度值保持不变；
 `sensor_msgs/CompressedImage` 不解码、不校验，直接将消息 `data` 原始字节保存为 `.jpg`。
 自动发现只选择 `Image`，压缩话题必须显式指定。
+
+首次成功的 preset 测试会发现 `PointCloud2` 和 `Imu` 话题，并固定为
+后续测试的必检基线。点云保存 RGB/深度着色三视图，IMU 每张图至少包含
+2 秒和 10 条有效消息；显式传入的话题从首轮起强制要求。
 
 ### 配置文件
 
@@ -127,6 +133,8 @@ preset_upgrade_stress_test/results/YYYYMMDD_HHMMSS_preset_upgrade/
     ├── camera_01/color/image_0001.png
     ├── camera_01/color/image_0002.jpg
     ├── camera_01/depth/image_0001.png
+    ├── camera_01/point_cloud_depth/image_0001.png
+    ├── camera_01/imu_gyro_accel/image_0001.png
     └── camera_02/ir_left/image_0001.png
 ```
 
