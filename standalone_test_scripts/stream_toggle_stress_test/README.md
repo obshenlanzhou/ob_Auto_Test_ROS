@@ -27,6 +27,8 @@ Continue with the next stream → start a new cycle after all targets pass
 All-stream mode stops every target stream, verifies the stopped state, restores all streams, then
 verifies and saves each stream. A failed service call is retried once. A successful retry records a
 warning and continues; a second failure stops the test and attempts to restore the streams.
+If profile verification times out with zero frames on a topic, the tool recreates that ROS
+subscription, records a warning, and verifies once more before failing the test.
 
 ROS 1 supports only the default `individual` mode. The `all` mode is currently ROS 2 only.
 

@@ -674,6 +674,124 @@ def test_toggle_fails_after_exactly_two_attempts():
     assert harness.calls == 2
 
 
+def test_profile_verification_recreates_zero_frame_subscriptions_once(monkeypatch):
+    module = load_script()
+    color_topic = "/camera/color/image_raw"
+    depth_topic = "/camera/depth/image_raw"
+    group = SimpleNamespace(
+        camera_namespace="/camera",
+        service="/camera/set_stream_profile",
+    )
+
+    monkeypatch.setattr(
+        module,
+        "call_profile_with_retry",
+        lambda **_kwargs: {"success": True, "retried": False, "attempts": []},
+    )
+    verification_calls = []
+
+    def wait_for_profile_state(**_kwargs):
+        verification_calls.append(True)
+        if len(verification_calls) == 1:
+            raise module.StreamVerificationError(
+                "timed out",
+                {
+                    "topics": [
+                        {"topic": color_topic, "window_message_count": 0},
+                        {"topic": depth_topic, "window_message_count": 200},
+                    ]
+                },
+            )
+        return {"all_profiles_match": True, "profiles": [], "topics": []}
+
+    monkeypatch.setattr(module, "wait_for_profile_state", wait_for_profile_state)
+
+    class Monitor:
+        def __init__(self):
+            self.reset_count = 0
+            self.recreated = []
+
+        def reset_window(self):
+            self.reset_count += 1
+
+        def recreate_subscriptions(self, topics):
+            self.recreated.append(list(topics))
+
+    monitor = Monitor()
+    warnings = []
+    emitted = []
+    result = module.apply_profile_set(
+        session=object(),
+        harness=object(),
+        monitor=monitor,
+        groups=[group],
+        specs=[],
+        label="B",
+        cycle_index=65,
+        service_timeout=15.0,
+        retry_delay=1.0,
+        stable_seconds=4.0,
+        max_gap_seconds=1.0,
+        stream_timeout=20.0,
+        warnings=warnings,
+        emit=emitted.append,
+    )
+
+    assert len(verification_calls) == 2
+    assert monitor.recreated == [[color_topic]]
+    assert warnings[0]["action"] == "recreate-stream-subscriptions"
+    assert warnings[0]["topics"] == [color_topic]
+    assert "retrying once" in emitted[0]
+    assert result["subscription_recovery"]["attempted"] is True
+
+
+def test_profile_verification_does_not_recreate_when_frames_were_received(monkeypatch):
+    module = load_script()
+    topic = "/camera/color/image_raw"
+    group = SimpleNamespace(
+        camera_namespace="/camera",
+        service="/camera/set_stream_profile",
+    )
+    monkeypatch.setattr(
+        module,
+        "call_profile_with_retry",
+        lambda **_kwargs: {"success": True, "retried": False, "attempts": []},
+    )
+
+    def wait_for_profile_state(**_kwargs):
+        raise module.StreamVerificationError(
+            "timed out",
+            {"topics": [{"topic": topic, "window_message_count": 1}]},
+        )
+
+    monkeypatch.setattr(module, "wait_for_profile_state", wait_for_profile_state)
+
+    class Monitor:
+        def reset_window(self):
+            pass
+
+        def recreate_subscriptions(self, _topics):
+            raise AssertionError("subscription must not be recreated")
+
+    with pytest.raises(module.StreamVerificationError):
+        module.apply_profile_set(
+            session=object(),
+            harness=object(),
+            monitor=Monitor(),
+            groups=[group],
+            specs=[],
+            label="B",
+            cycle_index=65,
+            service_timeout=15.0,
+            retry_delay=1.0,
+            stable_seconds=4.0,
+            max_gap_seconds=1.0,
+            stream_timeout=20.0,
+            warnings=[],
+            emit=lambda _message: None,
+        )
+
+
 def test_all_disabled_state_requires_every_target_to_be_quiet(monkeypatch):
     module = load_script()
 
@@ -864,3 +982,32 @@ def test_stream_monitor_tracks_quiet_stability_and_max_gap(monkeypatch):
     assert monitor.topics_are_stable(
         ["/camera/depth/image_raw"], stable_seconds=2.0, max_gap_seconds=1.5
     )
+
+
+def test_stream_monitor_recreates_only_selected_subscription():
+    module = load_script()
+    color_topic = "/camera/color/image_raw"
+    depth_topic = "/camera/depth/image_raw"
+
+    class Harness:
+        def __init__(self):
+            self.created = []
+            self.destroyed = []
+
+        def create_image_subscription(self, topic, callback):
+            subscription = (topic, len(self.created), callback)
+            self.created.append(subscription)
+            return subscription
+
+        def destroy_subscription(self, subscription):
+            self.destroyed.append(subscription)
+
+    harness = Harness()
+    monitor = module.StreamMonitor(harness, [color_topic, depth_topic])
+    original_color, original_depth = monitor.subscriptions
+
+    monitor.recreate_subscriptions([color_topic])
+
+    assert harness.destroyed == [original_color]
+    assert monitor.subscriptions[0] != original_color
+    assert monitor.subscriptions[1] == original_depth

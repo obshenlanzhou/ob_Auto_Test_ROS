@@ -991,12 +991,36 @@ class StreamMonitor:
             }
             for topic in self.topics
         }
+        self._subscriptions_by_topic = {
+            topic: self._create_subscription(topic) for topic in self.topics
+        }
         self.subscriptions = [
-            harness.create_image_subscription(
-                topic, lambda message, name=topic: self._on_message(name, message)
-            )
-            for topic in self.topics
+            self._subscriptions_by_topic[topic] for topic in self.topics
         ]
+
+    def _create_subscription(self, topic: str):
+        return self.harness.create_image_subscription(
+            topic, lambda message, name=topic: self._on_message(name, message)
+        )
+
+    def recreate_subscriptions(self, topics: Sequence[str]) -> None:
+        selected = set(topics)
+        unknown = selected.difference(self.topics)
+        if unknown:
+            raise ValueError(
+                "cannot recreate subscriptions for unknown topics: "
+                + ", ".join(sorted(unknown))
+            )
+        for topic in self.topics:
+            if topic not in selected:
+                continue
+            old_subscription = self._subscriptions_by_topic[topic]
+            self.harness.destroy_subscription(old_subscription)
+            self._subscriptions_by_topic[topic] = self._create_subscription(topic)
+        self.subscriptions = [
+            self._subscriptions_by_topic[topic] for topic in self.topics
+        ]
+        self.reset_window()
 
     def _on_message(self, topic: str, message: Any) -> None:
         if not _valid_image(message):
@@ -1118,6 +1142,7 @@ class StreamMonitor:
         for subscription in list(self.subscriptions):
             self.harness.destroy_subscription(subscription)
         self.subscriptions = []
+        self._subscriptions_by_topic = {}
 
 
 class StreamVerificationError(RuntimeError):
@@ -1472,19 +1497,62 @@ def apply_profile_set(
             warnings.append(warning)
             emit(warning["message"])
     monitor.reset_window()
-    state = wait_for_profile_state(
-        session=session,
-        harness=harness,
-        monitor=monitor,
-        specs=specs,
-        stable_seconds=stable_seconds,
-        max_gap_seconds=max_gap_seconds,
-        timeout=stream_timeout,
-    )
+    subscription_recovery = {"attempted": False, "topics": []}
+    try:
+        state = wait_for_profile_state(
+            session=session,
+            harness=harness,
+            monitor=monitor,
+            specs=specs,
+            stable_seconds=stable_seconds,
+            max_gap_seconds=max_gap_seconds,
+            timeout=stream_timeout,
+        )
+    except StreamVerificationError as first_error:
+        stalled_topics = sorted(
+            str(row.get("topic", ""))
+            for row in first_error.details.get("topics", [])
+            if row.get("topic") and int(row.get("window_message_count", 0) or 0) == 0
+        )
+        if not stalled_topics:
+            raise
+        subscription_recovery = {
+            "attempted": True,
+            "topics": stalled_topics,
+            "initial_failure": first_error.details,
+        }
+        warning = {
+            "cycle": cycle_index,
+            "action": "recreate-stream-subscriptions",
+            "profile_set": label,
+            "topics": stalled_topics,
+            "message": (
+                f"WARNING: cycle {cycle_index}: no frames received on "
+                f"{', '.join(stalled_topics)} during profile set {label} verification; "
+                "recreated subscriptions and retrying once"
+            ),
+        }
+        warnings.append(warning)
+        emit(warning["message"])
+        monitor.recreate_subscriptions(stalled_topics)
+        try:
+            state = wait_for_profile_state(
+                session=session,
+                harness=harness,
+                monitor=monitor,
+                specs=specs,
+                stable_seconds=stable_seconds,
+                max_gap_seconds=max_gap_seconds,
+                timeout=stream_timeout,
+            )
+        except StreamVerificationError as retry_error:
+            retry_error.details["subscription_recovery"] = subscription_recovery
+            raise
     return {
         "profile_set": label,
         "services": service_results,
         "verification": state,
+        "subscription_recovery": subscription_recovery,
     }
 
 
