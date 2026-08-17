@@ -7,6 +7,7 @@ import platform
 import re
 import socket
 import subprocess
+import sys
 import threading
 import xml.etree.ElementTree as ET
 from datetime import datetime
@@ -34,6 +35,63 @@ _DEVICE_FIELDS = {
     "usb port": "usb_port",
     "preset version": "preset_version",
 }
+
+
+class _TerminalTee:
+    def __init__(self, primary, log_stream, lock: threading.Lock) -> None:
+        self.primary = primary
+        self.log_stream = log_stream
+        self.lock = lock
+
+    def write(self, text: str) -> int:
+        with self.lock:
+            self.primary.write(text)
+            self.log_stream.write(text)
+            self.log_stream.flush()
+        return len(text)
+
+    def flush(self) -> None:
+        with self.lock:
+            self.primary.flush()
+            self.log_stream.flush()
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.primary, name)
+
+
+_TERMINAL_LOG_HANDLE = None
+_TERMINAL_STDOUT_TEE = None
+_TERMINAL_STDERR_TEE = None
+
+
+def close_terminal_log() -> None:
+    global _TERMINAL_LOG_HANDLE, _TERMINAL_STDOUT_TEE, _TERMINAL_STDERR_TEE
+    if _TERMINAL_STDOUT_TEE is not None and sys.stdout is _TERMINAL_STDOUT_TEE:
+        sys.stdout = _TERMINAL_STDOUT_TEE.primary
+    if _TERMINAL_STDERR_TEE is not None and sys.stderr is _TERMINAL_STDERR_TEE:
+        sys.stderr = _TERMINAL_STDERR_TEE.primary
+    if _TERMINAL_LOG_HANDLE is not None:
+        _TERMINAL_LOG_HANDLE.flush()
+        _TERMINAL_LOG_HANDLE.close()
+    _TERMINAL_LOG_HANDLE = None
+    _TERMINAL_STDOUT_TEE = None
+    _TERMINAL_STDERR_TEE = None
+
+
+def install_terminal_log(path: Path) -> Path:
+    global _TERMINAL_LOG_HANDLE, _TERMINAL_STDOUT_TEE, _TERMINAL_STDERR_TEE
+    close_terminal_log()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    log_stream = path.open("a", encoding="utf-8", buffering=1)
+    lock = threading.Lock()
+    stdout_tee = _TerminalTee(sys.stdout, log_stream, lock)
+    stderr_tee = _TerminalTee(sys.stderr, log_stream, lock)
+    _TERMINAL_LOG_HANDLE = log_stream
+    _TERMINAL_STDOUT_TEE = stdout_tee
+    _TERMINAL_STDERR_TEE = stderr_tee
+    sys.stdout = stdout_tee
+    sys.stderr = stderr_tee
+    return path
 
 
 def _request_value(request: Any, name: str, default: Any = "") -> Any:

@@ -20,6 +20,7 @@ from _test_protocol import (
     atomic_write_json,
     collect_test_environment,
     contract_result,
+    install_terminal_log,
     iso_now,
     namespace_request,
     parse_camera,
@@ -39,7 +40,7 @@ DEFAULT_CAMERA_LAUNCH = {
 }
 ENV_READY_VAR = "LAUNCH_RESTART_STREAM_CHECK_ENV_READY"
 INTERRUPTED = False
-TOOL_VERSION = "1.2"
+TOOL_VERSION = "1.3"
 TEST_ID = "launch_restart_stream_check"
 DEFAULT_STRESS_LAUNCH_ARGS = {
     "enable_heartbeat": "true",
@@ -826,6 +827,7 @@ def run(args) -> int:
     run_started_at = iso_now()
     default_results_dir = Path(__file__).resolve().parent / "results" / run_id
     results_dir = ensure_dir(Path(args.results_dir).resolve() if args.results_dir else default_results_dir)
+    install_terminal_log(results_dir / "terminal.log")
     events = EventWriter(results_dir / "events.jsonl")
     emit = StatusLogger(events)
 

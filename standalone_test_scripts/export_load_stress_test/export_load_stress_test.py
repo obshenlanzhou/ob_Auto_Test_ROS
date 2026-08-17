@@ -21,6 +21,7 @@ from _test_protocol import (
     atomic_write_json,
     collect_test_environment,
     contract_result,
+    install_terminal_log,
     iso_now,
     namespace_request,
     parse_camera,
@@ -34,7 +35,7 @@ from _sensor_artifacts import (
 
 ENV_READY_VAR = "EXPORT_LOAD_STRESS_TEST_ENV_READY"
 INTERRUPTED = False
-TOOL_VERSION = "1.6"
+TOOL_VERSION = "1.7"
 TEST_ID = "export_load_stress_test"
 DEFAULT_STRESS_LAUNCH_ARGS = {
     "enable_heartbeat": "true",
@@ -1247,6 +1248,7 @@ def run(args) -> int:
     run_started_at = iso_now()
     default_results_dir = Path(__file__).resolve().parent / "results" / run_id
     results_dir = ensure_dir(Path(args.results_dir).resolve() if args.results_dir else default_results_dir)
+    install_terminal_log(results_dir / "terminal.log")
     exports_dir = ensure_dir(results_dir / "exports")
     events = EventWriter(results_dir / "events.jsonl")
     emit = StatusLogger(events)

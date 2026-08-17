@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import io
 import json
 import re
 import subprocess
@@ -174,6 +175,30 @@ def test_stress_script_limit_arguments_accept_either_or_both(script_name):
 def test_protocol_copies_are_identical():
     expected = PROTOCOLS[0].read_bytes()
     assert all(path.read_bytes() == expected for path in PROTOCOLS)
+
+
+def test_terminal_log_tees_stdout_and_stderr(tmp_path, monkeypatch):
+    protocol = load_protocol(PROTOCOLS[0])
+    captured_stdout = io.StringIO()
+    captured_stderr = io.StringIO()
+    monkeypatch.setattr(sys, "stdout", captured_stdout)
+    monkeypatch.setattr(sys, "stderr", captured_stderr)
+
+    log_path = protocol.install_terminal_log(tmp_path / "terminal.log")
+    try:
+        print("stdout message")
+        print("stderr message", file=sys.stderr)
+    finally:
+        protocol.close_terminal_log()
+
+    assert captured_stdout.getvalue() == "stdout message\n"
+    assert captured_stderr.getvalue() == "stderr message\n"
+    assert log_path.read_text(encoding="utf-8") == (
+        "stdout message\nstderr message\n"
+    )
+    assert {item["path"] for item in protocol.artifact_list(tmp_path)} == {
+        "terminal.log"
+    }
 
 
 def test_camera_spec_allows_each_field_independently_and_together():

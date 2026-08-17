@@ -21,6 +21,7 @@ from _test_protocol import (
     atomic_write_json,
     collect_test_environment,
     contract_result,
+    install_terminal_log,
     iso_now,
     namespace_request,
     parse_camera,
@@ -35,7 +36,7 @@ from _sensor_artifacts import (
 
 ENV_READY_VAR = "STREAM_TOGGLE_STRESS_TEST_ENV_READY"
 INTERRUPTED = False
-TOOL_VERSION = "1.7"
+TOOL_VERSION = "1.8"
 TEST_ID = "stream_toggle_stress_test"
 DEFAULT_STRESS_LAUNCH_ARGS = {
     "enable_heartbeat": "true",
@@ -2033,6 +2034,7 @@ def run(args) -> int:
     results_dir = ensure_dir(
         Path(args.results_dir).resolve() if args.results_dir else default_results_dir
     )
+    install_terminal_log(results_dir / "terminal.log")
     logs_dir = ensure_dir(results_dir / "logs")
     events = EventWriter(results_dir / "events.jsonl")
     emit = StatusLogger(events)

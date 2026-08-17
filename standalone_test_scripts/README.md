@@ -84,7 +84,8 @@ The supported fields are `name`, `serial-number`, `usb-port`, `device-ip`,
 fields may be combined. Scripts that do not require explicit camera
 configuration provide their own default.
 
-Every completed run writes `result.json`, `summary.md`, and `events.jsonl`.
+Every run writes `terminal.log`, teeing the script's stdout and stderr without suppressing live terminal output.
+Every completed run also writes `result.json`, `summary.md`, and `events.jsonl`.
 `result.json` uses the common status values `passed`, `failed`, and
 `interrupted`; the corresponding process exit codes are `0`, `1`, and `130`.
 Invalid command-line usage returns `2`. Script-specific logs, images, CSV files,
