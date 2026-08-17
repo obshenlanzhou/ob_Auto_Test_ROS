@@ -170,18 +170,41 @@ def test_point_cloud_parser_handles_endianness_and_packed_rgb(bigendian):
     assert colors.tolist() == [[255, 0, 0], [0, 255, 0], [0, 0, 255]]
 
 
-def test_point_cloud_and_imu_png_renderers(tmp_path):
+def test_point_cloud_ply_writer_and_imu_png_renderer(tmp_path):
     cv2 = pytest.importorskip("cv2")
+    np = pytest.importorskip("numpy")
     module = load_helper()
-    points, colors, valid_count = module.extract_point_cloud(point_cloud_message())
-    point_cloud_path = tmp_path / "point_cloud.png"
-    module.render_point_cloud_png(
+    points, colors, _valid_count = module.extract_point_cloud(
+        point_cloud_message(), max_points=None
+    )
+    point_cloud_path = tmp_path / "point_cloud.ply"
+    module.write_point_cloud_ply(
         point_cloud_path,
-        topic="/camera/depth/points",
         points=points,
         colors=colors,
-        valid_count=valid_count,
     )
+    header, payload = point_cloud_path.read_bytes().split(b"end_header\n", 1)
+    assert b"format binary_little_endian 1.0" in header
+    assert b"element vertex 3" in header
+    vertices = np.frombuffer(
+        payload,
+        dtype=np.dtype(
+            [
+                ("x", "<f4"),
+                ("y", "<f4"),
+                ("z", "<f4"),
+                ("red", "u1"),
+                ("green", "u1"),
+                ("blue", "u1"),
+            ]
+        ),
+    )
+    assert np.allclose(vertices["z"], [1.0, 2.0, 3.0])
+    assert vertices[["red", "green", "blue"]].tolist() == [
+        (255, 0, 0),
+        (0, 255, 0),
+        (0, 0, 255),
+    ]
     samples = [
         {
             "received_at": index * 0.25,
@@ -196,7 +219,6 @@ def test_point_cloud_and_imu_png_renderers(tmp_path):
         topic="/camera/gyro_accel/sample",
         samples=samples,
     )
-    assert cv2.imread(str(point_cloud_path)).shape == (540, 1500, 3)
     assert cv2.imread(str(imu_path)).shape == (790, 1000, 3)
 
 
@@ -224,6 +246,7 @@ def test_sensor_monitor_validates_when_saving_is_disabled(monkeypatch, tmp_path)
     assert snapshot["/camera/depth/points"]["finite_point_count"] == 3
     assert snapshot["/camera/accel/sample"]["completed_windows"] == 1
     assert not list(tmp_path.rglob("*.png"))
+    assert not list(tmp_path.rglob("*.ply"))
     monitor.close()
 
 
@@ -235,7 +258,7 @@ def test_sensor_paths_use_stable_stream_names_and_continue_indices(tmp_path):
     sequence = module.SensorArtifactPathSequence(tmp_path)
     assert sequence.next_path(
         "camera", "/camera/depth/points", "point_cloud"
-    ) == tmp_path / "camera" / "point_cloud_depth" / "image_0004.png"
+    ) == tmp_path / "camera" / "point_cloud_depth" / "point_cloud_0004.ply"
     assert sequence.next_path(
         "camera", "/camera/gyro_accel/sample", "imu"
     ) == tmp_path / "camera" / "imu_gyro_accel" / "image_0001.png"

@@ -1084,7 +1084,7 @@ def run(args) -> int:
         emit("monitor topics: auto-discover all published image streams")
     else:
         emit(f"monitor topics: {', '.join(topics)}")
-    emit(f"save images and sensor plots per topic: {save_images_count}")
+    emit(f"save image and sensor artifacts per topic: {save_images_count}")
     start_monotonic = time.monotonic()
     deadline = (
         start_monotonic + duration_seconds
@@ -1528,8 +1528,8 @@ def parse_args(argv=None):
         type=int,
         default=1,
         help=(
-            "PNG artifacts to save per image, point cloud, and IMU topic; "
-            "0 disables saving while keeping validation"
+            "Artifacts to save per topic (image/IMU PNG, point cloud PLY); 0 "
+            "disables saving while keeping validation"
         ),
     )
     parser.add_argument("--restart-delay", default="2", help="Delay seconds after stopping launch")

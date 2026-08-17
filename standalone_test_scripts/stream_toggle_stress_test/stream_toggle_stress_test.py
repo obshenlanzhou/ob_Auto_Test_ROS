@@ -1045,16 +1045,35 @@ class StreamMonitor:
             return True
         now = time.monotonic()
         with self.lock:
+            recovering = False
             for topic in topics:
                 item = self.state[topic]
                 first = item["window_first_message_at"]
                 last = item["window_last_message_at"]
                 if first is None or last is None:
-                    return False
-                if now - first < stable_seconds or now - last > max_gap_seconds:
-                    return False
-                if item["window_max_gap_seconds"] > max_gap_seconds:
-                    return False
+                    recovering = True
+                    continue
+                stale = now - last > max_gap_seconds
+                gap_exceeded = item["window_max_gap_seconds"] > max_gap_seconds
+                if stale or gap_exceeded:
+                    # A timeout is the outer limit for finding a stable period. Discard
+                    # only the interrupted candidate window so later steady frames can
+                    # still satisfy the check before that timeout expires.
+                    item["window_started_at"] = now
+                    item["window_max_gap_seconds"] = 0.0
+                    if stale:
+                        item["window_first_message_at"] = None
+                        item["window_last_message_at"] = None
+                        item["window_message_count"] = 0
+                    else:
+                        item["window_first_message_at"] = last
+                        item["window_message_count"] = 1
+                    recovering = True
+                    continue
+                if now - first < stable_seconds:
+                    recovering = True
+            if recovering:
+                return False
         return True
 
     def latest(self, topic: str) -> Tuple[int, Any]:
@@ -1657,12 +1676,26 @@ class ImagePathSequence:
 
 
 class ImageSaveMonitor:
-    def __init__(self, harness: RosHarness, targets: Sequence[SaveImageTarget]) -> None:
+    def __init__(
+        self,
+        harness: RosHarness,
+        targets: Sequence[SaveImageTarget],
+        shared_monitor: Optional[StreamMonitor] = None,
+    ) -> None:
         self.harness = harness
+        self.shared_monitor = shared_monitor
+        self.shared_topics = (
+            set(shared_monitor.topics) if shared_monitor is not None else set()
+        )
         self.lock = threading.Lock()
-        self.state: Dict[str, Dict[str, Any]] = {
-            target.topic: {"sequence": 0, "latest_message": None}
+        supplemental_targets = {
+            target.topic: target
             for target in targets
+            if target.topic not in self.shared_topics
+        }
+        self.state: Dict[str, Dict[str, Any]] = {
+            topic: {"sequence": 0, "latest_message": None}
+            for topic in supplemental_targets
         }
         self.subscriptions = [
             harness.create_image_subscription(
@@ -1670,7 +1703,7 @@ class ImageSaveMonitor:
                 lambda message, name=target.topic: self._on_message(name, message),
                 topic_kind=target.topic_kind,
             )
-            for target in targets
+            for target in supplemental_targets.values()
         ]
 
     def _on_message(self, topic: str, message: Any) -> None:
@@ -1680,6 +1713,8 @@ class ImageSaveMonitor:
             item["latest_message"] = message
 
     def latest(self, topic: str) -> Tuple[int, Any]:
+        if topic in self.shared_topics and self.shared_monitor is not None:
+            return self.shared_monitor.latest(topic)
         with self.lock:
             item = self.state[topic]
             return int(item["sequence"]), item["latest_message"]
@@ -1712,6 +1747,35 @@ class ImageWriter:
         self.bridge = CvBridge()
         return self.bridge, self.cv2
 
+    def _write_depth_preview(self, source_path: Path, image: Any) -> Path:
+        import numpy as np
+
+        values = np.asarray(image)
+        valid = np.isfinite(values) & (values > 0)
+        normalized = np.zeros(values.shape, dtype=np.uint8)
+        if np.any(valid):
+            low, high = np.percentile(values[valid], [1, 99])
+            if high > low:
+                normalized[valid] = np.clip(
+                    (values[valid].astype(np.float64) - low)
+                    / (high - low)
+                    * 255.0,
+                    0,
+                    255,
+                ).astype(np.uint8)
+            else:
+                normalized[valid] = 255
+        preview = self.cv2.applyColorMap(normalized, self.cv2.COLORMAP_TURBO)
+        preview[~valid] = 0
+        preview_path = source_path.with_name(f"{source_path.stem}_preview.png")
+        if not self.cv2.imwrite(
+            str(preview_path),
+            preview,
+            [int(self.cv2.IMWRITE_PNG_COMPRESSION), 1],
+        ):
+            raise RuntimeError(f"failed to write depth preview PNG: {preview_path}")
+        return preview_path
+
     def write(self, target: SaveImageTarget, message: Any) -> Dict[str, Any]:
         path = self.paths.next_path(target)
         ensure_dir(path.parent)
@@ -1734,11 +1798,14 @@ class ImageWriter:
         )
         if not ok:
             raise RuntimeError(f"failed to write PNG image: {path}")
-        return {
+        record = {
             "path": str(path),
             "topic": target.topic,
             "topic_kind": target.topic_kind,
         }
+        if target.stream == "depth" and encoding.lower() in {"16uc1", "mono16"}:
+            record["preview_path"] = str(self._write_depth_preview(path, image))
+        return record
 
 
 def save_target_images(
@@ -1849,7 +1916,7 @@ def build_summary(result: Dict[str, Any]) -> str:
         f"- Completed stream operations: {result.get('completed_operations', 0)}",
         f"- Service retry warnings: {len(result.get('warnings', []))}",
         f"- Saved images: {result.get('saved_image_count', 0)}",
-        f"- Saved point cloud/IMU plots: {result.get('saved_sensor_plot_count', 0)}",
+        f"- Saved point cloud/IMU artifacts: {result.get('saved_sensor_plot_count', 0)}",
         f"- Elapsed seconds: {float(result.get('elapsed_seconds', 0.0) or 0.0):.1f}",
         "",
         "## Target Streams",
@@ -2152,6 +2219,7 @@ def run(args) -> int:
             save_targets_by_topic: Dict[str, List[SaveImageTarget]] = {
                 target.topic: [] for target in targets
             }
+            all_save_targets: List[SaveImageTarget] = []
             if image_writer is not None:
                 save_targets_by_topic = build_save_image_targets(
                     targets,
@@ -2166,7 +2234,6 @@ def run(args) -> int:
                 result["save_image_topics"] = [
                     asdict(save_target) for save_target in all_save_targets
                 ]
-                image_save_monitor = ImageSaveMonitor(harness, all_save_targets)
             service_types = harness.get_service_names_and_types()
             groups: List[StreamGroupTarget] = []
             if args.toggle_mode == "all":
@@ -2200,6 +2267,16 @@ def run(args) -> int:
             for item in skipped:
                 emit(f"skip image topic {item['topic']}: {item['reason']}")
             monitor = StreamMonitor(harness, [target.topic for target in targets])
+            if image_writer is not None:
+                # Raw save topics are already subscribed by StreamMonitor. Reuse that
+                # message stream so image saving does not double the DDS traffic and
+                # starve verification callbacks. Only supplemental topics such as
+                # /compressed need their own subscription.
+                image_save_monitor = ImageSaveMonitor(
+                    harness,
+                    all_save_targets,
+                    shared_monitor=monitor,
+                )
             result["baseline"] = wait_for_initial_stability(
                 session=session,
                 harness=harness,
@@ -2954,8 +3031,8 @@ def parse_args(argv: Optional[Sequence[str]] = None):
         type=int,
         default=1,
         help=(
-            "PNG artifacts per image, point cloud, and IMU topic for each enabled "
-            "state; 0 keeps validation but disables saving"
+            "Artifacts per topic for each enabled state (image/IMU PNG, point "
+            "cloud PLY); 0 keeps validation but disables saving"
         ),
     )
     parser.add_argument("--save-image-timeout", default="30")

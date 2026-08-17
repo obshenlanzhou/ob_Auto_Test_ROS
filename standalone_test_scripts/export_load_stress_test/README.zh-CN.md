@@ -118,7 +118,7 @@ export_load_stress_test/results/YYYYMMDD_HHMMSS_export_load/
 │   ├── camera_01/color/image_0001.png
 │   ├── camera_01/color/image_0002.jpg
 │   ├── camera_01/depth/image_0001.png
-│   ├── camera_01/point_cloud_depth/image_0001.png
+│   ├── camera_01/point_cloud_depth/point_cloud_0001.ply
 │   ├── camera_01/imu_accel/image_0001.png
 │   └── camera_02/ir_left/image_0001.png
 ├── exports/         # 每次压测/每台相机的导出 JSON 和失败 diff

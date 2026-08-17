@@ -138,7 +138,7 @@ launch_param_load_stress/results/YYYYMMDD_HHMMSS_launch_param_load_stress/
 │   ├── camera_01/color/image_0001.png
 │   ├── camera_01/color/image_0002.jpg
 │   ├── camera_01/depth/image_0001.png
-│   ├── camera_01/point_cloud_depth/image_0001.png
+│   ├── camera_01/point_cloud_depth/point_cloud_0001.ply
 │   ├── camera_01/imu_gyro_accel/image_0001.png
 │   └── camera_02/ir_left/image_0001.png
 ├── summary.md             # 每轮通过/失败汇总

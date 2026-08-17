@@ -65,7 +65,7 @@ python3 ./export_load_stress_test/export_load_stress_test.py \
 | `--continue-on-failure` | disabled | Record a failed cycle and continue with the next one; the final result still fails |
 | `--duration` | empty | Optional maximum wall time; the first configured limit reached stops the run |
 | `--sdk-log-level` | `debug` | Orbbec SDK log level |
-| `--save-image-count` | `1` | PNG artifacts per image, point-cloud, and IMU topic per test (`0` = validation only) |
+| `--save-image-count` | `1` | Artifacts per topic: image/IMU PNG and point-cloud PLY (`0` = validation only) |
 | `--image-topic` | auto-discovered | Explicit `Image` or `CompressedImage` topic to monitor and save; repeatable |
 | `--point-cloud-topic` | first-test discovery | Required `PointCloud2` topic; repeatable, supports `{camera}` |
 | `--imu-topic` | first-test discovery | Required `Imu` topic; repeatable, supports `{camera}` |
@@ -125,7 +125,7 @@ export_load_stress_test/results/YYYYMMDD_HHMMSS_export_load/
 │   ├── camera_01/color/image_0001.png
 │   ├── camera_01/color/image_0002.jpg
 │   ├── camera_01/depth/image_0001.png
-│   ├── camera_01/point_cloud_depth/image_0001.png
+│   ├── camera_01/point_cloud_depth/point_cloud_0001.ply
 │   ├── camera_01/imu_accel/image_0001.png
 │   └── camera_02/ir_left/image_0001.png
 ├── exports/         # Exported JSON and failure diffs per test/camera

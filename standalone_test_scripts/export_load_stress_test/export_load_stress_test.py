@@ -1309,7 +1309,7 @@ def run(args) -> int:
     else:
         emit(f"monitor topics: {', '.join(image_topics)}")
     if save_image_count > 0:
-        emit(f"save images and sensor plots: {save_image_count} per topic")
+        emit(f"save image and sensor artifacts: {save_image_count} per topic")
     else:
         emit("save images: disabled")
 
@@ -1766,8 +1766,8 @@ def parse_args(argv=None):
         type=int,
         default=1,
         help=(
-            "PNG artifacts to save per image, point cloud, and IMU topic for each "
-            "test; use 0 to disable saving while keeping stream validation"
+            "Artifacts to save per topic for each test (image/IMU PNG, point cloud "
+            "PLY); use 0 to disable saving while keeping stream validation"
         ),
     )
     parser.add_argument("--save-image-timeout", default="30", help="Max wait time for image saving")

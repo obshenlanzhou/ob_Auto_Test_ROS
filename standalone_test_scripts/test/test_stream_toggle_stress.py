@@ -768,6 +768,53 @@ def test_save_image_topics_map_strictly_to_selected_raw_streams():
         )
 
 
+def test_image_save_monitor_reuses_stream_monitor_for_raw_topics():
+    module = load_script()
+    raw_topic = "/camera_01/color/image_raw"
+    compressed_topic = raw_topic + "/compressed"
+    raw_message = object()
+    compressed_message = object()
+
+    class SharedMonitor:
+        topics = [raw_topic]
+
+        def latest(self, topic):
+            assert topic == raw_topic
+            return 7, raw_message
+
+    class Harness:
+        def __init__(self):
+            self.created = []
+            self.destroyed = []
+
+        def create_image_subscription(self, topic, callback, topic_kind="raw"):
+            subscription = (topic, callback, topic_kind)
+            self.created.append(subscription)
+            return subscription
+
+        def destroy_subscription(self, subscription):
+            self.destroyed.append(subscription)
+
+    harness = Harness()
+    targets = [
+        module.save_image_target_from_topic(raw_topic),
+        module.save_image_target_from_topic(compressed_topic),
+    ]
+    monitor = module.ImageSaveMonitor(
+        harness,
+        targets,
+        shared_monitor=SharedMonitor(),
+    )
+
+    assert [subscription[0] for subscription in harness.created] == [compressed_topic]
+    assert monitor.latest(raw_topic) == (7, raw_message)
+    harness.created[0][1](compressed_message)
+    assert monitor.latest(compressed_topic) == (1, compressed_message)
+
+    monitor.close()
+    assert harness.destroyed == harness.created
+
+
 def test_stream_monitor_tracks_quiet_stability_and_max_gap(monkeypatch):
     module = load_script()
 
@@ -807,5 +854,13 @@ def test_stream_monitor_tracks_quiet_stability_and_max_gap(monkeypatch):
     clock.now = 4.0
     callbacks["/camera/depth/image_raw"](message)
     assert not monitor.topics_are_stable(
+        ["/camera/depth/image_raw"], stable_seconds=2.0, max_gap_seconds=1.5
+    )
+
+    clock.now = 5.0
+    callbacks["/camera/depth/image_raw"](message)
+    clock.now = 6.0
+    callbacks["/camera/depth/image_raw"](message)
+    assert monitor.topics_are_stable(
         ["/camera/depth/image_raw"], stable_seconds=2.0, max_gap_seconds=1.5
     )

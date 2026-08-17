@@ -1824,8 +1824,8 @@ def parse_args(argv=None):
         default=1,
         metavar="N",
         help=(
-            "Save N PNG artifacts per image, point cloud, and IMU topic per run "
-            "(0 = validation only)"
+            "Save N artifacts per topic per run (image/IMU PNG, point cloud PLY; "
+            "0 = validation only)"
         ),
     )
     parser.add_argument(

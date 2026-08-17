@@ -115,7 +115,7 @@ decode or validate compressed data; it writes `CompressedImage.data` directly to
 | `--switch-stream-profile` | `0` | Set to `1` to alternate A/B stream profiles |
 | `--stream-off-seconds` | `4` | Off-state dwell and verification time in seconds |
 | `--stream-on-preview-seconds` | `4` | Preview and verification time after enabling |
-| `--save-image-count` | `1` | PNG artifacts per image, point-cloud, and IMU topic; `0` keeps validation only |
+| `--save-image-count` | `1` | Artifacts per topic: image/IMU PNG and point-cloud PLY; `0` keeps validation only |
 | `--run-count` | empty | Maximum completed cycles |
 | `--continue-on-failure` | disabled | Restore streams after a failed operation and continue; the final result still fails |
 | `--duration` | empty | Maximum duration; supports `15m` and `2h` |
@@ -126,8 +126,9 @@ reached stops the test.
 Point-cloud and IMU topics are discovered once before cycling and then checked
 after every stream-on recovery. Their off-state behavior is intentionally not
 asserted because point clouds depend on depth while IMU streams may remain
-independent. Point-cloud PNGs contain XY/XZ/YZ views; IMU PNGs contain adaptive
-acceleration and angular-velocity plots.
+independent. Point clouds are saved as binary little-endian PLY files containing
+all finite XYZ points and optional RGB; IMU PNGs contain adaptive acceleration
+and angular-velocity plots.
 
 ## Result files
 

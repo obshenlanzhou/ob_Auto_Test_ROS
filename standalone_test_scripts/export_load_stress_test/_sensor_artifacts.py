@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import math
 import re
 import time
 from pathlib import Path
@@ -9,7 +8,9 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tupl
 
 POINT_CLOUD_TYPES = {"sensor_msgs/msg/PointCloud2", "sensor_msgs/PointCloud2"}
 IMU_TYPES = {"sensor_msgs/msg/Imu", "sensor_msgs/Imu"}
-IMAGE_FILE_PATTERN = re.compile(r"^image_(\d+)\.png$", re.IGNORECASE)
+ARTIFACT_FILE_PATTERN = re.compile(
+    r"^(?:image|point_cloud)_(\d+)\.(?:png|ply)$", re.IGNORECASE
+)
 POINT_FIELD_DTYPES = {
     1: ("i1", 1),
     2: ("u1", 1),
@@ -191,13 +192,24 @@ class SensorArtifactPathSequence:
             indices = [
                 int(match.group(1))
                 for path in stream_dir.iterdir()
-                if path.is_file() and (match := IMAGE_FILE_PATTERN.match(path.name))
+                if path.is_file()
+                and (match := ARTIFACT_FILE_PATTERN.match(path.name))
             ]
             next_index = max(indices, default=0) + 1
-        target = stream_dir / f"image_{next_index:04d}.png"
+        filename = (
+            f"point_cloud_{next_index:04d}.ply"
+            if kind == "point_cloud"
+            else f"image_{next_index:04d}.png"
+        )
+        target = stream_dir / filename
         while target.exists():
             next_index += 1
-            target = stream_dir / f"image_{next_index:04d}.png"
+            filename = (
+                f"point_cloud_{next_index:04d}.ply"
+                if kind == "point_cloud"
+                else f"image_{next_index:04d}.png"
+            )
+            target = stream_dir / filename
         self._next_indices[key] = next_index + 1
         return target
 
@@ -243,7 +255,7 @@ def _field_array(message: Any, field: Any, *, packed_bits: bool = False):
     )
 
 
-def extract_point_cloud(message: Any, max_points: int = 50000):
+def extract_point_cloud(message: Any, max_points: Optional[int] = 50000):
     import numpy as np
 
     fields = _field_map(message)
@@ -257,7 +269,7 @@ def extract_point_cloud(message: Any, max_points: int = 50000):
     valid_count = int(finite_indices.size)
     if valid_count <= 0:
         raise ValueError("point cloud has no finite XYZ points")
-    if valid_count > max_points:
+    if max_points is not None and valid_count > max_points:
         selection = np.linspace(0, valid_count - 1, max_points, dtype=np.int64)
         finite_indices = finite_indices[selection]
     points = np.column_stack(
@@ -279,96 +291,43 @@ def extract_point_cloud(message: Any, max_points: int = 50000):
     return points, colors, valid_count
 
 
-def _project_panel(canvas, points, colors, x_index, y_index, rect, labels):
-    import cv2
+def write_point_cloud_ply(path: Path, *, points: Any, colors: Any) -> None:
     import numpy as np
 
-    left, top, width, height = rect
-    panel = canvas[top : top + height, left : left + width]
-    panel[:] = (28, 31, 36)
-    margin = 42
-    plot_width = max(width - margin * 2, 1)
-    plot_height = max(height - margin * 2, 1)
-    x_values = points[:, x_index]
-    y_values = points[:, y_index]
-    x_min, x_max = np.percentile(x_values, [1, 99])
-    y_min, y_max = np.percentile(y_values, [1, 99])
-    if not math.isfinite(float(x_min + x_max)) or x_max <= x_min:
-        x_min, x_max = float(np.min(x_values)), float(np.max(x_values)) + 1e-6
-    if not math.isfinite(float(y_min + y_max)) or y_max <= y_min:
-        y_min, y_max = float(np.min(y_values)), float(np.max(y_values)) + 1e-6
-    px = margin + np.clip(
-        ((x_values - x_min) / max(x_max - x_min, 1e-12) * (plot_width - 1)).astype(int),
-        0,
-        plot_width - 1,
-    )
-    py = margin + np.clip(
-        ((y_max - y_values) / max(y_max - y_min, 1e-12) * (plot_height - 1)).astype(int),
-        0,
-        plot_height - 1,
-    )
-    if colors is None:
-        z_values = points[:, 2]
-        z_min, z_max = np.percentile(z_values, [1, 99])
-        normalized = np.clip(
-            ((z_values - z_min) / max(z_max - z_min, 1e-12) * 255).astype(np.uint8),
-            0,
-            255,
+    xyz = np.asarray(points, dtype="<f4")
+    if xyz.ndim != 2 or xyz.shape[1] != 3:
+        raise ValueError("point array must have shape (N, 3)")
+    has_color = colors is not None
+    dtype_fields = [("x", "<f4"), ("y", "<f4"), ("z", "<f4")]
+    if has_color:
+        rgb = np.asarray(colors, dtype=np.uint8)
+        if rgb.shape != xyz.shape:
+            raise ValueError("point color array must have shape (N, 3)")
+        dtype_fields.extend([("red", "u1"), ("green", "u1"), ("blue", "u1")])
+    vertices = np.empty(len(xyz), dtype=np.dtype(dtype_fields))
+    vertices["x"], vertices["y"], vertices["z"] = xyz.T
+    if has_color:
+        vertices["red"], vertices["green"], vertices["blue"] = rgb.T
+    properties = ["property float x", "property float y", "property float z"]
+    if has_color:
+        properties.extend(
+            ["property uchar red", "property uchar green", "property uchar blue"]
         )
-        bgr = cv2.applyColorMap(normalized.reshape(-1, 1), cv2.COLORMAP_TURBO).reshape(-1, 3)
-    else:
-        bgr = colors[:, ::-1]
-    panel[py, px] = bgr
-    panel[:] = cv2.dilate(panel, np.ones((2, 2), np.uint8))
-    cv2.rectangle(
-        panel,
-        (margin, margin),
-        (margin + plot_width, margin + plot_height),
-        (110, 116, 124),
-        1,
-    )
-    cv2.putText(panel, labels, (12, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (235, 238, 242), 1, cv2.LINE_AA)
-    cv2.putText(panel, f"{x_min:.3g} .. {x_max:.3g}", (margin, height - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (180, 185, 192), 1, cv2.LINE_AA)
-    cv2.putText(panel, f"{y_min:.3g} .. {y_max:.3g}", (3, margin - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (180, 185, 192), 1, cv2.LINE_AA)
-
-
-def render_point_cloud_png(
-    path: Path,
-    *,
-    topic: str,
-    points: Any,
-    colors: Any,
-    valid_count: int,
-) -> None:
-    import cv2
-    import numpy as np
-
-    canvas = np.full((540, 1500, 3), (20, 22, 26), dtype=np.uint8)
-    cv2.putText(canvas, topic, (24, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (245, 247, 250), 2, cv2.LINE_AA)
-    cv2.putText(
-        canvas,
-        f"finite points: {valid_count:,}; rendered: {len(points):,}",
-        (24, 58),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.55,
-        (185, 191, 199),
-        1,
-        cv2.LINE_AA,
-    )
-    panels = ((0, 1, "XY"), (0, 2, "XZ"), (1, 2, "YZ"))
-    for index, (x_axis, y_axis, label) in enumerate(panels):
-        _project_panel(
-            canvas,
-            points,
-            colors,
-            x_axis,
-            y_axis,
-            (10 + index * 495, 75, 480, 450),
-            label,
-        )
+    header = "\n".join(
+        [
+            "ply",
+            "format binary_little_endian 1.0",
+            "comment generated from ROS PointCloud2 finite XYZ points",
+            f"element vertex {len(vertices)}",
+            *properties,
+            "end_header",
+            "",
+        ]
+    ).encode("ascii")
     path.parent.mkdir(parents=True, exist_ok=True)
-    if not cv2.imwrite(str(path), canvas, [int(cv2.IMWRITE_PNG_COMPRESSION), 1]):
-        raise RuntimeError(f"failed to write point cloud PNG: {path}")
+    with path.open("wb") as stream:
+        stream.write(header)
+        stream.write(vertices.tobytes())
 
 
 def _stamp_nonzero(message: Any) -> bool:
@@ -523,7 +482,7 @@ class SensorCaptureMonitor:
                 "kind": "point_cloud",
                 "message_count": 0,
                 "valid_count": 0,
-                "rendered_count": 0,
+                "saved_point_count": 0,
                 "files": [],
                 "error": "",
             }
@@ -564,7 +523,8 @@ class SensorCaptureMonitor:
             return
         try:
             points, colors, valid_count = extract_point_cloud(
-                message, max_points=self.max_points
+                message,
+                max_points=None if self.save_count > 0 else self.max_points,
             )
             item["valid_count"] += 1
             item["finite_point_count"] = valid_count
@@ -574,15 +534,13 @@ class SensorCaptureMonitor:
             if self.save_count > 0:
                 camera_name = self.topic_cameras.get(topic, "unknown_camera")
                 path = self.paths.next_path(camera_name, topic, "point_cloud")
-                render_point_cloud_png(
+                write_point_cloud_ply(
                     path,
-                    topic=topic,
                     points=points,
                     colors=colors,
-                    valid_count=valid_count,
                 )
                 item["files"].append(str(path))
-                item["rendered_count"] += 1
+                item["saved_point_count"] = len(points)
         except Exception as exc:  # noqa: BLE001
             item["error"] = str(exc)
 
@@ -649,6 +607,7 @@ class SensorCaptureMonitor:
                     {
                         "valid_message_count": item["valid_count"],
                         "finite_point_count": item.get("finite_point_count", 0),
+                        "saved_point_count": item.get("saved_point_count", 0),
                         "width": item.get("width", 0),
                         "height": item.get("height", 0),
                         "data_size": item.get("data_size", 0),
@@ -710,7 +669,7 @@ def capture_sensor_artifacts(
                 return (
                     True,
                     snapshot,
-                    f"validated {len(snapshot)} sensor stream(s) and saved {files} PNG file(s)",
+                    f"validated {len(snapshot)} sensor stream(s) and saved {files} artifact file(s)",
                 )
         return (
             False,

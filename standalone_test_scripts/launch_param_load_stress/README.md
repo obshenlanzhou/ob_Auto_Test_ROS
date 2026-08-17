@@ -87,7 +87,7 @@ python3 ./launch_param_load_stress/launch_param_load_stress.py \
 | `--startup-timeout SECS` | `30` | Max wait for device initialization |
 | `--topic-timeout SECS` | `20` | Max wait for each enabled stream topic |
 | `--service-timeout SECS` | `15` | Max wait for each param/service query |
-| `--save-image-count N` | `1` | PNG artifacts per image, point-cloud, and IMU topic (`0` = validation only) |
+| `--save-image-count N` | `1` | Artifacts per topic: image/IMU PNG and point-cloud PLY (`0` = validation only) |
 | `--image-topic` | auto-discovered | Explicit `Image` or `CompressedImage` topic to save; repeatable, supports `{camera}` |
 | `--point-cloud-topic` | first-run discovery | Required `PointCloud2` topic; repeatable, supports `{camera}` |
 | `--imu-topic` | first-run discovery | Required `Imu` topic; repeatable, supports `{camera}` |
@@ -107,8 +107,9 @@ to `.jpg`. Auto-discovery does not include compressed topics.
 
 The first run also discovers all published `PointCloud2` and `Imu` topics
 under the configured camera namespaces and freezes them as the baseline for
-later runs. Point clouds are rendered as three-view PNG previews and IMU data
-as adaptive acceleration/angular-velocity plots. Explicit sensor topic options
+later runs. Point clouds are saved as binary little-endian PLY files containing
+all finite XYZ points and optional RGB; IMU data is saved as adaptive
+acceleration/angular-velocity plots. Explicit sensor topic options
 make those topics mandatory from the first run.
 
 ### Config File
@@ -150,7 +151,7 @@ launch_param_load_stress/results/YYYYMMDD_HHMMSS_launch_param_load_stress/
 │   ├── camera_01/color/image_0001.png
 │   ├── camera_01/color/image_0002.jpg
 │   ├── camera_01/depth/image_0001.png
-│   ├── camera_01/point_cloud_depth/image_0001.png
+│   ├── camera_01/point_cloud_depth/point_cloud_0001.ply
 │   ├── camera_01/imu_gyro_accel/image_0001.png
 │   └── camera_02/ir_left/image_0001.png
 ├── summary.md             # Per-run pass/fail summary

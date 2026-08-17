@@ -134,7 +134,7 @@ preset_upgrade_stress_test/results/YYYYMMDD_HHMMSS_preset_upgrade/
     ├── camera_01/color/image_0001.png
     ├── camera_01/color/image_0002.jpg
     ├── camera_01/depth/image_0001.png
-    ├── camera_01/point_cloud_depth/image_0001.png
+    ├── camera_01/point_cloud_depth/point_cloud_0001.ply
     ├── camera_01/imu_gyro_accel/image_0001.png
     └── camera_02/ir_left/image_0001.png
 ```

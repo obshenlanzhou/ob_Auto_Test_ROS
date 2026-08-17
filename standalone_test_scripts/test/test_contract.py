@@ -576,6 +576,10 @@ def test_all_image_savers_preserve_uint16_png_and_compressed_bytes(tmp_path):
     decoded = cv2.imread(raw_record["path"], cv2.IMREAD_UNCHANGED)
     assert decoded.dtype == np.uint16
     assert np.array_equal(decoded, pixels)
+    preview = cv2.imread(raw_record["preview_path"], cv2.IMREAD_UNCHANGED)
+    assert preview.dtype == np.uint8
+    assert preview.shape == (*pixels.shape, 3)
+    assert np.all(preview[pixels == 0] == 0)
     assert Path(compressed_record["path"]).read_bytes() == compressed_message.data
 
 

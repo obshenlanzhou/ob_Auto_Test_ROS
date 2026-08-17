@@ -1321,8 +1321,8 @@ def parse_args(argv=None):
         type=int,
         default=1,
         help=(
-            "PNG artifacts per image, point cloud, and IMU topic after every restart; "
-            "0 keeps validation but disables saving"
+            "Artifacts per topic after every restart (image/IMU PNG, point cloud "
+            "PLY); 0 keeps validation but disables saving"
         ),
     )
     parser.add_argument(
