@@ -1,6 +1,7 @@
 {
   "schema_version": 1,
   "id": "export_load_stress_test",
+  "version": "1.9",
   "title": "参数导入导出压测",
   "description": "交替导入配置 JSON、导出设备参数并比较一致性。",
   "script": "export_load_stress_test.py",

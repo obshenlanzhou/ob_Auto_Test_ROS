@@ -750,10 +750,13 @@ function renderStandaloneForm(testId = "") {
   if (!test) {
     $("standaloneFieldStaging").appendChild(domainField);
     $("standaloneDescription").textContent = "没有找到可用的独立脚本清单。";
+    $("standaloneVersion").textContent = "TOOL v—";
     return;
   }
   $("standaloneTest").value = test.id;
   $("standaloneDescription").textContent = test.description || "";
+  $("standaloneVersion").textContent = `TOOL v${test.version || "—"}`;
+  $("standaloneVersion").title = `${test.title || test.id} 当前版本`;
   $("standaloneRisk").textContent = test.confirmation || "";
   $("standaloneRisk").classList.toggle("is-hidden", test.risk !== "high");
   const groups = Object.fromEntries(
@@ -813,7 +816,7 @@ async function loadStandaloneTests() {
   for (const test of state.standaloneTests) {
     const option = document.createElement("option");
     option.value = test.id;
-    option.textContent = test.title;
+    option.textContent = `${test.title} · v${test.version || "—"}`;
     select.appendChild(option);
   }
   renderStandaloneForm(select.value);

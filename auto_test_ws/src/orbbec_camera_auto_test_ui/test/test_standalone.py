@@ -56,6 +56,7 @@ def test_all_seven_standalone_manifests_load():
         "stream_toggle_stress_test",
     }
     for manifest in manifests:
+        assert re.fullmatch(r"\d+\.\d+(?:\.\d+)?", manifest["version"])
         for field in manifest["fields"]:
             assert field["group"] in {
                 "environment",
@@ -65,6 +66,45 @@ def test_all_seven_standalone_manifests_load():
                 "advanced",
             }
             assert field["label_en"]
+
+
+def test_manifest_versions_match_script_versions():
+    for manifest in load_manifests(STANDALONE_ROOT):
+        command = [sys.executable, manifest["script_path"]]
+        if manifest["id"] == "image_receive_stats_test":
+            command.extend(["--ros-version", "2"])
+        command.append("--version")
+        completed = subprocess.run(
+            command,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+
+        assert completed.returncode == 0, completed.stderr
+        assert completed.stdout.strip().endswith(manifest["version"])
+
+
+def test_standalone_ui_exposes_tool_version():
+    payload = ui_server.list_standalone_tests()
+    assert payload["tests"]
+    assert all(item.get("version") for item in payload["tests"])
+
+    template = (
+        PACKAGE_ROOT
+        / "orbbec_camera_auto_test_ui"
+        / "templates"
+        / "index.html"
+    ).read_text(encoding="utf-8")
+    app_js = (
+        PACKAGE_ROOT
+        / "orbbec_camera_auto_test_ui"
+        / "static"
+        / "app.js"
+    ).read_text(encoding="utf-8")
+    assert 'id="standaloneVersion"' in template
+    assert "test.version" in app_js
 
 
 def test_manifest_options_exist_in_script_help():

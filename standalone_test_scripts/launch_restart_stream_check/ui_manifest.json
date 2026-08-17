@@ -1,6 +1,7 @@
 {
   "schema_version": 1,
   "id": "launch_restart_stream_check",
+  "version": "1.9",
   "title": "Launch 重启出流检查",
   "description": "重复启动相机 Launch，检查图像流是否稳定恢复。",
   "script": "launch_restart_stream_check.py",

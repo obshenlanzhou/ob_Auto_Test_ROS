@@ -85,6 +85,9 @@ def _validate_manifest(manifest: Dict[str, Any], manifest_path: Path) -> Dict[st
     test_id = _safe_text(manifest.get("id"))
     if not test_id or not re.fullmatch(r"[a-z0-9_]+", test_id):
         raise ManifestError(f"{manifest_path}: invalid id")
+    tool_version = _safe_text(manifest.get("version"))
+    if not re.fullmatch(r"\d+\.\d+(?:\.\d+)?", tool_version):
+        raise ManifestError(f"{manifest_path}: invalid or missing version")
     script_name = _safe_text(manifest.get("script"))
     script_path = (manifest_path.parent / script_name).resolve()
     if not script_name or manifest_path.parent.resolve() not in script_path.parents:
