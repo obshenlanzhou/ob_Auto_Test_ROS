@@ -67,6 +67,16 @@ python3 ./stream_toggle_stress_test/stream_toggle_stress_test.py \
 
 ### 可选功能
 
+向 ROS launch 追加参数时可重复传入 `--launch-arg`，支持 `KEY=VALUE` 和
+`KEY:=VALUE` 两种写法：
+
+```bash
+--launch-arg enable_point_cloud=false \
+--launch-arg enable_colored_point_cloud=false
+```
+
+如果参数名称与脚本默认参数或 `--camera` 生成的参数相同，`--launch-arg` 的值优先。
+
 ROS 2 整体开关：
 
 ```bash
@@ -104,6 +114,7 @@ A、B 两组必须配置相同的话题，且配置内容必须不同。
 | `--ros-setup` | `$ORBBEC_ROS_SETUP` 或空 | ROS 环境 setup 脚本路径 |
 | `--driver-setup` | `$ORBBEC_DRIVER_SETUP` 或空 | 驱动环境 setup 脚本路径 |
 | `--launch-file` | 必填 | launch 文件名或路径 |
+| `--launch-arg` | 空 | 额外 launch 参数，格式为 `KEY=VALUE` 或 `KEY:=VALUE`；可重复传入，同名参数覆盖默认值 |
 | `--camera` | 空 | 单相机 launch 参数，最多一个 |
 | `--image-topic` | 自动发现 | 需要测试的原始图像流，可重复传入 |
 | `--save-image-topic` | 目标 raw 话题 | 存图来源，可重复传入 |
