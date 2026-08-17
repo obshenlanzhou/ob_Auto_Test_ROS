@@ -529,6 +529,15 @@ def test_single_camera_args_are_injected_only_when_provided():
     }
 
 
+def test_sdk_log_level_is_injected_without_explicit_camera():
+    module = load_script()
+
+    launch_args = module.build_stress_launch_args(None, "debug", [])
+
+    assert launch_args["log_level"] == "debug"
+    assert "log_file_name" not in launch_args
+
+
 def test_camera_placeholder_requires_single_camera():
     module = load_script()
     args = module.parse_args(

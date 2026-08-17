@@ -1807,6 +1807,19 @@ def camera_launch_args(camera: Optional[Dict[str, str]]) -> Dict[str, str]:
     return launch_args
 
 
+def build_stress_launch_args(
+    camera: Optional[Dict[str, str]],
+    sdk_log_level: str,
+    raw_launch_args: Sequence[str],
+) -> Dict[str, str]:
+    launch_args = dict(DEFAULT_STRESS_LAUNCH_ARGS)
+    launch_args.update(camera_launch_args(camera))
+    launch_args["log_level"] = sdk_log_level
+    if camera:
+        launch_args["log_file_name"] = f"{camera['name']}.log"
+    return merge_launch_arg_overrides(launch_args, raw_launch_args)
+
+
 def build_summary(result: Dict[str, Any]) -> str:
     command_text = " ".join(
         shlex.quote(str(item)) for item in result.get("command", [])
@@ -2040,12 +2053,9 @@ def run(args) -> int:
     emit = StatusLogger(events)
 
     camera = config["camera"]
-    launch_args = dict(DEFAULT_STRESS_LAUNCH_ARGS)
-    launch_args.update(camera_launch_args(camera))
-    if camera:
-        launch_args["log_level"] = args.sdk_log_level
-        launch_args["log_file_name"] = f"{camera['name']}.log"
-    launch_args = merge_launch_arg_overrides(launch_args, args.launch_arg)
+    launch_args = build_stress_launch_args(
+        camera, args.sdk_log_level, args.launch_arg
+    )
     command = build_launch_command(
         ros_version=args.ros_version,
         launch_package=args.launch_package,
