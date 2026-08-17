@@ -61,6 +61,7 @@ python3 ./image_topic_receive_stats.py \
 | `--warmup-sec` | 启动预热时间，预热期间不记录统计 | `2.0` |
 | `--queue-size` | Subscriber 队列大小 | `10` |
 | `--duration` | 可选的最长运行时间 | 空 |
+| `--continue-on-failure` | 记录话题回调失败并继续监测；最终结果仍为失败 | 关闭 |
 | `--qos` | ROS2 Subscriber QoS，可选 `sensor_data`、`default`、`reliable`、`best_effort` | `sensor_data` |
 | `--save-csv` | 是否保存逐帧 CSV | `true` |
 

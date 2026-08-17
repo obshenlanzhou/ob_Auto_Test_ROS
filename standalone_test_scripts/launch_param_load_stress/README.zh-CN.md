@@ -80,6 +80,7 @@ python3 ./launch_param_load_stress/launch_param_load_stress.py \
 | `--launch-start-interval SECS` | `2` | 各相机 launch 之间的启动间隔秒数（`0` = 所有相机同时启动） |
 | `--sdk-log-level` | `debug` | SDK 文件日志级别，可选 `debug/info/warn/error/fatal/none` |
 | `--run-count N` | 空 | 完整启动→检查→停止的最大循环次数 |
+| `--continue-on-failure` | 关闭 | 记录失败并继续下一轮；最终结果仍为失败 |
 | `--duration` | 空 | 可选的最长运行时间；任一已配置上限先达到即结束 |
 | `--startup-timeout SECS` | `30` | 等待设备初始化完成的最大秒数 |
 | `--topic-timeout SECS` | `20` | 等待每个已启用流 topic 的最大秒数 |

@@ -78,6 +78,10 @@ standalone_test_scripts/
 `config-file-path`。每个字段都可以填写或不填，兼容的字段可以组合。无需显式相机配置
 的脚本会使用自己的默认值。
 
+所有脚本都支持 `--continue-on-failure`。该参数默认关闭，因此首次失败即停止测试；
+开启后会记录失败，并按脚本类型继续下一轮、下一个 Preset、下一次升级或后续帧，
+但最终结果和退出码仍会报告失败。
+
 每次运行都会生成 `terminal.log`，实时保存脚本自身的标准输出和标准错误，同时保持终端正常输出。
 每次完成的运行还会生成 `result.json`、`summary.md` 和 `events.jsonl`。
 `result.json` 的状态统一为 `passed`、`failed`、`interrupted`，对应退出码分别为
@@ -120,6 +124,7 @@ CLI，但脚本本身不能导入 Web UI 包。
 不要依赖 orbbec_camera_auto_test 框架模块
 需要 ROS 时支持 --ros-version、--ros-setup、--driver-setup
 适用时支持统一的相机、生命周期和环境参数
+支持 --continue-on-failure，且默认关闭
 按统一契约写入 result.json、summary.md 和 events.jsonl
 通过返回 0，失败返回 1，中断返回 130，参数错误返回 2
 ```

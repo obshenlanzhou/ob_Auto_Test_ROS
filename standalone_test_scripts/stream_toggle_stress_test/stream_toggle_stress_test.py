@@ -2087,6 +2087,7 @@ def run(args) -> int:
         "skipped_image_topics": [],
         "duration_limit_seconds": config["duration"],
         "run_count": args.run_count,
+        "continue_on_failure": args.continue_on_failure,
         "completed_cycles": 0,
         "completed_operations": 0,
         "saved_image_count": 0,
@@ -2319,7 +2320,18 @@ def run(args) -> int:
                             "error": str(exc),
                             "attempts": exc.attempts,
                         }
-                        raise
+                        cycle["status"] = "failed"
+                        cycle["error"] = str(exc)
+                        cycle["ended_at"] = iso_now()
+                        result["status"] = "failed"
+                        result.setdefault("errors", []).append(str(exc))
+                        if not args.continue_on_failure:
+                            raise
+                        emit(
+                            f"cycle {cycle_index}: profile switch failed; "
+                            "continuing with the next cycle"
+                        )
+                        continue
                     except StreamVerificationError as exc:
                         cycle["profile_switch"] = {
                             "profile_set": profile_label,
@@ -2327,7 +2339,18 @@ def run(args) -> int:
                             "error": str(exc),
                             "verification_failure": exc.details,
                         }
-                        raise
+                        cycle["status"] = "failed"
+                        cycle["error"] = str(exc)
+                        cycle["ended_at"] = iso_now()
+                        result["status"] = "failed"
+                        result.setdefault("errors", []).append(str(exc))
+                        if not args.continue_on_failure:
+                            raise
+                        emit(
+                            f"cycle {cycle_index}: profile verification failed; "
+                            "continuing with the next cycle"
+                        )
+                        continue
                 if args.toggle_mode == "all":
                     operation = {
                         "index": 1,
@@ -2485,19 +2508,32 @@ def run(args) -> int:
                                 emit=emit,
                             )
                             groups_may_be_disabled = False
-                        raise
+                        if (
+                            isinstance(exc, (KeyboardInterrupt, SystemExit))
+                            or INTERRUPTED
+                            or not args.continue_on_failure
+                        ):
+                            raise
+                        cycle["status"] = "failed"
+                        result["status"] = "failed"
+                        result.setdefault("errors", []).append(str(exc))
+                        emit(
+                            f"cycle {cycle_index}: all-stream operation failed; "
+                            "continuing with the next cycle"
+                        )
                     finally:
                         operation["ended_at"] = iso_now()
                     cycle["ended_at"] = iso_now()
-                    cycle["status"] = "passed"
-                    result["completed_cycles"] += 1
-                    emit(
-                        f"cycle {cycle_index} completed",
-                        event="progress",
-                        current=cycle_index,
-                        total=args.run_count,
-                        phase="completed-cycle",
-                    )
+                    if cycle["status"] == "running":
+                        cycle["status"] = "passed"
+                        result["completed_cycles"] += 1
+                        emit(
+                            f"cycle {cycle_index} completed",
+                            event="progress",
+                            current=cycle_index,
+                            total=args.run_count,
+                            phase="completed-cycle",
+                        )
                     continue
                 for target_index, target in enumerate(targets, start=1):
                     if (
@@ -2655,7 +2691,19 @@ def run(args) -> int:
                                 emit=emit,
                             )
                             target_may_be_disabled = False
-                        raise
+                        if (
+                            isinstance(exc, (KeyboardInterrupt, SystemExit))
+                            or INTERRUPTED
+                            or not args.continue_on_failure
+                        ):
+                            raise
+                        cycle["status"] = "failed"
+                        result["status"] = "failed"
+                        result.setdefault("errors", []).append(str(exc))
+                        emit(
+                            f"cycle {cycle_index}: {target.topic} failed; "
+                            "continuing with the remaining work"
+                        )
                     finally:
                         operation["ended_at"] = iso_now()
                 cycle["ended_at"] = iso_now()
@@ -2865,6 +2913,11 @@ def parse_args(argv: Optional[Sequence[str]] = None):
         type=int,
         default=None,
         help="Maximum completed cycles; at least one of --duration or --run-count is required",
+    )
+    parser.add_argument(
+        "--continue-on-failure",
+        action="store_true",
+        help="Continue with the next cycle after a failed cycle (default: stop)",
     )
     parser.add_argument("--topic-discovery-timeout", default="30")
     parser.add_argument("--topic-discovery-settle", default="2")

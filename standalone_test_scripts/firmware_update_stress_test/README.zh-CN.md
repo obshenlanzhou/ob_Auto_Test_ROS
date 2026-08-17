@@ -77,13 +77,14 @@ python3 ./firmware_update_stress_test/firmware_update_stress_test.py \
 | `--driver-setup` | `$ORBBEC_CAMERA_SETUP` 或空 | Orbbec 驱动环境 setup 脚本路径 |
 | `--firmware` | 必填 | 固件文件路径，可重复传入并按顺序循环 |
 | `--run-count` | 空 | 升级命令最大调用次数 |
+| `--continue-on-failure` | 关闭 | 记录失败并继续下一次升级；最终结果仍为失败 |
 | `--duration` | 空 | 可选的最长运行时间，支持 `300`、`15m`、`2h` |
 | `--restart-delay` | `2` | 两次升级命令之间的等待秒数 |
 | `--camera` | 默认相机 | 相机目标配置，可重复传入 |
 | `--reconnect-timeout-sec` | `120` | 传给 `firmware_update_tool` |
 | `--reconnect-poll-ms` | `1000` | 传给 `firmware_update_tool` |
 | `--sdk-log-level` | `debug` | 传给 `firmware_update_tool` |
-| `--continue-on-error` | 关闭 | 传给 `firmware_update_tool` |
+| `--continue-on-error` | 关闭 | 仅传给 `firmware_update_tool`，不控制压测循环 |
 
 `--run-count` 和 `--duration` 至少传入一个，也可以同时传入；同时传入时，任一条件先达到即结束。
 

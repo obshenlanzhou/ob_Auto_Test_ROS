@@ -83,6 +83,7 @@ python3 ./launch_restart_stream_check/launch_restart_stream_check.py \
 | `--sdk-log-level` | `debug` | Orbbec SDK log level |
 | `--duration` | empty | Total run time; supports seconds, `30m`, `2h`, and similar formats |
 | `--run-count` | empty | Maximum completed restart cycles |
+| `--continue-on-failure` | disabled | Clean up a failed restart and continue with the next one; the final result still fails |
 | `--stable-seconds` | `5` | Continuous receive time required for a stream to be considered stable |
 | `--stream-timeout` | `20` | Seconds to wait for a stream to become stable per restart |
 | `--max-gap-seconds` | `1.5` | Maximum allowed gap between consecutive frames |

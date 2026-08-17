@@ -147,6 +147,11 @@ def parse_args(argv, ros_version):
         default="",
         help="Optional maximum wall time, such as 300, 15m, or 2h",
     )
+    parser.add_argument(
+        "--continue-on-failure",
+        action="store_true",
+        help="Record a topic callback failure and keep monitoring other frames (default: stop)",
+    )
     if ros_version == "ros1":
         parser.add_argument(
             "--buff-size",
@@ -694,6 +699,7 @@ class ReceiveStatsCore:
         self.include_header_seq = include_header_seq
         self.metadata = metadata
         self.request = request
+        self.continue_on_failure = bool(request.get("continue_on_failure", False))
         self.environment = collect_test_environment(request)
         self.run_id = os.path.basename(os.path.normpath(output_dir))
         self.started_at = iso_now()
@@ -736,6 +742,10 @@ class ReceiveStatsCore:
         self.write_metadata()
         self.write_summary()
 
+    def record_failure(self, message):
+        self.status = "failed"
+        self.events.emit("failure", message, status="failed")
+
     def write_metadata(self):
         data = {
             "started_at": datetime.now().isoformat(),
@@ -747,6 +757,7 @@ class ReceiveStatsCore:
             "queue_size": self.queue_size,
             "warmup_sec": self.warmup_sec,
             "save_csv": self.save_csv,
+            "continue_on_failure": self.continue_on_failure,
             "ros_distro": os.environ.get("ROS_DISTRO", ""),
         }
         data.update(self.metadata)
@@ -902,6 +913,7 @@ class ReceiveStatsCore:
                 "tool_version": TOOL_VERSION,
                 "environment": self.environment,
                 "topics": self.topics,
+                "continue_on_failure": self.continue_on_failure,
                 "elapsed_seconds": elapsed_seconds,
                 "topic_summaries": summary_rows,
                 "warnings": (
@@ -1081,12 +1093,19 @@ def run_ros1():
             if not self.core.begin_callback():
                 return
             try:
-                self.core.loggers[topic].write(
-                    msg,
-                    ns_to_us(msg.header.stamp.to_nsec()),
-                    msg.header.seq,
-                    self.log_warn,
-                )
+                try:
+                    self.core.loggers[topic].write(
+                        msg,
+                        ns_to_us(msg.header.stamp.to_nsec()),
+                        msg.header.seq,
+                        self.log_warn,
+                    )
+                except Exception as exc:
+                    message = "Image callback failed for {}: {}".format(topic, exc)
+                    self.core.record_failure(message)
+                    self.log_error(message)
+                    if not self.core.continue_on_failure:
+                        rospy.signal_shutdown(message)
             finally:
                 self.core.end_callback()
 
@@ -1173,7 +1192,9 @@ def run_ros1():
             duration_timer.shutdown()
         signal.signal(signal.SIGINT, previous_sigint_handler)
     node.close()
-    return 130 if node.core.status == "interrupted" else 0
+    if node.core.status == "interrupted":
+        return 130
+    return 0 if node.core.status == "passed" else 1
 
 
 def run_ros2():
@@ -1338,12 +1359,19 @@ def run_ros2():
             if not self.core.begin_callback():
                 return
             try:
-                self.core.loggers[topic].write(
-                    msg,
-                    stamp_to_us(msg.header.stamp),
-                    None,
-                    self.log_warn,
-                )
+                try:
+                    self.core.loggers[topic].write(
+                        msg,
+                        stamp_to_us(msg.header.stamp),
+                        None,
+                        self.log_warn,
+                    )
+                except Exception as exc:
+                    message = "Image callback failed for {}: {}".format(topic, exc)
+                    self.core.record_failure(message)
+                    self.log_error(message)
+                    if not self.core.continue_on_failure:
+                        raise
             finally:
                 self.core.end_callback()
 
@@ -1485,7 +1513,9 @@ def run_ros2():
         if rclpy.ok():
             rclpy.shutdown()
         signal.signal(signal.SIGINT, previous_sigint_handler)
-    return 130 if node is not None and node.core.status == "interrupted" else 0
+    if node is not None and node.core.status == "interrupted":
+        return 130
+    return 0 if node is None or node.core.status == "passed" else 1
 
 
 def detect_ros_version():

@@ -117,6 +117,7 @@ decode or validate compressed data; it writes `CompressedImage.data` directly to
 | `--stream-on-preview-seconds` | `4` | Preview and verification time after enabling |
 | `--save-image-count` | `1` | PNG artifacts per image, point-cloud, and IMU topic; `0` keeps validation only |
 | `--run-count` | empty | Maximum completed cycles |
+| `--continue-on-failure` | disabled | Restore streams after a failed operation and continue; the final result still fails |
 | `--duration` | empty | Maximum duration; supports `15m` and `2h` |
 
 At least one of `--run-count` and `--duration` is required. Both may be supplied; the first limit

@@ -907,6 +907,7 @@ def run(args) -> int:
         "save_image_count": save_image_count,
         "duration_seconds": duration_seconds,
         "run_count": run_count,
+        "continue_on_failure": args.continue_on_failure,
         "stable_seconds_required": stable_seconds,
         "stream_timeout_seconds": stream_timeout,
         "max_gap_seconds": max_gap_seconds,
@@ -1017,6 +1018,28 @@ def run(args) -> int:
                 if not ok:
                     attempt["status"] = "failed"
                     result["status"] = "failed"
+                    result.setdefault("errors", []).append(
+                        f"attempt {attempt_index}: {message}"
+                    )
+                    attempt["ended_at"] = datetime.now().isoformat(timespec="seconds")
+                    if args.continue_on_failure:
+                        emit(
+                            f"attempt {attempt_index}: failed; stopping launch and "
+                            "continuing with the next cycle"
+                        )
+                        session.stop()
+                        active_session = None
+                        current_attempt = None
+                        if deadline is None:
+                            time.sleep(restart_delay)
+                        else:
+                            time.sleep(
+                                min(
+                                    restart_delay,
+                                    max(deadline - time.monotonic(), 0.0),
+                                )
+                            )
+                        continue
                     result["manual_confirmation_required"] = True
                     result["manual_confirmation_message"] = (
                         f"attempt {attempt_index}: {message}; launch was kept running "
@@ -1045,6 +1068,20 @@ def run(args) -> int:
                 )
                 attempt["images"] = image_snapshot
                 if not image_ok:
+                    attempt["status"] = "failed"
+                    attempt["message"] = image_message
+                    attempt["ended_at"] = datetime.now().isoformat(timespec="seconds")
+                    result["status"] = "failed"
+                    result.setdefault("errors", []).append(image_message)
+                    if args.continue_on_failure:
+                        emit(
+                            f"attempt {attempt_index}: {image_message}; continuing "
+                            "with the next cycle"
+                        )
+                        session.stop()
+                        active_session = None
+                        current_attempt = None
+                        continue
                     raise RuntimeError(image_message)
 
                 if sensor_baseline is None:
@@ -1088,6 +1125,20 @@ def run(args) -> int:
                 )
                 attempt["sensors"] = sensor_snapshot
                 if not sensor_ok:
+                    attempt["status"] = "failed"
+                    attempt["message"] = sensor_message
+                    attempt["ended_at"] = datetime.now().isoformat(timespec="seconds")
+                    result["status"] = "failed"
+                    result.setdefault("errors", []).append(sensor_message)
+                    if args.continue_on_failure:
+                        emit(
+                            f"attempt {attempt_index}: {sensor_message}; continuing "
+                            "with the next cycle"
+                        )
+                        session.stop()
+                        active_session = None
+                        current_attempt = None
+                        continue
                     raise RuntimeError(sensor_message)
                 attempt["message"] = (
                     f"{message}; {image_message}; {sensor_message}"
@@ -1255,6 +1306,11 @@ def parse_args(argv=None):
         type=int,
         default=None,
         help="Maximum completed restart cycles; duration still applies when both are set",
+    )
+    parser.add_argument(
+        "--continue-on-failure",
+        action="store_true",
+        help="Continue with the next restart cycle after a failed cycle (default: stop)",
     )
     parser.add_argument("--stable-seconds", default="5", help="Required continuous stable image duration per launch")
     parser.add_argument("--stream-timeout", default="20", help="Max wait time for stable stream per launch")

@@ -1492,6 +1492,7 @@ def run(args) -> int:
         "imu_topics": configured_imu_topics,
         "notes": [declaration_note],
         "run_count": run_count,
+        "continue_on_failure": args.continue_on_failure,
         "duration_limit_seconds": duration_seconds,
         "runs_passed": 0,
         "runs": [],
@@ -1668,6 +1669,9 @@ def run(args) -> int:
             )
             if INTERRUPTED:
                 break
+            if run_result["status"] == "failed" and not args.continue_on_failure:
+                emit("stopping after failed run (use --continue-on-failure to continue)")
+                break
 
         if INTERRUPTED:
             result["status"] = "interrupted"
@@ -1774,6 +1778,11 @@ def parse_args(argv=None):
     parser.add_argument("--service-timeout", default="15", help="Max wait time for each param/service command")
     parser.add_argument("--run-count", type=int, default=None, metavar="N",
                         help="Optional maximum complete test cycles")
+    parser.add_argument(
+        "--continue-on-failure",
+        action="store_true",
+        help="Continue with the next test cycle after a failed cycle (default: stop)",
+    )
     parser.add_argument(
         "--duration",
         default="",

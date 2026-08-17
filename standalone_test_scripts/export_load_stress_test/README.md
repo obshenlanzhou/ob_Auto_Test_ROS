@@ -62,6 +62,7 @@ python3 ./export_load_stress_test/export_load_stress_test.py \
 | `--launch-arg` | — | Extra launch argument (e.g. `enable_ir=true`); repeatable, format `KEY=VALUE` or `KEY:=VALUE` |
 | `--launch-start-interval` | `2` | Delay in seconds between starting each camera launch (`0` starts all cameras at once) |
 | `--run-count` | empty | Maximum number of import/export cycles |
+| `--continue-on-failure` | disabled | Record a failed cycle and continue with the next one; the final result still fails |
 | `--duration` | empty | Optional maximum wall time; the first configured limit reached stops the run |
 | `--sdk-log-level` | `debug` | Orbbec SDK log level |
 | `--save-image-count` | `1` | PNG artifacts per image, point-cloud, and IMU topic per test (`0` = validation only) |

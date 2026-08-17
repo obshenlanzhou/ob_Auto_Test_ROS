@@ -172,6 +172,56 @@ def test_stress_script_limit_arguments_accept_either_or_both(script_name):
     assert both.run_count == 20
 
 
+@pytest.mark.parametrize("script_name", LIMITED_STRESS_SCRIPTS)
+def test_stress_scripts_stop_on_failure_by_default_and_can_opt_in_to_continue(
+    script_name,
+):
+    module = load_script(SCRIPTS[script_name])
+    base = [*LIMITED_STRESS_SCRIPTS[script_name], "--run-count", "2"]
+
+    defaults = module.parse_args(base)
+    enabled = module.parse_args([*base, "--continue-on-failure"])
+
+    assert defaults.continue_on_failure is False
+    assert enabled.continue_on_failure is True
+
+
+@pytest.mark.parametrize("script_name", LIMITED_STRESS_SCRIPTS)
+def test_stress_ui_manifests_expose_continue_on_failure_disabled_by_default(
+    script_name,
+):
+    script = SCRIPTS[script_name]
+    manifest = json.loads((script.parent / "ui_manifest.json").read_text(encoding="utf-8"))
+    fields = {field["name"]: field for field in manifest["fields"]}
+
+    assert fields["continue_on_failure"]["option"] == "--continue-on-failure"
+    assert fields["continue_on_failure"]["type"] == "flag"
+    assert fields["continue_on_failure"]["default"] is False
+
+
+def test_image_stats_stop_on_failure_by_default_and_can_opt_in_to_continue():
+    module = load_script(SCRIPTS["image_receive_stats"])
+
+    defaults = module.parse_args([], "ros2")
+    enabled = module.parse_args(["--continue-on-failure"], "ros2")
+
+    assert defaults.continue_on_failure is False
+    assert enabled.continue_on_failure is True
+
+
+def test_all_ui_manifests_expose_continue_on_failure_disabled_by_default():
+    for script in SCRIPTS.values():
+        manifest = json.loads(
+            (script.parent / "ui_manifest.json").read_text(encoding="utf-8")
+        )
+        fields = {field["name"]: field for field in manifest["fields"]}
+        field = fields["continue_on_failure"]
+
+        assert field["option"] == "--continue-on-failure"
+        assert field["type"] == "flag"
+        assert field["default"] is False
+
+
 def test_protocol_copies_are_identical():
     expected = PROTOCOLS[0].read_bytes()
     assert all(path.read_bytes() == expected for path in PROTOCOLS)
@@ -347,6 +397,7 @@ def test_all_scripts_expose_kebab_case_common_options_without_ros_startup():
         output = script_help(script)
         options = set(re.findall(r"(?<!\\w)--[a-zA-Z0-9_-]+", output))
         assert {"--ros-version", "--ros-setup", "--driver-setup", "--results-dir"} <= options
+        assert "--continue-on-failure" in options
         assert not {option for option in options if "_" in option}, test_id
         assert not options.intersection(REMOVED_OPTIONS), test_id
 

@@ -1062,6 +1062,7 @@ def run(args) -> int:
         "point_cloud_topics": configured_point_cloud_topics,
         "imu_topics": configured_imu_topics,
         "run_count": run_count,
+        "continue_on_failure": args.continue_on_failure,
         "planned_tests": run_count * len(presets) if run_count is not None else "duration mode",
         "duration_limit_seconds": duration_seconds,
         "stream_timeout_seconds": stream_timeout,
@@ -1134,6 +1135,7 @@ def run(args) -> int:
                         "sensors": [],
                     }
                     result["tests"].append(test_record)
+                    test_failed = False
 
                     for camera in cameras:
                         camera_log_dir = ensure_dir(test_log_dir / sanitize_path_part(camera.name))
@@ -1170,6 +1172,21 @@ def run(args) -> int:
                         )
                         upgrade_result["returncode"] = upgrade_code
                         if upgrade_code != 0:
+                            if args.continue_on_failure:
+                                message = (
+                                    f"{camera.name}: preset upgrade failed with code "
+                                    f"{upgrade_code}"
+                                )
+                                test_record["status"] = "failed"
+                                test_record["message"] = message
+                                test_record["ended_at"] = datetime.now().isoformat(
+                                    timespec="seconds"
+                                )
+                                result["status"] = "failed"
+                                result.setdefault("errors", []).append(message)
+                                emit(f"{test_name}: {message}; continuing with next preset")
+                                test_failed = True
+                                break
                             raise RuntimeError(
                                 f"{camera.name}: preset upgrade failed with code {upgrade_code}"
                             )
@@ -1191,6 +1208,8 @@ def run(args) -> int:
 
                     if INTERRUPTED:
                         break
+                    if test_failed:
+                        continue
 
                     sessions: List[LaunchSession] = []
                     expected_log = f"Loaded device preset: {preset.name}"
@@ -1247,7 +1266,28 @@ def run(args) -> int:
                         )
                         test_record["launches"][index]["preset_log_message"] = message
                         if not ok:
+                            if args.continue_on_failure:
+                                failure_message = f"{session.camera_name}: {message}"
+                                test_record["status"] = "failed"
+                                test_record["message"] = failure_message
+                                test_record["ended_at"] = datetime.now().isoformat(
+                                    timespec="seconds"
+                                )
+                                result["status"] = "failed"
+                                result.setdefault("errors", []).append(failure_message)
+                                emit(
+                                    f"{test_name}: {failure_message}; continuing with "
+                                    "next preset after cleanup"
+                                )
+                                test_failed = True
+                                break
                             raise RuntimeError(f"{session.camera_name}: {message}")
+
+                    if test_failed:
+                        for session in reversed(sessions):
+                            session.stop()
+                        active_sessions = []
+                        continue
 
                     if auto_discover_image_topics:
                         topics, topic_cameras = discover_image_topics(
@@ -1284,6 +1324,21 @@ def run(args) -> int:
                     test_record["images"] = image_snapshot
                     test_record["message"] = image_message
                     if not ok:
+                        if args.continue_on_failure:
+                            test_record["status"] = "failed"
+                            test_record["ended_at"] = datetime.now().isoformat(
+                                timespec="seconds"
+                            )
+                            result["status"] = "failed"
+                            result.setdefault("errors", []).append(image_message)
+                            emit(
+                                f"{test_name}: {image_message}; continuing with next "
+                                "preset after cleanup"
+                            )
+                            for session in reversed(sessions):
+                                session.stop()
+                            active_sessions = []
+                            continue
                         raise RuntimeError(image_message)
 
                     if sensor_baseline is None:
@@ -1322,6 +1377,22 @@ def run(args) -> int:
                     )
                     test_record["sensors"] = sensor_snapshot
                     if not ok:
+                        if args.continue_on_failure:
+                            test_record["status"] = "failed"
+                            test_record["message"] = sensor_message
+                            test_record["ended_at"] = datetime.now().isoformat(
+                                timespec="seconds"
+                            )
+                            result["status"] = "failed"
+                            result.setdefault("errors", []).append(sensor_message)
+                            emit(
+                                f"{test_name}: {sensor_message}; continuing with next "
+                                "preset after cleanup"
+                            )
+                            for session in reversed(sessions):
+                                session.stop()
+                            active_sessions = []
+                            continue
                         raise RuntimeError(sensor_message)
                     emit(f"{test_name}: {sensor_message}")
 
@@ -1444,6 +1515,11 @@ def parse_args(argv=None):
     parser.add_argument("--preset-b-path", default=str(DEFAULT_PRESET_B_PATH))
     parser.add_argument("--preset-b-name", default="K High Accuracy")
     parser.add_argument("--run-count", type=int, default=None, help="Optional maximum preset rounds")
+    parser.add_argument(
+        "--continue-on-failure",
+        action="store_true",
+        help="Continue with the next preset test after a failed test (default: stop)",
+    )
     parser.add_argument("--duration", default="", help="Optional maximum wall time; supports 300, 15m, 2h")
     parser.add_argument("--stream-timeout", default="30", help="Max wait time for image streams per preset")
     parser.add_argument("--preset-log-timeout", default="20", help="Max wait time for Loaded device preset log")

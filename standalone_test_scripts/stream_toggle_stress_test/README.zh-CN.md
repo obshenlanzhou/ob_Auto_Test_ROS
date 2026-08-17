@@ -115,6 +115,7 @@ A、B 两组必须配置相同的话题，且配置内容必须不同。
 | `--stream-on-preview-seconds` | `4` | 开流后的预览和验证时间，单位秒 |
 | `--save-image-count` | `1` | 每个图像、点云和 IMU topic 的 PNG 数量；`0` 仅检测 |
 | `--run-count` | 空 | 最大完整循环数 |
+| `--continue-on-failure` | 关闭 | 失败后恢复流并继续后续循环；最终结果仍为失败 |
 | `--duration` | 空 | 最长运行时间，支持 `15m`、`2h` |
 
 `--run-count` 和 `--duration` 至少传入一个，也可以同时传入；同时传入时，任一条件先达到即结束。

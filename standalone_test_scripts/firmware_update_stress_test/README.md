@@ -81,13 +81,14 @@ are `name`, `serial-number`, `usb-port`, `device-ip`, `device-port`, and
 | `--driver-setup` | `$ORBBEC_CAMERA_SETUP` or empty | Path to the Orbbec driver environment setup script |
 | `--firmware` | required | Firmware image path; repeat to cycle files in order |
 | `--run-count` | empty | Maximum number of update command invocations |
+| `--continue-on-failure` | disabled | Record a failed update cycle and continue with the next one; the final result still fails |
 | `--duration` | empty | Optional maximum wall time; supports `300`, `15m`, `2h` |
 | `--restart-delay` | `2` | Delay seconds between update commands |
 | `--camera` | default camera | Camera target specification; repeatable |
 | `--reconnect-timeout-sec` | `120` | Passed to `firmware_update_tool` |
 | `--reconnect-poll-ms` | `1000` | Passed to `firmware_update_tool` |
 | `--sdk-log-level` | `debug` | Passed to `firmware_update_tool` |
-| `--continue-on-error` | disabled | Passed to `firmware_update_tool` |
+| `--continue-on-error` | disabled | Passed to `firmware_update_tool`; does not control stress-test cycle continuation |
 
 At least one of `--run-count` and `--duration` is required. Both may be supplied; the first limit
 reached stops the test.

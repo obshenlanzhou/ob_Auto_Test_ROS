@@ -74,6 +74,7 @@ python3 ./preset_upgrade_stress_test/preset_upgrade_stress_test.py \
 | `--preset-a-name` | `K High Confidence` | `device_preset` name corresponding to preset A |
 | `--preset-b-name` | `K High Accuracy` | `device_preset` name corresponding to preset B |
 | `--run-count` | empty | Optional maximum number of upgrade cycles |
+| `--continue-on-failure` | disabled | Clean up a failed preset test and continue with the next one; the final result still fails |
 | `--duration` | empty | Maximum wall time; supports `300`, `15m`, and `2h` |
 | `--save-image-count` | `1` | PNG artifacts per image, point-cloud, and IMU topic per test (`0` = validation only) |
 | `--image-topic` | auto-discovered | Explicit `Image` or `CompressedImage` topic to monitor and save; repeatable, supports `{camera}` |

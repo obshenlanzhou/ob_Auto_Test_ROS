@@ -71,6 +71,7 @@ python3 ./preset_upgrade_stress_test/preset_upgrade_stress_test.py \
 | `--preset-a-name` | `K High Confidence` | preset A 对应的 `device_preset` 名称 |
 | `--preset-b-name` | `K High Accuracy` | preset B 对应的 `device_preset` 名称 |
 | `--run-count` | 空 | 可选的升级最大轮次数 |
+| `--continue-on-failure` | 关闭 | 清理失败的 Preset 测试后继续下一个；最终结果仍为失败 |
 | `--duration` | 空 | 最长运行时间，支持 `300`、`15m`、`2h` |
 | `--save-image-count` | `1` | 每轮每个图像、点云和 IMU topic 的 PNG 产物数（`0` = 仅检测） |
 | `--image-topic` | 自动发现 | 指定后只监控并保存这些 `Image` 或 `CompressedImage` topic，可重复传入并支持 `{camera}` |

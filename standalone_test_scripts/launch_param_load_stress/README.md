@@ -82,6 +82,7 @@ python3 ./launch_param_load_stress/launch_param_load_stress.py \
 | `--launch-arg` | — | Extra launch argument (e.g. `enable_depth=true`); repeatable, format `KEY=VALUE` or `KEY:=VALUE` |
 | `--launch-start-interval SECS` | `2` | Delay in seconds between starting each camera launch (`0` starts all cameras at once) |
 | `--run-count N` | empty | Maximum number of full launch–check–stop cycles |
+| `--continue-on-failure` | disabled | Record a failed cycle and continue with the next one; the final result still fails |
 | `--duration` | empty | Optional maximum wall time; the first configured limit reached stops the run |
 | `--startup-timeout SECS` | `30` | Max wait for device initialization |
 | `--topic-timeout SECS` | `20` | Max wait for each enabled stream topic |

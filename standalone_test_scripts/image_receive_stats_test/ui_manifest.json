@@ -12,6 +12,7 @@
     {"name": "driver_setup", "option": "--driver-setup", "type": "path", "label": "驱动环境脚本", "label_en": "Driver Setup", "group": "environment", "section": "basic", "default": "", "placeholder": "/path/to/orbbec_camera/install/setup.bash"},
     {"name": "image_topics", "option": "--image-topic", "type": "list", "label": "图像话题", "label_en": "Image Topics", "group": "configuration", "section": "basic", "default": [], "required": true, "placeholder": "/camera/color/image_raw\n/camera/depth/image_raw"},
     {"name": "duration", "option": "--duration", "type": "duration", "label": "最长运行时间", "label_en": "Duration", "group": "limits", "section": "basic", "default": ""},
+    {"name": "continue_on_failure", "option": "--continue-on-failure", "type": "flag", "label": "失败后继续", "label_en": "Continue on Failure", "group": "limits", "section": "basic", "default": false, "note": "关闭时回调失败即停止；开启后记录失败并继续采集其他帧，最终结果仍为失败。"},
     {"name": "warning_interval_sec", "option": "--warning-interval-sec", "type": "number", "label": "告警间隔", "label_en": "Warning Interval", "group": "configuration", "section": "basic", "default": "1.0", "min": 0.001},
     {"name": "warmup_sec", "option": "--warmup-sec", "type": "number", "label": "预热时间", "label_en": "Warmup Duration", "group": "configuration", "section": "basic", "default": "2.0", "min": 0},
     {"name": "save_csv", "option": "--save-csv", "type": "boolean", "label": "保存逐帧 CSV", "label_en": "Save Frame CSV", "group": "configuration", "section": "basic", "default": true},

@@ -1280,6 +1280,7 @@ def run(args) -> int:
         "launch_file": args.launch_file,
         "launch_package": args.launch_package,
         "run_count": run_count,
+        "continue_on_failure": args.continue_on_failure,
         "duration_limit_seconds": duration_seconds,
         "passed_tests": 0,
         "config_jsons": [str(path) for path in config_jsons],
@@ -1427,7 +1428,16 @@ def run(args) -> int:
                 if not ok:
                     test_payload["status"] = "failed"
                     test_payload["message"] = message
+                    test_payload["ended_at"] = datetime.now().isoformat(timespec="seconds")
                     result["status"] = "failed"
+                    result.setdefault("errors", []).append(f"{test_name}: {message}")
+                    if args.continue_on_failure:
+                        emit(f"{test_name}: streams not stable; continuing after cleanup")
+                        for session in reversed(sessions):
+                            session.stop()
+                        active_sessions = []
+                        current_test = None
+                        continue
                     result["manual_confirmation_required"] = True
                     result["manual_confirmation_message"] = (
                         f"{test_name}: {message}; launches were kept running until manual "
@@ -1454,7 +1464,18 @@ def run(args) -> int:
                 if not ok:
                     test_payload["status"] = "failed"
                     test_payload["message"] = image_message
+                    test_payload["ended_at"] = datetime.now().isoformat(timespec="seconds")
                     result["status"] = "failed"
+                    result.setdefault("errors", []).append(
+                        f"{test_name}: {image_message}"
+                    )
+                    if args.continue_on_failure:
+                        emit(f"{test_name}: image save failed; continuing after cleanup")
+                        for session in reversed(sessions):
+                            session.stop()
+                        active_sessions = []
+                        current_test = None
+                        continue
                     result["manual_confirmation_required"] = True
                     result["manual_confirmation_message"] = (
                         f"{test_name}: {image_message}; launches were kept running until manual "
@@ -1500,6 +1521,23 @@ def run(args) -> int:
                 )
                 test_payload["sensors"] = sensor_snapshot
                 if not ok:
+                    test_payload["status"] = "failed"
+                    test_payload["message"] = sensor_message
+                    test_payload["ended_at"] = datetime.now().isoformat(timespec="seconds")
+                    result["status"] = "failed"
+                    result.setdefault("errors", []).append(
+                        f"{test_name}: {sensor_message}"
+                    )
+                    if args.continue_on_failure:
+                        emit(
+                            f"{test_name}: sensor artifact capture failed; "
+                            "continuing after cleanup"
+                        )
+                        for session in reversed(sessions):
+                            session.stop()
+                        active_sessions = []
+                        current_test = None
+                        continue
                     raise RuntimeError(sensor_message)
                 emit(f"{test_name}: {sensor_message}")
 
@@ -1530,7 +1568,21 @@ def run(args) -> int:
                     failed_names = ", ".join(item["camera"] for item in failed_camera_results)
                     test_payload["status"] = "failed"
                     test_payload["message"] = f"export compare failed for: {failed_names}"
+                    test_payload["ended_at"] = datetime.now().isoformat(timespec="seconds")
                     result["status"] = "failed"
+                    result.setdefault("errors", []).append(
+                        f"{test_name}: export compare failed for {failed_names}"
+                    )
+                    if args.continue_on_failure:
+                        emit(
+                            f"{test_name}: export compare failed for {failed_names}; "
+                            "continuing after cleanup"
+                        )
+                        for session in reversed(sessions):
+                            session.stop()
+                        active_sessions = []
+                        current_test = None
+                        continue
                     result["manual_confirmation_required"] = True
                     result["manual_confirmation_message"] = (
                         f"{test_name}: export compare failed for {failed_names}; "
@@ -1660,6 +1712,11 @@ def parse_args(argv=None):
     )
     parser.add_argument(
         "--run-count", type=int, default=None, help="Optional maximum complete test cycles"
+    )
+    parser.add_argument(
+        "--continue-on-failure",
+        action="store_true",
+        help="Continue with the next test cycle after a failed cycle (default: stop)",
     )
     parser.add_argument(
         "--duration",

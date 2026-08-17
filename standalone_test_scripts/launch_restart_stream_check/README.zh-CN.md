@@ -81,6 +81,7 @@ python3 ./launch_restart_stream_check/launch_restart_stream_check.py \
 | `--sdk-log-level` | `debug` | Orbbec SDK 日志级别 |
 | `--duration` | 空 | 总运行时长，支持秒数、`30m`、`2h` 等格式 |
 | `--run-count` | 空 | 最大完整重启循环数 |
+| `--continue-on-failure` | 关闭 | 清理失败的重启轮次后继续下一轮；最终结果仍为失败 |
 | `--stable-seconds` | `5` | 判定流稳定所需的持续接收时间（秒） |
 | `--stream-timeout` | `20` | 每次重启后等待流稳定的最大秒数 |
 | `--max-gap-seconds` | `1.5` | 相邻两帧接收间隔的最大容许值（秒） |

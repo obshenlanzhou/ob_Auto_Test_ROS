@@ -84,6 +84,11 @@ The supported fields are `name`, `serial-number`, `usb-port`, `device-ip`,
 fields may be combined. Scripts that do not require explicit camera
 configuration provide their own default.
 
+All scripts expose `--continue-on-failure`. It is disabled by default, so the
+first failure stops the test. When enabled, the failure is recorded and the
+script continues with the next cycle, preset, update, or frame as applicable;
+the final result and exit code still report failure.
+
 Every run writes `terminal.log`, teeing the script's stdout and stderr without suppressing live terminal output.
 Every completed run also writes `result.json`, `summary.md`, and `events.jsonl`.
 `result.json` uses the common status values `passed`, `failed`, and
@@ -129,6 +134,7 @@ Use a clear name that describes the test scenario
 Keep it independent from orbbec_camera_auto_test framework modules
 Support --ros-version, --ros-setup, --driver-setup when ROS is needed
 Accept the common camera, lifecycle, and environment options when applicable
+Support --continue-on-failure and keep it disabled by default
 Write result.json, summary.md, and events.jsonl using the common contract
 Return 0 for pass, 1 for failure, 130 for interruption, and 2 for invalid arguments
 ```

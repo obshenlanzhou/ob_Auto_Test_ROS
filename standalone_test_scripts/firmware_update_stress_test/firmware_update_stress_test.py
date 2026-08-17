@@ -359,6 +359,7 @@ def run(args) -> int:
         "firmwares": [str(path) for path in firmwares],
         "cameras": cameras,
         "run_count": run_count,
+        "continue_on_failure": args.continue_on_failure,
         "duration_limit_seconds": duration_seconds,
         "restart_delay_seconds": restart_delay,
         "success_log_pattern": SUCCESS_RE.pattern,
@@ -445,25 +446,59 @@ def run(args) -> int:
             )
             test_env = dict(runtime_env)
             test_env["ORBBEC_LOG_DIR"] = str(ensure_dir(log_file.parent / "sdk"))
-            returncode, output = run_command_to_log(command, test_env, results_dir, log_file)
+            command_error = ""
+            try:
+                returncode, output = run_command_to_log(
+                    command, test_env, results_dir, log_file
+                )
+            except Exception as exc:  # noqa: BLE001
+                returncode, output = None, ""
+                command_error = f"{test_name}: update command failed: {exc}"
             test_record["returncode"] = returncode
             success_log = parse_success_log(output)
             test_record["success_log"] = success_log
 
-            if returncode != 0:
-                raise RuntimeError(f"{test_name}: firmware_update_tool exited with {returncode}")
-            if success_log is None:
-                raise RuntimeError(f"{test_name}: success log was not found")
-            if success_log["updated"] != success_log["total"]:
-                raise RuntimeError(
+            failure_message = command_error
+            if not failure_message and returncode != 0:
+                failure_message = (
+                    f"{test_name}: firmware_update_tool exited with {returncode}"
+                )
+            elif not failure_message and success_log is None:
+                failure_message = f"{test_name}: success log was not found"
+            elif not failure_message and success_log["updated"] != success_log["total"]:
+                failure_message = (
                     f"{test_name}: success log updated {success_log['updated']}/"
                     f"{success_log['total']} targets"
                 )
-            if serial_numbers and success_log["total"] != len(serial_numbers):
-                raise RuntimeError(
+            elif (
+                not failure_message
+                and serial_numbers
+                and success_log["total"] != len(serial_numbers)
+            ):
+                failure_message = (
                     f"{test_name}: success log target count {success_log['total']} does not "
                     f"match serial count {len(serial_numbers)}"
                 )
+
+            if failure_message:
+                test_record["status"] = "failed"
+                test_record["message"] = failure_message
+                test_record["ended_at"] = datetime.now().isoformat(timespec="seconds")
+                result["status"] = "failed"
+                result.setdefault("errors", []).append(failure_message)
+                emit(failure_message)
+                if not args.continue_on_failure:
+                    emit(
+                        "stopping after failed update "
+                        "(use --continue-on-failure to continue)"
+                    )
+                    break
+                emit(f"{test_name}: continuing after failure")
+                if restart_delay > 0 and (
+                    run_count is None or test_index < run_count
+                ):
+                    time.sleep(restart_delay)
+                continue
 
             test_record["status"] = "passed"
             test_record["message"] = (
@@ -586,6 +621,11 @@ def parse_args(argv=None):
         "--run-count", type=int, default=None, help="Optional maximum update cycles"
     )
     parser.add_argument(
+        "--continue-on-failure",
+        action="store_true",
+        help="Continue with the next update cycle after a failed cycle (default: stop)",
+    )
+    parser.add_argument(
         "--duration",
         default="",
         help="Optional maximum wall time, such as 300, 15m, or 2h",
@@ -599,7 +639,11 @@ def parse_args(argv=None):
         default="debug",
         help="Passed to firmware_update_tool",
     )
-    parser.add_argument("--continue-on-error", action="store_true", help="Passed to firmware_update_tool")
+    parser.add_argument(
+        "--continue-on-error",
+        action="store_true",
+        help="Passed to firmware_update_tool; does not control stress-test cycle continuation",
+    )
     parser.add_argument("--results-dir", default="")
     parser.add_argument(
         "--version",

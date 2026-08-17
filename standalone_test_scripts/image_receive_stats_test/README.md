@@ -65,6 +65,7 @@ python3 ./image_topic_receive_stats.py \
 | `--warmup-sec` | Ignore frames during startup warmup | `2.0` |
 | `--queue-size` | Subscriber queue size | `10` |
 | `--duration` | Optional maximum wall time | Empty |
+| `--continue-on-failure` | Record a topic callback failure and continue monitoring; the final result still fails | Disabled |
 | `--qos` | ROS2 subscriber QoS: `sensor_data`, `default`, `reliable`, or `best_effort` | `sensor_data` |
 | `--save-csv` | Enable or disable per-frame CSV saving | `true` |
 
