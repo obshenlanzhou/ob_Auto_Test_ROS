@@ -362,7 +362,7 @@ def test_profile_state_checks_resolution_without_fps_statistics():
     assert "fps_match" not in passed["profiles"][0]
 
 
-def test_profile_state_checks_ros_encoding_compatibility_for_sdk_format():
+def test_profile_state_does_not_match_ros_encoding_to_sdk_format():
     module = load_script()
     color = module.parse_stream_profile_spec(
         "/camera/color/image_raw=640x480@30:MJPG"
@@ -387,12 +387,13 @@ def test_profile_state_checks_ros_encoding_compatibility_for_sdk_format():
 
     passed = module.evaluate_profile_state([color, depth], snapshot)
     snapshot[0]["encoding"] = "mono16"
-    failed = module.evaluate_profile_state([color, depth], snapshot)
+    different_encoding = module.evaluate_profile_state([color, depth], snapshot)
 
     assert passed["all_profiles_match"] is True
     assert passed["profiles"][0]["expected_format"] == "MJPG"
-    assert passed["profiles"][0]["expected_ros_encodings"] == ["rgb8"]
-    assert failed["all_profiles_match"] is False
+    assert passed["profiles"][0]["actual_encoding"] == "rgb8"
+    assert passed["profiles"][0]["format_encoding_checked"] is False
+    assert different_encoding["all_profiles_match"] is True
 
 
 def test_profile_service_retries_once_and_reports_degraded_success():

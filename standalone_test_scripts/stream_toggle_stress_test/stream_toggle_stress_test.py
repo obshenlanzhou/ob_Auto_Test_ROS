@@ -36,7 +36,7 @@ from _sensor_artifacts import (
 
 ENV_READY_VAR = "STREAM_TOGGLE_STRESS_TEST_ENV_READY"
 INTERRUPTED = False
-TOOL_VERSION = "1.9"
+TOOL_VERSION = "1.9.1"
 TEST_ID = "stream_toggle_stress_test"
 DEFAULT_STRESS_LAUNCH_ARGS = {
     "enable_heartbeat": "true",
@@ -1323,8 +1323,6 @@ def evaluate_profile_state(
         actual_height = int(row.get("height", 0) or 0)
         actual_encoding = str(row.get("encoding", "") or "").lower()
         resolution_match = actual_width == spec.width and actual_height == spec.height
-        expected_encodings = expected_ros_encodings(spec)
-        encoding_match = not expected_encodings or actual_encoding in expected_encodings
         checks.append(
             {
                 "topic": spec.topic,
@@ -1333,14 +1331,16 @@ def evaluate_profile_state(
                 "expected_height": spec.height,
                 "expected_fps": spec.fps,
                 "expected_format": spec.format,
-                "expected_ros_encodings": list(expected_encodings),
                 "actual_width": actual_width,
                 "actual_height": actual_height,
                 "actual_encoding": actual_encoding,
                 "resolution_match": resolution_match,
-                "format_encoding_check_supported": bool(expected_encodings),
-                "format_encoding_match": encoding_match,
-                "passed": resolution_match and encoding_match,
+                # SDK stream formats do not always map one-to-one to the ROS image
+                # encoding because the driver may publish the native pixels or a
+                # converted image. Keep both values for diagnostics without using
+                # them as a profile-verification condition.
+                "format_encoding_checked": False,
+                "passed": resolution_match,
             }
         )
     return {
