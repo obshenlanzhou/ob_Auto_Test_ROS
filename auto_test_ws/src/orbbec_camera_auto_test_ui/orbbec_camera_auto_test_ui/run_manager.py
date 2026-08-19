@@ -9,10 +9,11 @@ import signal
 import shutil
 import subprocess
 import threading
+from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Deque, Dict, List, Optional
 
 from .standalone import (
     build_command as build_standalone_command,
@@ -25,6 +26,7 @@ from .standalone import (
 
 DEFAULT_ROS_SETUP = "/opt/ros/humble/setup.bash"
 DEFAULT_ROS1_SETUP = "/opt/ros/one/setup.bash"
+MAX_BUFFERED_LOG_LINES = 2000
 
 
 def _first_existing_setup(base_dir: Path) -> str:
@@ -1064,7 +1066,10 @@ class TestJob:
     exit_code: Optional[int] = None
     started_at: str = field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
     ended_at: Optional[str] = None
-    logs: List[str] = field(default_factory=list)
+    logs: Deque[str] = field(
+        default_factory=lambda: deque(maxlen=MAX_BUFFERED_LOG_LINES)
+    )
+    log_line_count: int = field(default=0, init=False)
     lock: threading.Lock = field(default_factory=threading.Lock)
     stop_requested: bool = False
     stop_signal_sent: bool = False
@@ -1082,8 +1087,7 @@ class TestJob:
         text = line.rstrip("\n")
         with self.lock:
             self.logs.append(text)
-            if len(self.logs) > 2000:
-                self.logs = self.logs[-2000:]
+            self.log_line_count += 1
         log_path = self.run_root / "ui_stdout.log"
         ensure_dir(log_path.parent)
         with log_path.open("a", encoding="utf-8") as stream:
@@ -1093,6 +1097,15 @@ class TestJob:
         with self.lock:
             logs = list(self.logs)
             command_lines = list(self.command_lines)
+            log_end_offset = self.log_line_count
+        log_start_offset = log_end_offset - len(logs)
+        if log_start_offset <= log_offset <= log_end_offset:
+            log_index = log_offset - log_start_offset
+        else:
+            # The client fell behind the rolling buffer or supplied a stale
+            # cursor from another run. Return all retained logs so it catches up.
+            log_index = 0
+        pending_logs = logs[log_index:]
         standalone_events = (
             last_events(self.run_root / "events.jsonl", limit=1000)
             if self.runner_type == "standalone"
@@ -1139,8 +1152,8 @@ class TestJob:
                 "events": standalone_events[-25:],
                 "result": read_json(self.run_root / "result.json", {}),
             },
-            "log_offset": len(logs),
-            "logs": logs[log_offset:],
+            "log_offset": log_end_offset,
+            "logs": pending_logs,
         }
 
 

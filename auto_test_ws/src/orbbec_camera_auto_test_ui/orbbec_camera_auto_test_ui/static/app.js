@@ -2,6 +2,7 @@ const state = {
   config: {},
   logOffset: 0,
   polling: null,
+  statusPollPending: false,
   selectedRunId: null,
   selectedRunIds: new Set(),
   workspace: "framework",
@@ -16,7 +17,7 @@ const state = {
 };
 
 const $ = (id) => document.getElementById(id);
-const MAX_VISIBLE_LOG_LINES = 500;
+const MAX_VISIBLE_LOG_LINES = 100;
 const THEME_STORAGE_KEY = "orbbec-ui-theme";
 const THEME_COLORS = {
   light: "#f4f7fb",
@@ -1779,6 +1780,8 @@ function loadLaunchFiles() {
 }
 
 async function pollStatus() {
+  if (state.statusPollPending) return;
+  state.statusPollPending = true;
   try {
     const payload = await api(`/api/status?offset=${state.logOffset}`);
     setStatus(payload.status || "idle");
@@ -1806,6 +1809,8 @@ async function pollStatus() {
     }
   } catch (error) {
     appendLogs([`[UI] status poll failed: ${error.message}`]);
+  } finally {
+    state.statusPollPending = false;
   }
 }
 

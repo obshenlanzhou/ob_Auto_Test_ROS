@@ -307,6 +307,47 @@ def test_run_manager_accepts_valid_standalone_result(tmp_path):
     assert job.exit_code == 0
 
 
+def test_log_snapshot_cursor_survives_rolling_buffer(tmp_path):
+    job = _TestJob(
+        run_id="long-run",
+        mode="performance",
+        run_root=tmp_path,
+        command_lines=[],
+        shell="bash",
+    )
+
+    for index in range(2000):
+        job.add_log(f"log-{index}")
+    at_buffer_limit = job.snapshot(log_offset=1999)
+    assert at_buffer_limit["log_offset"] == 2000
+    assert at_buffer_limit["logs"] == ["log-1999"]
+
+    for index in range(2000, 2100):
+        job.add_log(f"log-{index}")
+    after_rollover = job.snapshot(log_offset=at_buffer_limit["log_offset"])
+    assert after_rollover["log_offset"] == 2100
+    assert after_rollover["logs"] == [f"log-{index}" for index in range(2000, 2100)]
+
+    stale_client = job.snapshot(log_offset=0)
+    assert stale_client["log_offset"] == 2100
+    assert len(stale_client["logs"]) == 2000
+    assert stale_client["logs"][0] == "log-100"
+    assert stale_client["logs"][-1] == "log-2099"
+
+
+def test_ui_keeps_only_latest_one_hundred_log_lines():
+    script = (
+        PACKAGE_ROOT
+        / "orbbec_camera_auto_test_ui"
+        / "static"
+        / "app.js"
+    ).read_text(encoding="utf-8")
+
+    assert "const MAX_VISIBLE_LOG_LINES = 100;" in script
+    assert "visibleLines.slice(-(MAX_VISIBLE_LOG_LINES + 1))" in script
+    assert "if (state.statusPollPending) return;" in script
+
+
 class _FakeProcess:
     def __init__(self, pid=1234):
         self.pid = pid
