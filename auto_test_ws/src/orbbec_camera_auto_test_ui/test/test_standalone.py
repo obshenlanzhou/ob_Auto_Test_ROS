@@ -477,6 +477,26 @@ def test_standalone_monitor_template_contains_only_compact_metrics():
     assert 'id="standaloneProgressStatus"' not in template
 
 
+def test_framework_and_standalone_warn_about_multi_camera_launch_configuration():
+    template = (
+        PACKAGE_ROOT
+        / "orbbec_camera_auto_test_ui"
+        / "templates"
+        / "index.html"
+    ).read_text(encoding="utf-8")
+    script = (
+        PACKAGE_ROOT
+        / "orbbec_camera_auto_test_ui"
+        / "static"
+        / "app.js"
+    ).read_text(encoding="utf-8")
+
+    warning = "页面设置的日志级别和 Launch 参数不会生效，请直接在 Launch 文件中配置。"
+    assert warning in template
+    assert warning in script
+    assert "groups.advanced.fields.prepend(multiCameraLaunchWarning)" in script
+
+
 def test_standalone_ros1_defaults_switch_setup_driver_and_launch(monkeypatch):
     monkeypatch.setattr(
         ui_server,

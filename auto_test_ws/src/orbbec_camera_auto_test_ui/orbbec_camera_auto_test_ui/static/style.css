@@ -774,6 +774,10 @@ h3 {
   line-height: 1.55;
 }
 
+.multi-camera-launch-warning {
+  margin: 0;
+}
+
 .selector-priority {
   border-left: 3px solid var(--primary);
   padding: 8px 11px;

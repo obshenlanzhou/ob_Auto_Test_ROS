@@ -781,6 +781,16 @@ function renderStandaloneForm(testId = "") {
       domainAttached = true;
     }
   }
+  const multiCameraLaunchWarning = document.createElement("p");
+  multiCameraLaunchWarning.className = "risk-banner multi-camera-launch-warning grid-span-2";
+  multiCameraLaunchWarning.setAttribute("role", "note");
+  const multiCameraLaunchWarningTitle = document.createElement("strong");
+  multiCameraLaunchWarningTitle.textContent = "多相机 Launch 提示：";
+  multiCameraLaunchWarning.append(
+    multiCameraLaunchWarningTitle,
+    "页面设置的日志级别和 Launch 参数不会生效，请直接在 Launch 文件中配置。"
+  );
+  groups.advanced.fields.prepend(multiCameraLaunchWarning);
   if (!domainAttached) groups.environment.fields.prepend(domainField);
   const limitFieldCount = groups.limits.fields.querySelectorAll(".standalone-field").length;
   groups.limits.fields.querySelector(".limits-note")
