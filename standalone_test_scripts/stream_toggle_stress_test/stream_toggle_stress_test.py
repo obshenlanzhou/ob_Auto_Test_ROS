@@ -36,7 +36,7 @@ from _sensor_artifacts import (
 
 ENV_READY_VAR = "STREAM_TOGGLE_STRESS_TEST_ENV_READY"
 INTERRUPTED = False
-TOOL_VERSION = "1.9.2"
+TOOL_VERSION = "1.9.1"
 TEST_ID = "stream_toggle_stress_test"
 DEFAULT_STRESS_LAUNCH_ARGS = {
     "enable_heartbeat": "true",
@@ -568,9 +568,6 @@ class RosHarness:
         self._stream_profile_message_type = None
         self._rosservice = None
         self._sensor_qos = None
-        self._subscription_callback_group = None
-        self._executor = None
-        self._executor_thread: Optional[threading.Thread] = None
         self.node = None
         self.subscriptions = []
 
@@ -578,8 +575,6 @@ class RosHarness:
         if self.ros_version == "2":
             try:
                 import rclpy
-                from rclpy.callback_groups import ReentrantCallbackGroup
-                from rclpy.executors import MultiThreadedExecutor
                 from rclpy.qos import qos_profile_sensor_data
                 from sensor_msgs.msg import CompressedImage, Image, Imu, PointCloud2
                 from std_srvs.srv import SetBool
@@ -610,16 +605,6 @@ class RosHarness:
                 self._set_stream_profile_type = SetStreamProfile
                 self._set_stream_profile_request_type = SetStreamProfile.Request
                 self._stream_profile_message_type = StreamProfile
-            self._subscription_callback_group = ReentrantCallbackGroup()
-            executor_threads = max(2, min(4, os.cpu_count() or 2))
-            self._executor = MultiThreadedExecutor(num_threads=executor_threads)
-            self._executor.add_node(self.node)
-            self._executor_thread = threading.Thread(
-                target=self._executor.spin,
-                name=f"{self.node_name}_executor",
-                daemon=True,
-            )
-            self._executor_thread.start()
         else:
             try:
                 import rosservice
@@ -687,11 +672,7 @@ class RosHarness:
         )
         if self.ros_version == "2":
             subscription = self.node.create_subscription(
-                message_type,
-                topic,
-                callback,
-                self._sensor_qos,
-                callback_group=self._subscription_callback_group,
+                message_type, topic, callback, self._sensor_qos
             )
         else:
             subscription = self._rospy.Subscriber(
@@ -704,11 +685,7 @@ class RosHarness:
         message_type = self._point_cloud_type if kind == "point_cloud" else self._imu_type
         if self.ros_version == "2":
             subscription = self.node.create_subscription(
-                message_type,
-                topic,
-                callback,
-                self._sensor_qos,
-                callback_group=self._subscription_callback_group,
+                message_type, topic, callback, self._sensor_qos
             )
         else:
             subscription = self._rospy.Subscriber(
@@ -726,11 +703,10 @@ class RosHarness:
             self.subscriptions.remove(subscription)
 
     def spin_once(self, timeout_sec: float) -> None:
-        # ROS2 callbacks are drained continuously by the background multi-threaded
-        # executor. Sleeping here preserves the polling cadence used by the shared
-        # ROS1/ROS2 verification loops without competing with that executor for the
-        # same node.
-        time.sleep(timeout_sec)
+        if self.ros_version == "2":
+            self._rclpy.spin_once(self.node, timeout_sec=timeout_sec)
+        else:
+            time.sleep(timeout_sec)
 
     def call_set_bool(self, service_name: str, enabled: bool, timeout: float) -> Dict[str, Any]:
         if self.ros_version == "2":
@@ -846,19 +822,6 @@ class RosHarness:
         }
 
     def __exit__(self, exc_type, exc, tb) -> None:
-        if self.ros_version == "2" and self._executor is not None:
-            try:
-                self._executor.remove_node(self.node)
-            except Exception:
-                pass
-            try:
-                self._executor.shutdown(timeout_sec=5.0)
-            except Exception:
-                pass
-            if self._executor_thread is not None:
-                self._executor_thread.join(timeout=5.0)
-            self._executor_thread = None
-            self._executor = None
         for subscription in list(self.subscriptions):
             try:
                 self.destroy_subscription(subscription)

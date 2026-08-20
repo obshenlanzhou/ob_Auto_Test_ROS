@@ -1012,35 +1012,3 @@ def test_stream_monitor_recreates_only_selected_subscription():
     assert harness.destroyed == [original_color]
     assert monitor.subscriptions[0] != original_color
     assert monitor.subscriptions[1] == original_depth
-
-
-def test_ros2_subscriptions_use_reentrant_callback_group():
-    module = load_script()
-    harness = module.RosHarness("2", "test", 10)
-    callback_group = object()
-
-    class Node:
-        def __init__(self):
-            self.calls = []
-
-        def create_subscription(self, *args, **kwargs):
-            subscription = (args, kwargs)
-            self.calls.append(subscription)
-            return subscription
-
-    harness.node = Node()
-    harness._image_type = object()
-    harness._point_cloud_type = object()
-    harness._sensor_qos = object()
-    harness._subscription_callback_group = callback_group
-
-    harness.create_image_subscription("/camera/color/image_raw", lambda _message: None)
-    harness.create_sensor_subscription(
-        "/camera/depth/points", "point_cloud", lambda _message: None
-    )
-
-    assert len(harness.node.calls) == 2
-    assert all(
-        kwargs["callback_group"] is callback_group
-        for _args, kwargs in harness.node.calls
-    )
