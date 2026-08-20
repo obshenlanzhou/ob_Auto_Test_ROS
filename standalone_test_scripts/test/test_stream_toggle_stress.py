@@ -793,6 +793,140 @@ def test_profile_verification_does_not_recreate_when_frames_were_received(monkey
         )
 
 
+def test_enabled_verification_recreates_stalled_subscriptions_once(monkeypatch):
+    module = load_script()
+    color_topic = "/camera/color/image_raw"
+    depth_topic = "/camera/depth/image_raw"
+    verification_calls = []
+
+    def wait_for_enabled_state(**_kwargs):
+        verification_calls.append(True)
+        if len(verification_calls) == 1:
+            raise module.StreamVerificationError(
+                "timed out",
+                {
+                    "topics": [
+                        {"topic": color_topic, "window_message_count": 0},
+                        {"topic": depth_topic, "window_message_count": 200},
+                    ]
+                },
+            )
+        return {"all_streams_stable": True, "topics": []}
+
+    monkeypatch.setattr(module, "wait_for_enabled_state", wait_for_enabled_state)
+
+    class Monitor:
+        def __init__(self):
+            self.reset_count = 0
+            self.recreated = []
+
+        def reset_window(self):
+            self.reset_count += 1
+
+        def recreate_subscriptions(self, topics):
+            self.recreated.append(list(topics))
+
+    monitor = Monitor()
+    warnings = []
+    emitted = []
+    result = module.wait_for_enabled_state_with_subscription_recovery(
+        session=object(),
+        harness=object(),
+        monitor=monitor,
+        stable_seconds=5.0,
+        max_gap_seconds=1.5,
+        timeout=20.0,
+        cycle_index=2,
+        operation_label=color_topic,
+        warnings=warnings,
+        emit=emitted.append,
+    )
+
+    assert len(verification_calls) == 2
+    assert monitor.reset_count == 1
+    assert monitor.recreated == [[color_topic]]
+    assert warnings[0]["action"] == "recreate-stream-subscriptions"
+    assert result["subscription_recovery"]["attempted"] is True
+    assert "retrying once" in emitted[0]
+
+
+def test_enabled_verification_does_not_recreate_when_streams_are_stable(monkeypatch):
+    module = load_script()
+    expected = {"all_streams_stable": True, "topics": []}
+    monkeypatch.setattr(
+        module,
+        "wait_for_enabled_state",
+        lambda **_kwargs: dict(expected),
+    )
+
+    class Monitor:
+        def __init__(self):
+            self.reset_count = 0
+
+        def reset_window(self):
+            self.reset_count += 1
+
+        def recreate_subscriptions(self, _topics):
+            raise AssertionError("stable streams must not recreate subscriptions")
+
+    monitor = Monitor()
+    result = module.wait_for_enabled_state_with_subscription_recovery(
+        session=object(),
+        harness=object(),
+        monitor=monitor,
+        stable_seconds=5.0,
+        max_gap_seconds=1.5,
+        timeout=20.0,
+        cycle_index=1,
+        operation_label="all streams",
+        warnings=[],
+        emit=lambda _message: None,
+    )
+
+    assert monitor.reset_count == 1
+    assert result["subscription_recovery"] == {"attempted": False, "topics": []}
+
+
+def test_enabled_verification_preserves_recovery_details_after_retry_failure(
+    monkeypatch,
+):
+    module = load_script()
+    topic = "/camera/depth/image_raw"
+
+    def wait_for_enabled_state(**_kwargs):
+        raise module.StreamVerificationError(
+            "timed out",
+            {"topics": [{"topic": topic, "window_message_count": 0}]},
+        )
+
+    monkeypatch.setattr(module, "wait_for_enabled_state", wait_for_enabled_state)
+
+    class Monitor:
+        def reset_window(self):
+            pass
+
+        def recreate_subscriptions(self, topics):
+            assert topics == [topic]
+
+    with pytest.raises(module.StreamVerificationError) as raised:
+        module.wait_for_enabled_state_with_subscription_recovery(
+            session=object(),
+            harness=object(),
+            monitor=Monitor(),
+            stable_seconds=5.0,
+            max_gap_seconds=1.5,
+            timeout=20.0,
+            cycle_index=4,
+            operation_label=topic,
+            warnings=[],
+            emit=lambda _message: None,
+        )
+
+    recovery = raised.value.details["subscription_recovery"]
+    assert recovery["attempted"] is True
+    assert recovery["topics"] == [topic]
+
+
 def test_all_disabled_state_requires_every_target_to_be_quiet(monkeypatch):
     module = load_script()
 

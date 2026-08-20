@@ -36,7 +36,7 @@ from _sensor_artifacts import (
 
 ENV_READY_VAR = "STREAM_TOGGLE_STRESS_TEST_ENV_READY"
 INTERRUPTED = False
-TOOL_VERSION = "1.9.1"
+TOOL_VERSION = "1.9.2"
 TEST_ID = "stream_toggle_stress_test"
 DEFAULT_STRESS_LAUNCH_ARGS = {
     "enable_heartbeat": "true",
@@ -1286,6 +1286,77 @@ def wait_for_enabled_state(
     )
 
 
+def stalled_topics_from_verification(error: StreamVerificationError) -> List[str]:
+    return sorted(
+        str(row.get("topic", ""))
+        for row in error.details.get("topics", [])
+        if row.get("topic") and int(row.get("window_message_count", 0) or 0) == 0
+    )
+
+
+def wait_for_enabled_state_with_subscription_recovery(
+    *,
+    session: LaunchSession,
+    harness: RosHarness,
+    monitor: StreamMonitor,
+    stable_seconds: float,
+    max_gap_seconds: float,
+    timeout: float,
+    cycle_index: int,
+    operation_label: str,
+    warnings: List[Dict[str, Any]],
+    emit: StatusLogger,
+) -> Dict[str, Any]:
+    monitor.reset_window()
+    subscription_recovery: Dict[str, Any] = {"attempted": False, "topics": []}
+    try:
+        state = wait_for_enabled_state(
+            session=session,
+            harness=harness,
+            monitor=monitor,
+            stable_seconds=stable_seconds,
+            max_gap_seconds=max_gap_seconds,
+            timeout=timeout,
+        )
+    except StreamVerificationError as first_error:
+        stalled_topics = stalled_topics_from_verification(first_error)
+        if not stalled_topics:
+            raise
+        subscription_recovery = {
+            "attempted": True,
+            "topics": stalled_topics,
+            "initial_failure": first_error.details,
+        }
+        warning = {
+            "cycle": cycle_index,
+            "action": "recreate-stream-subscriptions",
+            "operation": operation_label,
+            "topics": stalled_topics,
+            "message": (
+                f"WARNING: cycle {cycle_index}: no frames received on "
+                f"{', '.join(stalled_topics)} after enabling {operation_label}; "
+                "recreated subscriptions and retrying once"
+            ),
+        }
+        warnings.append(warning)
+        emit(warning["message"])
+        monitor.recreate_subscriptions(stalled_topics)
+        try:
+            state = wait_for_enabled_state(
+                session=session,
+                harness=harness,
+                monitor=monitor,
+                stable_seconds=stable_seconds,
+                max_gap_seconds=max_gap_seconds,
+                timeout=timeout,
+            )
+        except StreamVerificationError as retry_error:
+            retry_error.details["subscription_recovery"] = subscription_recovery
+            raise
+    state["subscription_recovery"] = subscription_recovery
+    return state
+
+
 def expected_ros_encodings(spec: StreamProfileSpec) -> Tuple[str, ...]:
     stream_format = spec.format.upper()
     if not stream_format or stream_format == "ANY":
@@ -1509,11 +1580,7 @@ def apply_profile_set(
             timeout=stream_timeout,
         )
     except StreamVerificationError as first_error:
-        stalled_topics = sorted(
-            str(row.get("topic", ""))
-            for row in first_error.details.get("topics", [])
-            if row.get("topic") and int(row.get("window_message_count", 0) or 0) == 0
-        )
+        stalled_topics = stalled_topics_from_verification(first_error)
         if not stalled_topics:
             raise
         subscription_recovery = {
@@ -2588,14 +2655,19 @@ def run(args) -> int:
                                 }
                                 result["warnings"].append(warning)
                                 emit(warning["message"])
-                        monitor.reset_window()
-                        operation["enabled_state"] = wait_for_enabled_state(
-                            session=session,
-                            harness=harness,
-                            monitor=monitor,
-                            stable_seconds=config["stream_on_preview"],
-                            max_gap_seconds=config["max_gap"],
-                            timeout=config["stream_timeout"],
+                        operation["enabled_state"] = (
+                            wait_for_enabled_state_with_subscription_recovery(
+                                session=session,
+                                harness=harness,
+                                monitor=monitor,
+                                stable_seconds=config["stream_on_preview"],
+                                max_gap_seconds=config["max_gap"],
+                                timeout=config["stream_timeout"],
+                                cycle_index=cycle_index,
+                                operation_label="all streams",
+                                warnings=result["warnings"],
+                                emit=emit,
+                            )
                         )
                         if active_profile_specs:
                             operation["profile_state_after_toggle"] = verify_profile_snapshot(
@@ -2775,14 +2847,19 @@ def run(args) -> int:
                             }
                             result["warnings"].append(warning)
                             emit(warning["message"])
-                        monitor.reset_window()
-                        operation["enabled_state"] = wait_for_enabled_state(
-                            session=session,
-                            harness=harness,
-                            monitor=monitor,
-                            stable_seconds=config["stream_on_preview"],
-                            max_gap_seconds=config["max_gap"],
-                            timeout=config["stream_timeout"],
+                        operation["enabled_state"] = (
+                            wait_for_enabled_state_with_subscription_recovery(
+                                session=session,
+                                harness=harness,
+                                monitor=monitor,
+                                stable_seconds=config["stream_on_preview"],
+                                max_gap_seconds=config["max_gap"],
+                                timeout=config["stream_timeout"],
+                                cycle_index=cycle_index,
+                                operation_label=target.topic,
+                                warnings=result["warnings"],
+                                emit=emit,
+                            )
                         )
                         if active_profile_specs:
                             operation["profile_state_after_toggle"] = verify_profile_snapshot(
