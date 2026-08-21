@@ -3,7 +3,7 @@ from __future__ import annotations
 import importlib.util
 import sys
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
@@ -508,6 +508,79 @@ def test_ros1_service_graph_uses_rosservice_types():
         "/camera/toggle_color": ["std_srvs/SetBool"],
         "/camera/toggle_depth": ["orbbec_camera_msgs/GetBool"],
     }
+
+
+def test_ros2_harness_uses_dedicated_single_threaded_executor(monkeypatch):
+    module = load_script()
+    calls = []
+
+    class FakeNode:
+        def destroy_node(self):
+            calls.append(("destroy_node",))
+
+    node = FakeNode()
+
+    class FakeExecutor:
+        def __init__(self):
+            calls.append(("executor_init",))
+
+        def add_node(self, added_node):
+            assert added_node is node
+            calls.append(("add_node",))
+
+        def spin_once(self, timeout_sec):
+            calls.append(("spin_once", timeout_sec))
+
+        def remove_node(self, removed_node):
+            assert removed_node is node
+            calls.append(("remove_node",))
+
+        def shutdown(self, timeout_sec):
+            calls.append(("executor_shutdown", timeout_sec))
+
+    rclpy = ModuleType("rclpy")
+    rclpy.init = lambda *, args: calls.append(("rclpy_init", args))
+    rclpy.create_node = lambda name: (
+        calls.append(("create_node", name)) or node
+    )
+    rclpy.ok = lambda: True
+    rclpy.shutdown = lambda: calls.append(("rclpy_shutdown",))
+
+    executors = ModuleType("rclpy.executors")
+    executors.SingleThreadedExecutor = FakeExecutor
+    qos = ModuleType("rclpy.qos")
+    qos.qos_profile_sensor_data = object()
+    sensor_msgs = ModuleType("sensor_msgs")
+    sensor_msgs_msg = ModuleType("sensor_msgs.msg")
+    sensor_msgs_msg.CompressedImage = type("CompressedImage", (), {})
+    sensor_msgs_msg.Image = type("Image", (), {})
+    sensor_msgs_msg.Imu = type("Imu", (), {})
+    sensor_msgs_msg.PointCloud2 = type("PointCloud2", (), {})
+    std_srvs = ModuleType("std_srvs")
+    std_srvs_srv = ModuleType("std_srvs.srv")
+    std_srvs_srv.SetBool = type("SetBool", (), {})
+
+    for name, fake_module in {
+        "rclpy": rclpy,
+        "rclpy.executors": executors,
+        "rclpy.qos": qos,
+        "sensor_msgs": sensor_msgs,
+        "sensor_msgs.msg": sensor_msgs_msg,
+        "std_srvs": std_srvs,
+        "std_srvs.srv": std_srvs_srv,
+    }.items():
+        monkeypatch.setitem(sys.modules, name, fake_module)
+
+    with module.RosHarness("2", "stream_toggle_test", 10) as harness:
+        harness.spin_once(0.25)
+        assert isinstance(harness._executor, FakeExecutor)
+
+    assert ("rclpy_init", []) in calls
+    assert ("spin_once", 0.25) in calls
+    assert calls.index(("add_node",)) < calls.index(("spin_once", 0.25))
+    assert calls.index(("remove_node",)) < calls.index(("destroy_node",))
+    assert ("executor_shutdown", 5.0) in calls
+    assert calls[-1] == ("rclpy_shutdown",)
 
 
 def test_single_camera_args_are_injected_only_when_provided():

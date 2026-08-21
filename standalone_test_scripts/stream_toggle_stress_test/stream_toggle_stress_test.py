@@ -36,7 +36,7 @@ from _sensor_artifacts import (
 
 ENV_READY_VAR = "STREAM_TOGGLE_STRESS_TEST_ENV_READY"
 INTERRUPTED = False
-TOOL_VERSION = "1.9.2"
+TOOL_VERSION = "1.9.3"
 TEST_ID = "stream_toggle_stress_test"
 DEFAULT_STRESS_LAUNCH_ARGS = {
     "enable_heartbeat": "true",
@@ -568,6 +568,7 @@ class RosHarness:
         self._stream_profile_message_type = None
         self._rosservice = None
         self._sensor_qos = None
+        self._executor = None
         self.node = None
         self.subscriptions = []
 
@@ -575,6 +576,7 @@ class RosHarness:
         if self.ros_version == "2":
             try:
                 import rclpy
+                from rclpy.executors import SingleThreadedExecutor
                 from rclpy.qos import qos_profile_sensor_data
                 from sensor_msgs.msg import CompressedImage, Image, Imu, PointCloud2
                 from std_srvs.srv import SetBool
@@ -584,9 +586,20 @@ class RosHarness:
                     "before running, or pass --ros-setup/--driver-setup. "
                     f"Original error: {exc}"
                 ) from exc
-            rclpy.init(args=None)
+            # Do not let rclpy parse this standalone tool's CLI. Tokens such as
+            # ``--launch-arg camera_name:=camera`` are launch arguments, not ROS
+            # remap rules for the monitor node.
+            rclpy.init(args=[])
             self._rclpy = rclpy
             self.node = rclpy.create_node(self.node_name)
+            # Keep one executor attached for the full harness lifetime. Using the
+            # process-global executor through rclpy.spin_once(node) while creating
+            # and destroying temporary point-cloud subscriptions and service
+            # clients can leave its wait set stale after repeated stream toggles.
+            # A dedicated single-threaded executor also guarantees that callbacks
+            # finish before their subscriptions are destroyed.
+            self._executor = SingleThreadedExecutor()
+            self._executor.add_node(self.node)
             self._image_type = Image
             self._compressed_image_type = CompressedImage
             self._point_cloud_type = PointCloud2
@@ -704,7 +717,9 @@ class RosHarness:
 
     def spin_once(self, timeout_sec: float) -> None:
         if self.ros_version == "2":
-            self._rclpy.spin_once(self.node, timeout_sec=timeout_sec)
+            if self._executor is None:
+                raise RuntimeError("ROS2 executor is not initialized")
+            self._executor.spin_once(timeout_sec=timeout_sec)
         else:
             time.sleep(timeout_sec)
 
@@ -828,8 +843,20 @@ class RosHarness:
             except Exception:
                 pass
         if self.ros_version == "2":
+            if self._executor is not None:
+                try:
+                    if self.node is not None:
+                        self._executor.remove_node(self.node)
+                except Exception:
+                    pass
+                try:
+                    self._executor.shutdown(timeout_sec=5.0)
+                except Exception:
+                    pass
+                self._executor = None
             try:
-                self.node.destroy_node()
+                if self.node is not None:
+                    self.node.destroy_node()
             except Exception:
                 pass
             try:
