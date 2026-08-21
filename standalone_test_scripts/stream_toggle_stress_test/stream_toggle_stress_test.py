@@ -36,7 +36,7 @@ from _sensor_artifacts import (
 
 ENV_READY_VAR = "STREAM_TOGGLE_STRESS_TEST_ENV_READY"
 INTERRUPTED = False
-TOOL_VERSION = "1.9.3"
+TOOL_VERSION = "1.9.4"
 TEST_ID = "stream_toggle_stress_test"
 DEFAULT_STRESS_LAUNCH_ARGS = {
     "enable_heartbeat": "true",
@@ -569,6 +569,11 @@ class RosHarness:
         self._rosservice = None
         self._sensor_qos = None
         self._executor = None
+        self._set_bool_clients: Dict[str, Any] = {}
+        self._set_stream_profile_clients: Dict[str, Any] = {}
+        self._sensor_harnesses: List["RosDataHarness"] = []
+        self._spin_harnesses: List["RosDataHarness"] = []
+        self.rmw_implementation = ""
         self.node = None
         self.subscriptions = []
 
@@ -591,6 +596,11 @@ class RosHarness:
             # remap rules for the monitor node.
             rclpy.init(args=[])
             self._rclpy = rclpy
+            get_rmw_identifier = getattr(
+                rclpy, "get_rmw_implementation_identifier", None
+            )
+            if callable(get_rmw_identifier):
+                self.rmw_implementation = str(get_rmw_identifier())
             self.node = rclpy.create_node(self.node_name)
             # Keep one executor attached for the full harness lifetime. Using the
             # process-global executor through rclpy.spin_once(node) while creating
@@ -707,6 +717,28 @@ class RosHarness:
         self.subscriptions.append(subscription)
         return subscription
 
+    def create_dedicated_sensor_harness(self) -> "RosDataHarness":
+        if self.ros_version != "2":
+            raise RuntimeError("dedicated sensor harness is only available on ROS2")
+        harness = RosDataHarness(self)
+        self._sensor_harnesses.append(harness)
+        return harness
+
+    def create_dedicated_image_harness(self) -> "RosDataHarness":
+        if self.ros_version != "2":
+            raise RuntimeError("dedicated image harness is only available on ROS2")
+        harness = RosDataHarness(self, suffix="images")
+        self._sensor_harnesses.append(harness)
+        self._spin_harnesses.append(harness)
+        return harness
+
+    def close_dedicated_sensor_harness(self, harness: "RosDataHarness") -> None:
+        harness.close()
+        if harness in self._sensor_harnesses:
+            self._sensor_harnesses.remove(harness)
+        if harness in self._spin_harnesses:
+            self._spin_harnesses.remove(harness)
+
     def destroy_subscription(self, subscription) -> None:
         if self.ros_version == "2":
             self.node.destroy_subscription(subscription)
@@ -719,35 +751,44 @@ class RosHarness:
         if self.ros_version == "2":
             if self._executor is None:
                 raise RuntimeError("ROS2 executor is not initialized")
-            self._executor.spin_once(timeout_sec=timeout_sec)
+            if self._spin_harnesses:
+                # Service responses live on the control executor; image callbacks
+                # live in isolated contexts. Poll control first, then spend the
+                # requested wait time on the image executor.
+                self._executor.spin_once(timeout_sec=0.0)
+                for harness in self._spin_harnesses[:-1]:
+                    harness.spin_once(0.0)
+                self._spin_harnesses[-1].spin_once(timeout_sec)
+            else:
+                self._executor.spin_once(timeout_sec=timeout_sec)
         else:
             time.sleep(timeout_sec)
 
     def call_set_bool(self, service_name: str, enabled: bool, timeout: float) -> Dict[str, Any]:
         if self.ros_version == "2":
-            client = self.node.create_client(self._set_bool_type, service_name)
-            try:
-                started = time.monotonic()
-                if not client.wait_for_service(timeout_sec=timeout):
-                    raise TimeoutError(f"service not available within {timeout:.1f}s")
-                remaining = max(timeout - (time.monotonic() - started), 0.001)
-                request = self._set_bool_type.Request()
-                request.data = enabled
-                future = client.call_async(request)
-                deadline = time.monotonic() + remaining
-                while not future.done() and time.monotonic() < deadline:
-                    self.spin_once(min(0.1, max(deadline - time.monotonic(), 0.001)))
-                if not future.done():
-                    raise TimeoutError(f"service call timed out after {timeout:.1f}s")
-                response = future.result()
-                if response is None:
-                    raise RuntimeError("service returned no response")
-                return {
-                    "success": bool(response.success),
-                    "message": str(response.message or ""),
-                }
-            finally:
-                self.node.destroy_client(client)
+            client = self._set_bool_clients.get(service_name)
+            if client is None:
+                client = self.node.create_client(self._set_bool_type, service_name)
+                self._set_bool_clients[service_name] = client
+            started = time.monotonic()
+            if not client.wait_for_service(timeout_sec=timeout):
+                raise TimeoutError(f"service not available within {timeout:.1f}s")
+            remaining = max(timeout - (time.monotonic() - started), 0.001)
+            request = self._set_bool_type.Request()
+            request.data = enabled
+            future = client.call_async(request)
+            deadline = time.monotonic() + remaining
+            while not future.done() and time.monotonic() < deadline:
+                self.spin_once(min(0.1, max(deadline - time.monotonic(), 0.001)))
+            if not future.done():
+                raise TimeoutError(f"service call timed out after {timeout:.1f}s")
+            response = future.result()
+            if response is None:
+                raise RuntimeError("service returned no response")
+            return {
+                "success": bool(response.success),
+                "message": str(response.message or ""),
+            }
 
         self._rospy.wait_for_service(service_name, timeout=timeout)
         holder: Dict[str, Any] = {}
@@ -791,27 +832,29 @@ class RosHarness:
             request.profiles.append(message)
 
         if self.ros_version == "2":
-            client = self.node.create_client(self._set_stream_profile_type, service_name)
-            try:
-                started = time.monotonic()
-                if not client.wait_for_service(timeout_sec=timeout):
-                    raise TimeoutError(f"service not available within {timeout:.1f}s")
-                remaining = max(timeout - (time.monotonic() - started), 0.001)
-                future = client.call_async(request)
-                deadline = time.monotonic() + remaining
-                while not future.done() and time.monotonic() < deadline:
-                    self.spin_once(min(0.1, max(deadline - time.monotonic(), 0.001)))
-                if not future.done():
-                    raise TimeoutError(f"service call timed out after {timeout:.1f}s")
-                response = future.result()
-                if response is None:
-                    raise RuntimeError("service returned no response")
-                return {
-                    "success": bool(response.success),
-                    "message": str(response.message or ""),
-                }
-            finally:
-                self.node.destroy_client(client)
+            client = self._set_stream_profile_clients.get(service_name)
+            if client is None:
+                client = self.node.create_client(
+                    self._set_stream_profile_type, service_name
+                )
+                self._set_stream_profile_clients[service_name] = client
+            started = time.monotonic()
+            if not client.wait_for_service(timeout_sec=timeout):
+                raise TimeoutError(f"service not available within {timeout:.1f}s")
+            remaining = max(timeout - (time.monotonic() - started), 0.001)
+            future = client.call_async(request)
+            deadline = time.monotonic() + remaining
+            while not future.done() and time.monotonic() < deadline:
+                self.spin_once(min(0.1, max(deadline - time.monotonic(), 0.001)))
+            if not future.done():
+                raise TimeoutError(f"service call timed out after {timeout:.1f}s")
+            response = future.result()
+            if response is None:
+                raise RuntimeError("service returned no response")
+            return {
+                "success": bool(response.success),
+                "message": str(response.message or ""),
+            }
 
         self._rospy.wait_for_service(service_name, timeout=timeout)
         holder: Dict[str, Any] = {}
@@ -837,12 +880,29 @@ class RosHarness:
         }
 
     def __exit__(self, exc_type, exc, tb) -> None:
+        for sensor_harness in list(self._sensor_harnesses):
+            try:
+                sensor_harness.close()
+            except Exception:
+                pass
+        self._sensor_harnesses.clear()
+        self._spin_harnesses.clear()
         for subscription in list(self.subscriptions):
             try:
                 self.destroy_subscription(subscription)
             except Exception:
                 pass
         if self.ros_version == "2":
+            for client in [
+                *self._set_bool_clients.values(),
+                *self._set_stream_profile_clients.values(),
+            ]:
+                try:
+                    self.node.destroy_client(client)
+                except Exception:
+                    pass
+            self._set_bool_clients.clear()
+            self._set_stream_profile_clients.clear()
             if self._executor is not None:
                 try:
                     if self.node is not None:
@@ -864,6 +924,124 @@ class RosHarness:
                     self._rclpy.shutdown()
             except Exception:
                 pass
+
+
+class RosDataHarness:
+    """ROS2 data readers isolated from the control executor and DDS participant."""
+
+    def __init__(self, parent: RosHarness, suffix: str = "sensors") -> None:
+        self._parent = parent
+        self._rclpy = parent._rclpy
+        self._sensor_qos = parent._sensor_qos
+        self._image_type = parent._image_type
+        self._compressed_image_type = parent._compressed_image_type
+        self._point_cloud_type = parent._point_cloud_type
+        self._imu_type = parent._imu_type
+        self._node_name = parent.node_name + "_" + suffix
+        self._context = None
+        self.node = None
+        self._executor = None
+        self.subscriptions: List[Any] = []
+        self._subscription_specs: Dict[Any, Tuple[str, str, Any, str]] = {}
+        self._initialize()
+
+    def _initialize(self) -> None:
+        from rclpy.signals import SignalHandlerOptions
+
+        self._context = self._rclpy.Context()
+        self._rclpy.init(
+            args=[],
+            context=self._context,
+            signal_handler_options=SignalHandlerOptions.NO,
+        )
+        self.node = self._rclpy.create_node(
+            self._node_name, context=self._context
+        )
+        self._executor = type(self._parent._executor)(context=self._context)
+        self._executor.add_node(self.node)
+
+    def create_image_subscription(self, topic: str, callback, topic_kind: str = "raw"):
+        message_type = (
+            self._compressed_image_type if topic_kind == "compressed" else self._image_type
+        )
+        subscription = self.node.create_subscription(
+            message_type, topic, callback, self._sensor_qos
+        )
+        self.subscriptions.append(subscription)
+        self._subscription_specs[subscription] = (
+            "image",
+            topic,
+            callback,
+            topic_kind,
+        )
+        return subscription
+
+    def create_sensor_subscription(self, topic: str, kind: str, callback):
+        message_type = self._point_cloud_type if kind == "point_cloud" else self._imu_type
+        subscription = self.node.create_subscription(
+            message_type, topic, callback, self._sensor_qos
+        )
+        self.subscriptions.append(subscription)
+        self._subscription_specs[subscription] = (
+            "sensor",
+            topic,
+            callback,
+            kind,
+        )
+        return subscription
+
+    def destroy_subscription(self, subscription) -> None:
+        if self.node is not None:
+            self.node.destroy_subscription(subscription)
+        if subscription in self.subscriptions:
+            self.subscriptions.remove(subscription)
+        self._subscription_specs.pop(subscription, None)
+
+    def spin_once(self, timeout_sec: float) -> None:
+        if self._executor is not None:
+            self._executor.spin_once(timeout_sec=timeout_sec)
+
+    def reset(self) -> None:
+        """Replace the complete context/participant after a reader stalls."""
+        specs = list(self._subscription_specs.values())
+        self._close_runtime()
+        self._initialize()
+        for entity_kind, topic, callback, detail in specs:
+            if entity_kind == "image":
+                self.create_image_subscription(
+                    topic, callback, topic_kind=detail
+                )
+            else:
+                self.create_sensor_subscription(topic, detail, callback)
+
+    def _close_runtime(self) -> None:
+        for subscription in list(self.subscriptions):
+            try:
+                self.destroy_subscription(subscription)
+            except Exception:
+                pass
+        try:
+            if self._executor is not None and self.node is not None:
+                self._executor.remove_node(self.node)
+        except Exception:
+            pass
+        try:
+            if self._executor is not None:
+                self._executor.shutdown(timeout_sec=5.0)
+        except Exception:
+            pass
+        try:
+            if self.node is not None:
+                self.node.destroy_node()
+        finally:
+            if self._context is not None and self._context.ok():
+                self._context.shutdown()
+        self.node = None
+        self._executor = None
+        self._context = None
+
+    def close(self) -> None:
+        self._close_runtime()
 
 
 def _target_sort_key(target: StreamTarget) -> Tuple[str, str, str]:
@@ -1030,7 +1208,7 @@ class StreamMonitor:
             topic, lambda message, name=topic: self._on_message(name, message)
         )
 
-    def recreate_subscriptions(self, topics: Sequence[str]) -> None:
+    def recreate_subscriptions(self, topics: Sequence[str]) -> str:
         selected = set(topics)
         unknown = selected.difference(self.topics)
         if unknown:
@@ -1038,16 +1216,26 @@ class StreamMonitor:
                 "cannot recreate subscriptions for unknown topics: "
                 + ", ".join(sorted(unknown))
             )
-        for topic in self.topics:
-            if topic not in selected:
-                continue
-            old_subscription = self._subscriptions_by_topic[topic]
-            self.harness.destroy_subscription(old_subscription)
-            self._subscriptions_by_topic[topic] = self._create_subscription(topic)
+        reset_harness = getattr(self.harness, "reset", None)
+        if callable(reset_harness):
+            # A reader that cannot recover after subscription recreation may be
+            # stuck at the participant/transport layer. Replace the entire isolated
+            # context and rebuild every image reader together.
+            reset_harness()
+            recovery_scope = "context"
+        else:
+            for topic in self.topics:
+                if topic not in selected:
+                    continue
+                old_subscription = self._subscriptions_by_topic[topic]
+                self.harness.destroy_subscription(old_subscription)
+                self._subscriptions_by_topic[topic] = self._create_subscription(topic)
+            recovery_scope = "subscriptions"
         self.subscriptions = [
             self._subscriptions_by_topic[topic] for topic in self.topics
         ]
         self.reset_window()
+        return recovery_scope
 
     def _on_message(self, topic: str, message: Any) -> None:
         if not _valid_image(message):
@@ -1356,18 +1544,19 @@ def wait_for_enabled_state_with_subscription_recovery(
         }
         warning = {
             "cycle": cycle_index,
-            "action": "recreate-stream-subscriptions",
+            "action": "rebuild-stream-monitor",
             "operation": operation_label,
             "topics": stalled_topics,
             "message": (
                 f"WARNING: cycle {cycle_index}: no frames received on "
                 f"{', '.join(stalled_topics)} after enabling {operation_label}; "
-                "recreated subscriptions and retrying once"
+                "rebuilding the isolated ROS monitor context and retrying once"
             ),
         }
         warnings.append(warning)
         emit(warning["message"])
-        monitor.recreate_subscriptions(stalled_topics)
+        recovery_scope = monitor.recreate_subscriptions(stalled_topics)
+        subscription_recovery["scope"] = recovery_scope or "subscriptions"
         try:
             state = wait_for_enabled_state(
                 session=session,
@@ -1617,18 +1806,19 @@ def apply_profile_set(
         }
         warning = {
             "cycle": cycle_index,
-            "action": "recreate-stream-subscriptions",
+            "action": "rebuild-stream-monitor",
             "profile_set": label,
             "topics": stalled_topics,
             "message": (
                 f"WARNING: cycle {cycle_index}: no frames received on "
                 f"{', '.join(stalled_topics)} during profile set {label} verification; "
-                "recreated subscriptions and retrying once"
+                "rebuilding the isolated ROS monitor context and retrying once"
             ),
         }
         warnings.append(warning)
         emit(warning["message"])
-        monitor.recreate_subscriptions(stalled_topics)
+        recovery_scope = monitor.recreate_subscriptions(stalled_topics)
+        subscription_recovery["scope"] = recovery_scope or "subscriptions"
         try:
             state = wait_for_profile_state(
                 session=session,
@@ -2059,6 +2249,7 @@ def build_summary(result: Dict[str, Any]) -> str:
         "",
         f"- Status: {result.get('status', '')}",
         f"- Tool version: {result.get('tool_version', '')}",
+        f"- ROS 2 middleware: {result.get('rmw_implementation', '') or 'n/a'}",
         f"- Toggle mode: {result.get('toggle_mode', 'individual')}",
         f"- Stream profile switching: "
         f"{'enabled' if result.get('profile_switch_enabled') else 'disabled'}",
@@ -2361,6 +2552,9 @@ def run(args) -> int:
             args.queue_size,
             enable_profile_switch=config["profile_switch_enabled"],
         ) as harness:
+            if harness.rmw_implementation:
+                result["rmw_implementation"] = harness.rmw_implementation
+                emit(f"ROS2 middleware: {harness.rmw_implementation}")
             targets, skipped = discover_stream_targets(
                 session=session,
                 harness=harness,
@@ -2420,14 +2614,21 @@ def run(args) -> int:
             )
             for item in skipped:
                 emit(f"skip image topic {item['topic']}: {item['reason']}")
-            monitor = StreamMonitor(harness, [target.topic for target in targets])
+            image_harness = (
+                harness.create_dedicated_image_harness()
+                if args.ros_version == "2"
+                else harness
+            )
+            monitor = StreamMonitor(
+                image_harness, [target.topic for target in targets]
+            )
             if image_writer is not None:
                 # Raw save topics are already subscribed by StreamMonitor. Reuse that
                 # message stream so image saving does not double the DDS traffic and
                 # starve verification callbacks. Only supplemental topics such as
                 # /compressed need their own subscription.
                 image_save_monitor = ImageSaveMonitor(
-                    harness,
+                    image_harness,
                     all_save_targets,
                     shared_monitor=monitor,
                 )
@@ -2465,20 +2666,34 @@ def run(args) -> int:
             )
 
             def capture_on_state_sensors():
+                if not point_cloud_topics and not imu_topics:
+                    return []
                 sensor_timeout = max(
                     config["save_image_timeout"],
                     2.0 * max(args.save_image_count, 1) + 5.0,
                 )
-                ok, snapshot, message = capture_sensor_artifacts(
-                    harness=harness,
-                    point_cloud_topics=point_cloud_topics,
-                    imu_topics=imu_topics,
-                    topic_cameras=sensor_topic_cameras,
-                    output_root=results_dir / "images",
-                    save_count=args.save_image_count,
-                    timeout=sensor_timeout,
-                    ensure_running=session.assert_running,
+                # PointCloud2 messages are much larger than images. On ROS2, collect
+                # them through a short-lived context/participant so sensor reader
+                # churn never mutates or poisons the image/control executor.
+                dedicated_harness = (
+                    harness.create_dedicated_sensor_harness()
+                    if args.ros_version == "2"
+                    else harness
                 )
+                try:
+                    ok, snapshot, message = capture_sensor_artifacts(
+                        harness=dedicated_harness,
+                        point_cloud_topics=point_cloud_topics,
+                        imu_topics=imu_topics,
+                        topic_cameras=sensor_topic_cameras,
+                        output_root=results_dir / "images",
+                        save_count=args.save_image_count,
+                        timeout=sensor_timeout,
+                        ensure_running=session.assert_running,
+                    )
+                finally:
+                    if args.ros_version == "2":
+                        harness.close_dedicated_sensor_harness(dedicated_harness)
                 if not ok:
                     raise StreamVerificationError(message, {"sensors": snapshot})
                 result["saved_sensor_plot_count"] += sum(

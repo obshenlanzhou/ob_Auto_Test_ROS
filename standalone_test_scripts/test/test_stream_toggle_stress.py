@@ -510,6 +510,48 @@ def test_ros1_service_graph_uses_rosservice_types():
     }
 
 
+def test_ros2_set_bool_client_is_reused_across_toggle_cycles():
+    module = load_script()
+
+    class Request:
+        data = False
+
+    SetBool = type("SetBool", (), {"Request": Request})
+
+    class Future:
+        def done(self):
+            return True
+
+        def result(self):
+            return SimpleNamespace(success=True, message="ok")
+
+    class Client:
+        def wait_for_service(self, timeout_sec):
+            assert timeout_sec == 15
+            return True
+
+        def call_async(self, request):
+            assert isinstance(request, Request)
+            return Future()
+
+    class Node:
+        def __init__(self):
+            self.created = []
+
+        def create_client(self, service_type, service_name):
+            assert service_type is SetBool
+            self.created.append(service_name)
+            return Client()
+
+    harness = module.RosHarness("2", "test", 10)
+    harness.node = Node()
+    harness._set_bool_type = SetBool
+
+    assert harness.call_set_bool("/camera/set_streams_enable", False, 15)["success"]
+    assert harness.call_set_bool("/camera/set_streams_enable", True, 15)["success"]
+    assert harness.node.created == ["/camera/set_streams_enable"]
+
+
 def test_ros2_harness_uses_dedicated_single_threaded_executor(monkeypatch):
     module = load_script()
     calls = []
@@ -813,7 +855,7 @@ def test_profile_verification_recreates_zero_frame_subscriptions_once(monkeypatc
 
     assert len(verification_calls) == 2
     assert monitor.recreated == [[color_topic]]
-    assert warnings[0]["action"] == "recreate-stream-subscriptions"
+    assert warnings[0]["action"] == "rebuild-stream-monitor"
     assert warnings[0]["topics"] == [color_topic]
     assert "retrying once" in emitted[0]
     assert result["subscription_recovery"]["attempted"] is True
@@ -918,7 +960,7 @@ def test_enabled_verification_recreates_stalled_subscriptions_once(monkeypatch):
     assert len(verification_calls) == 2
     assert monitor.reset_count == 1
     assert monitor.recreated == [[color_topic]]
-    assert warnings[0]["action"] == "recreate-stream-subscriptions"
+    assert warnings[0]["action"] == "rebuild-stream-monitor"
     assert result["subscription_recovery"]["attempted"] is True
     assert "retrying once" in emitted[0]
 
@@ -1219,3 +1261,33 @@ def test_stream_monitor_recreates_only_selected_subscription():
     assert harness.destroyed == [original_color]
     assert monitor.subscriptions[0] != original_color
     assert monitor.subscriptions[1] == original_depth
+
+
+def test_stream_monitor_resets_isolated_context_as_one_unit():
+    module = load_script()
+    topics = ["/camera/color/image_raw", "/camera/depth/image_raw"]
+
+    class Harness:
+        def __init__(self):
+            self.created = []
+            self.reset_count = 0
+
+        def create_image_subscription(self, topic, callback):
+            subscription = (topic, len(self.created), callback)
+            self.created.append(subscription)
+            return subscription
+
+        def destroy_subscription(self, _subscription):
+            raise AssertionError("individual readers must not be destroyed")
+
+        def reset(self):
+            self.reset_count += 1
+
+    harness = Harness()
+    monitor = module.StreamMonitor(harness, topics)
+
+    scope = monitor.recreate_subscriptions([topics[0]])
+
+    assert scope == "context"
+    assert harness.reset_count == 1
+    assert len(harness.created) == 2
