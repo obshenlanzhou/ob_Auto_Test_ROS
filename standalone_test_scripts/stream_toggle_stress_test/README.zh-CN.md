@@ -26,10 +26,9 @@ English: [README.md](README.md)
 
 整体模式会关闭全部目标流，确认停流后整体恢复，再验证所有流并逐路存图。
 服务首次调用失败会重试一次；重试成功继续测试并记录警告，再次失败则停止测试并尝试恢复流。
-验证超时且某个话题一帧都未收到时，工具会重建独立 ROS 监控 context 和 DDS participant、
-记录警告并重新验证一次；第二次仍失败才停止测试。
-ROS 2 图像订阅和服务客户端在整个压测循环中保持不变。大数据量点云和 IMU 产物通过
-独立 ROS context 与 DDS participant 采集，其 Reader 生命周期不会修改图像/控制 executor wait-set。
+验证超时且某个话题一帧都未收到时，工具会重建该订阅及专用 executor，记录警告并重新
+验证一次；第二次仍失败才停止测试。ROS 2 只使用一个 rclpy context，以同时兼容 Fast DDS
+和 Cyclone DDS；服务客户端在压测循环中保持复用，不再每轮创建和销毁。
 
 ROS 1 仅支持默认的 `individual` 逐路模式；`all` 整体模式仅支持 ROS 2。
 

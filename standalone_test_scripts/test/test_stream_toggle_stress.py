@@ -615,13 +615,19 @@ def test_ros2_harness_uses_dedicated_single_threaded_executor(monkeypatch):
 
     with module.RosHarness("2", "stream_toggle_test", 10) as harness:
         harness.spin_once(0.25)
+        harness.rebuild_executor()
+        harness.spin_once(0.5)
         assert isinstance(harness._executor, FakeExecutor)
 
     assert ("rclpy_init", []) in calls
     assert ("spin_once", 0.25) in calls
+    assert ("spin_once", 0.5) in calls
+    assert calls.count(("executor_init",)) == 2
+    assert calls.count(("add_node",)) == 2
+    assert calls.count(("remove_node",)) == 2
+    assert calls.count(("executor_shutdown", 5.0)) == 2
     assert calls.index(("add_node",)) < calls.index(("spin_once", 0.25))
     assert calls.index(("remove_node",)) < calls.index(("destroy_node",))
-    assert ("executor_shutdown", 5.0) in calls
     assert calls[-1] == ("rclpy_shutdown",)
 
 
@@ -855,7 +861,7 @@ def test_profile_verification_recreates_zero_frame_subscriptions_once(monkeypatc
 
     assert len(verification_calls) == 2
     assert monitor.recreated == [[color_topic]]
-    assert warnings[0]["action"] == "rebuild-stream-monitor"
+    assert warnings[0]["action"] == "recreate-stream-subscriptions"
     assert warnings[0]["topics"] == [color_topic]
     assert "retrying once" in emitted[0]
     assert result["subscription_recovery"]["attempted"] is True
@@ -960,7 +966,7 @@ def test_enabled_verification_recreates_stalled_subscriptions_once(monkeypatch):
     assert len(verification_calls) == 2
     assert monitor.reset_count == 1
     assert monitor.recreated == [[color_topic]]
-    assert warnings[0]["action"] == "rebuild-stream-monitor"
+    assert warnings[0]["action"] == "recreate-stream-subscriptions"
     assert result["subscription_recovery"]["attempted"] is True
     assert "retrying once" in emitted[0]
 
@@ -1263,31 +1269,35 @@ def test_stream_monitor_recreates_only_selected_subscription():
     assert monitor.subscriptions[1] == original_depth
 
 
-def test_stream_monitor_resets_isolated_context_as_one_unit():
+def test_stream_monitor_rebuilds_executor_after_subscription_recovery():
     module = load_script()
     topics = ["/camera/color/image_raw", "/camera/depth/image_raw"]
 
     class Harness:
         def __init__(self):
             self.created = []
-            self.reset_count = 0
+            self.rebuild_count = 0
+            self.destroyed = []
 
         def create_image_subscription(self, topic, callback):
             subscription = (topic, len(self.created), callback)
             self.created.append(subscription)
             return subscription
 
-        def destroy_subscription(self, _subscription):
-            raise AssertionError("individual readers must not be destroyed")
+        def destroy_subscription(self, subscription):
+            self.destroyed.append(subscription)
 
-        def reset(self):
-            self.reset_count += 1
+        def rebuild_executor(self):
+            self.rebuild_count += 1
 
     harness = Harness()
     monitor = module.StreamMonitor(harness, topics)
+    original_color = monitor.subscriptions[0]
 
     scope = monitor.recreate_subscriptions([topics[0]])
 
-    assert scope == "context"
-    assert harness.reset_count == 1
-    assert len(harness.created) == 2
+    assert scope == "subscriptions-and-executor"
+    assert harness.rebuild_count == 1
+    assert harness.destroyed == [original_color]
+    assert monitor.subscriptions[0] != original_color
+    assert len(harness.created) == 3
