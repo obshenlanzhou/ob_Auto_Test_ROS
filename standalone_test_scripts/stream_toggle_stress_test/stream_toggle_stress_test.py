@@ -165,6 +165,22 @@ class StatusLogger:
             self.events.emit(event, message, **fields)
 
 
+def individual_progress_fields(
+    cycle_index: int,
+    run_count: Optional[int],
+    stream_index: int,
+    stream_total: int,
+) -> Dict[str, Any]:
+    """Return progress fields with cycle and within-cycle stream dimensions separate."""
+    return {
+        "current": cycle_index,
+        "total": run_count,
+        "cycle": cycle_index,
+        "stream_index": stream_index,
+        "stream_total": stream_total,
+    }
+
+
 def capture_sourced_env(ros_setup: str, driver_setup: str, ros_version: str) -> Dict[str, str]:
     env = dict(os.environ)
     env["ROS_VERSION"] = ros_version
@@ -2851,9 +2867,9 @@ def run(args) -> int:
                         f"cycle {cycle_index}, stream {target_index}/{len(targets)}: "
                         f"disable {target.topic}",
                         event="progress",
-                        current=target_index,
-                        total=len(targets),
-                        cycle=cycle_index,
+                        **individual_progress_fields(
+                            cycle_index, args.run_count, target_index, len(targets)
+                        ),
                         phase="disabling",
                     )
                     try:
@@ -2893,9 +2909,9 @@ def run(args) -> int:
                         emit(
                             f"cycle {cycle_index}: enable {target.topic}",
                             event="progress",
-                            current=target_index,
-                            total=len(targets),
-                            cycle=cycle_index,
+                            **individual_progress_fields(
+                                cycle_index, args.run_count, target_index, len(targets)
+                            ),
                             phase="enabling",
                         )
                         enable = call_toggle_with_retry(
@@ -2956,9 +2972,9 @@ def run(args) -> int:
                         emit(
                             f"cycle {cycle_index}: passed {target.topic}",
                             event="progress",
-                            current=target_index,
-                            total=len(targets),
-                            cycle=cycle_index,
+                            **individual_progress_fields(
+                                cycle_index, args.run_count, target_index, len(targets)
+                            ),
                             phase="completed-stream",
                         )
                     except BaseException as exc:  # cleanup must also run for KeyboardInterrupt

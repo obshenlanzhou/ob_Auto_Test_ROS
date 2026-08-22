@@ -322,23 +322,95 @@ def _build_standalone_progress(
     *,
     supported: bool,
     requested_total: Optional[int],
+    result: Optional[Dict[str, Any]] = None,
+    event_counts: Optional[Dict[str, int]] = None,
 ) -> Dict[str, Any]:
-    if not supported:
-        return {"supported": False, "current": None, "total": None}
-
     current = 0
     total = requested_total
+    if event_counts is None:
+        successes = sum(
+            1
+            for event in events
+            if event.get("event") == "progress"
+            and event.get("phase") == "completed-cycle"
+        )
+        failures = sum(
+            1
+            for event in events
+            if (
+                event.get("event") == "failure"
+                or (
+                    event.get("event") == "progress"
+                    and event.get("phase") in {"failed-cycle", "failed"}
+                )
+            )
+        )
+    else:
+        successes = max(0, int(event_counts.get("successes", 0)))
+        failures = max(0, int(event_counts.get("failures", 0)))
+
+    result_details = result.get("details") if isinstance(result, dict) else None
+    if not isinstance(result_details, dict):
+        result_details = result if isinstance(result, dict) else {}
+    for collection_name in ("cycles", "attempts", "tests", "runs"):
+        records = result_details.get(collection_name)
+        if not isinstance(records, list):
+            continue
+        status_values = [
+            str(record.get("status") or "").lower()
+            for record in records
+            if isinstance(record, dict)
+        ]
+        if not any(
+            status in {"passed", "failed", "interrupted"}
+            for status in status_values
+        ):
+            continue
+        successes = sum(status == "passed" for status in status_values)
+        failures = sum(status == "failed" for status in status_values)
+        break
+    else:
+        result_status = (
+            str(result.get("status") or "").lower()
+            if isinstance(result, dict)
+            else ""
+        )
+        if result_status == "passed" and not successes and not failures:
+            successes = 1
+        elif result_status == "failed" and not successes and not failures:
+            failures = 1
+
+    if not supported:
+        return {
+            "supported": False,
+            "current": None,
+            "total": None,
+            "successes": successes,
+            "failures": failures,
+        }
+
     for event in reversed(events):
         if event.get("event") != "progress":
             continue
         event_current = _positive_int(event.get("current"))
         event_total = _positive_int(event.get("total"))
+        event_cycle = _positive_int(event.get("cycle"))
+        if event_cycle is not None and event.get("stream_index") is not None:
+            event_current = event_cycle
+            if requested_total is not None:
+                event_total = requested_total
         if event_current is not None:
             current = event_current
         if event_total is not None:
             total = event_total
         break
-    return {"supported": True, "current": current, "total": total}
+    return {
+        "supported": True,
+        "current": current,
+        "total": total,
+        "successes": successes,
+        "failures": failures,
+    }
 
 
 def _duration_like_value(value: str) -> float:
@@ -1074,6 +1146,10 @@ class TestJob:
     stop_requested: bool = False
     stop_signal_sent: bool = False
     done_event: threading.Event = field(default_factory=threading.Event)
+    standalone_event_byte_offset: int = field(default=0, init=False)
+    standalone_event_remainder: bytes = field(default=b"", init=False)
+    standalone_successes: int = field(default=0, init=False)
+    standalone_failures: int = field(default=0, init=False)
 
     def add_command_line(self, command_line: str) -> None:
         with self.lock:
@@ -1082,6 +1158,55 @@ class TestJob:
     def clear_command_line(self) -> None:
         with self.lock:
             self.command_lines = []
+
+    def _update_standalone_event_counts(self) -> Dict[str, int]:
+        if self.runner_type != "standalone":
+            return {"successes": 0, "failures": 0}
+        path = self.run_root / "events.jsonl"
+        try:
+            size = path.stat().st_size
+            with self.lock:
+                if size < self.standalone_event_byte_offset:
+                    self.standalone_event_byte_offset = 0
+                    self.standalone_event_remainder = b""
+                    self.standalone_successes = 0
+                    self.standalone_failures = 0
+                with path.open("rb") as stream:
+                    stream.seek(self.standalone_event_byte_offset)
+                    chunk = stream.read()
+                self.standalone_event_byte_offset += len(chunk)
+                if chunk:
+                    lines = (self.standalone_event_remainder + chunk).split(b"\n")
+                    self.standalone_event_remainder = lines.pop()
+                    for raw_line in lines:
+                        try:
+                            event = json.loads(
+                                raw_line.decode("utf-8", errors="replace")
+                            )
+                        except (UnicodeDecodeError, json.JSONDecodeError):
+                            continue
+                        if not isinstance(event, dict):
+                            continue
+                        if (
+                            event.get("event") == "progress"
+                            and event.get("phase") == "completed-cycle"
+                        ):
+                            self.standalone_successes += 1
+                        elif event.get("event") == "failure" or (
+                            event.get("event") == "progress"
+                            and event.get("phase") in {"failed-cycle", "failed"}
+                        ):
+                            self.standalone_failures += 1
+                return {
+                    "successes": self.standalone_successes,
+                    "failures": self.standalone_failures,
+                }
+        except OSError:
+            with self.lock:
+                return {
+                    "successes": self.standalone_successes,
+                    "failures": self.standalone_failures,
+                }
 
     def add_log(self, line: str) -> None:
         text = line.rstrip("\n")
@@ -1094,6 +1219,7 @@ class TestJob:
             stream.write(text + "\n")
 
     def snapshot(self, log_offset: int = 0) -> Dict[str, Any]:
+        standalone_event_counts = self._update_standalone_event_counts()
         with self.lock:
             logs = list(self.logs)
             command_lines = list(self.command_lines)
@@ -1110,6 +1236,11 @@ class TestJob:
             last_events(self.run_root / "events.jsonl", limit=1000)
             if self.runner_type == "standalone"
             else []
+        )
+        standalone_result = (
+            read_json(self.run_root / "result.json", {})
+            if self.runner_type == "standalone"
+            else {}
         )
         elapsed_seconds = _wall_elapsed_seconds(self.started_at, self.ended_at)
         performance = (
@@ -1148,9 +1279,11 @@ class TestJob:
                     standalone_events,
                     supported=self.standalone_rounds_supported,
                     requested_total=self.standalone_round_total,
+                    result=standalone_result,
+                    event_counts=standalone_event_counts,
                 ),
                 "events": standalone_events[-25:],
-                "result": read_json(self.run_root / "result.json", {}),
+                "result": standalone_result,
             },
             "log_offset": log_end_offset,
             "logs": pending_logs,

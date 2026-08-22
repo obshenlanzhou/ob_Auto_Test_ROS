@@ -28,6 +28,7 @@ from orbbec_camera_auto_test_ui.standalone import (  # noqa: E402
 from orbbec_camera_auto_test_ui.run_manager import (  # noqa: E402
     RunManager,
     TestJob as _TestJob,
+    _build_standalone_progress,
 )
 
 
@@ -463,6 +464,8 @@ def test_standalone_snapshot_reports_initial_and_current_round(tmp_path):
         "supported": True,
         "current": 0,
         "total": 10,
+        "successes": 0,
+        "failures": 0,
     }
 
     events = [
@@ -480,6 +483,8 @@ def test_standalone_snapshot_reports_initial_and_current_round(tmp_path):
         "supported": True,
         "current": 3,
         "total": 10,
+        "successes": 0,
+        "failures": 0,
     }
     assert set(current["performance"]) == {"elapsed_seconds"}
     assert current["restart"] == {"available": False}
@@ -501,7 +506,96 @@ def test_standalone_snapshot_marks_rounds_not_applicable(tmp_path):
         "supported": False,
         "current": None,
         "total": None,
+        "successes": 0,
+        "failures": 0,
     }
+
+
+def test_standalone_progress_counts_completed_and_failed_rounds_from_result():
+    progress = _build_standalone_progress(
+        [
+            {
+                "event": "progress",
+                "current": 2,
+                "total": 2,
+                "cycle": 3,
+                "stream_index": 2,
+                "stream_total": 2,
+                "phase": "completed-cycle",
+            }
+        ],
+        supported=True,
+        requested_total=10,
+        result={
+            "status": "failed",
+            "details": {
+                "cycles": [
+                    {"cycle": 1, "status": "passed"},
+                    {"cycle": 2, "status": "failed"},
+                    {"cycle": 3, "status": "passed"},
+                ]
+            },
+        },
+    )
+
+    assert progress == {
+        "supported": True,
+        "current": 3,
+        "total": 10,
+        "successes": 2,
+        "failures": 1,
+    }
+
+
+def test_standalone_progress_counts_failure_events_while_running():
+    progress = _build_standalone_progress(
+        [
+            {"event": "progress", "current": 1, "total": 3, "phase": "completed-cycle"},
+            {"event": "failure", "status": "failed"},
+        ],
+        supported=True,
+        requested_total=3,
+    )
+
+    assert progress["successes"] == 1
+    assert progress["failures"] == 1
+
+
+def test_standalone_snapshot_accumulates_event_counts_incrementally(tmp_path):
+    job = _TestJob(
+        run_id="run-1",
+        mode="standalone:example",
+        run_root=tmp_path,
+        command_lines=[],
+        shell="bash",
+        runner_type="standalone",
+        test_id="example",
+        standalone_rounds_supported=True,
+        standalone_round_total=3000,
+    )
+    events_path = tmp_path / "events.jsonl"
+    events_path.write_text(
+        json.dumps(
+            {
+                "event": "progress",
+                "current": 1001,
+                "total": 3000,
+                "phase": "completed-cycle",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    first = job.snapshot()["standalone"]["progress"]
+    with events_path.open("a", encoding="utf-8") as stream:
+        stream.write(json.dumps({"event": "failure", "status": "failed"}) + "\n")
+    second = job.snapshot()["standalone"]["progress"]
+
+    assert first["successes"] == 1
+    assert first["failures"] == 0
+    assert second["successes"] == 1
+    assert second["failures"] == 1
 
 
 def test_standalone_monitor_template_contains_only_compact_metrics():
@@ -514,6 +608,8 @@ def test_standalone_monitor_template_contains_only_compact_metrics():
 
     assert 'id="standaloneElapsed"' in template
     assert 'id="standaloneRound"' in template
+    assert 'id="standaloneSuccesses"' in template
+    assert 'id="standaloneFailures"' in template
     assert 'id="standaloneEventList"' not in template
     assert 'id="standaloneProgressStatus"' not in template
 

@@ -135,6 +135,18 @@ def test_toggle_mode_defaults_to_individual_and_accepts_all():
     )
 
 
+def test_individual_progress_fields_keep_cycle_and_stream_positions_separate():
+    module = load_script()
+
+    assert module.individual_progress_fields(53, 3000, 2, 2) == {
+        "current": 53,
+        "total": 3000,
+        "cycle": 53,
+        "stream_index": 2,
+        "stream_total": 2,
+    }
+
+
 def test_stream_off_and_on_preview_times_default_to_four_and_keep_legacy_aliases():
     module = load_script()
 

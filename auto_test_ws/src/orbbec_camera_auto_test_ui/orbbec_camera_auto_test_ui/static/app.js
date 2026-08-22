@@ -1579,6 +1579,11 @@ function formatStandaloneRound(progress = {}) {
   return Number.isFinite(total) && total > 0 ? `${current} / ${total}` : String(current);
 }
 
+function formatStandaloneCount(progress = {}, key) {
+  if (progress[key] === null || progress[key] === undefined) return "—";
+  return String(Math.max(0, Number(progress[key]) || 0));
+}
+
 function renderMonitor(payload = {}) {
   const standalone = payload.runner_type === "standalone";
   $("standaloneMonitor").classList.toggle("is-hidden", !standalone);
@@ -1595,6 +1600,14 @@ function renderMonitor(payload = {}) {
     );
     $("standaloneRound").textContent = formatStandaloneRound(
       payload.standalone?.progress
+    );
+    $("standaloneSuccesses").textContent = formatStandaloneCount(
+      payload.standalone?.progress,
+      "successes"
+    );
+    $("standaloneFailures").textContent = formatStandaloneCount(
+      payload.standalone?.progress,
+      "failures"
     );
     return;
   }
