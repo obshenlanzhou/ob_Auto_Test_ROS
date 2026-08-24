@@ -93,6 +93,8 @@ Every run writes `terminal.log`, teeing the script's stdout and stderr without s
 When `--results-dir` is omitted, the default result directory name uses the
 `YYYYMMDD_HHMMSS_<test-name>_v<tool-version>` format.
 Every completed run also writes `result.json`, `summary.md`, and `events.jsonl`.
+The `invocation` field in `result.json` records the complete reproducible command,
+the original argument array, and the working directory.
 `result.json` uses the common status values `passed`, `failed`, and
 `interrupted`; the corresponding process exit codes are `0`, `1`, and `130`.
 Invalid command-line usage returns `2`. Script-specific logs, images, CSV files,

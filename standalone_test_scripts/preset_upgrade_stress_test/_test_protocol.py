@@ -5,6 +5,7 @@ import json
 import os
 import platform
 import re
+import shlex
 import socket
 import subprocess
 import sys
@@ -373,6 +374,15 @@ def namespace_request(args: Any, *, exclude: Iterable[str] = ()) -> Dict[str, An
     }
 
 
+def invocation_record() -> Dict[str, Any]:
+    argv = [sys.executable or "python3", *sys.argv]
+    return {
+        "command": shlex.join(argv),
+        "argv": argv,
+        "cwd": str(Path.cwd()),
+    }
+
+
 def atomic_write_json(path: Path, payload: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.tmp")
@@ -449,6 +459,7 @@ def contract_result(
         "duration_seconds": float(
             details.get("elapsed_seconds", details.get("duration_seconds", 0.0)) or 0.0
         ),
+        "invocation": invocation_record(),
         "request": json_ready(request),
         "environment": json_ready(resolved_environment),
         "summary": json_ready(summary or {}),

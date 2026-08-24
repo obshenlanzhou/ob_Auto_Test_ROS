@@ -4,6 +4,7 @@ import importlib.util
 import io
 import json
 import re
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -45,6 +46,7 @@ RESULT_KEYS = {
     "started_at",
     "ended_at",
     "duration_seconds",
+    "invocation",
     "request",
     "environment",
     "summary",
@@ -324,6 +326,11 @@ def test_result_envelope_and_atomic_artifacts(tmp_path):
     assert set(persisted) == RESULT_KEYS
     assert persisted["status"] == "passed"
     assert persisted["duration_seconds"] == 2.0
+    assert persisted["invocation"]["argv"] == [sys.executable, *sys.argv]
+    assert shlex.split(persisted["invocation"]["command"]) == persisted["invocation"][
+        "argv"
+    ]
+    assert persisted["invocation"]["cwd"] == str(Path.cwd())
     assert persisted["environment"]["host"]["os"]
     assert event["event"] == "run_started"
     assert event["run_index"] == 1

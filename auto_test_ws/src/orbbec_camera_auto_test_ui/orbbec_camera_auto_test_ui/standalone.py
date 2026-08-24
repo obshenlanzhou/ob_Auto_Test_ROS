@@ -361,6 +361,20 @@ def validate_result_contract(
     ):
         if key in payload and not isinstance(payload[key], expected_type):
             errors.append(f"result.json field {key} has the wrong type")
+    invocation = payload.get("invocation")
+    if invocation is not None:
+        if not isinstance(invocation, dict):
+            errors.append("result.json field invocation has the wrong type")
+        else:
+            for key, expected_type in (
+                ("command", str),
+                ("argv", list),
+                ("cwd", str),
+            ):
+                if not isinstance(invocation.get(key), expected_type):
+                    errors.append(
+                        f"result.json field invocation.{key} has the wrong type"
+                    )
     return payload, errors
 
 

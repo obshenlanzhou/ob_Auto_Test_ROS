@@ -66,6 +66,10 @@ def handle_sigint(signum, frame) -> None:
     raise KeyboardInterrupt
 
 
+def should_attempt_cleanup_restore(exc: BaseException) -> bool:
+    return not INTERRUPTED and not isinstance(exc, (KeyboardInterrupt, SystemExit))
+
+
 def parse_duration(value: Any, default: float) -> float:
     if value is None or str(value).strip() == "":
         return default
@@ -2938,7 +2942,7 @@ def run(args) -> int:
                             cycle=cycle_index,
                             phase="completed-all-streams",
                         )
-                    except BaseException as exc:  # cleanup must run for interruption
+                    except BaseException as exc:
                         operation["status"] = (
                             "interrupted" if INTERRUPTED else "failed"
                         )
@@ -2955,7 +2959,7 @@ def run(args) -> int:
                             )
                         if isinstance(exc, StreamVerificationError):
                             operation["verification_failure"] = exc.details
-                        if groups_may_be_disabled:
+                        if groups_may_be_disabled and should_attempt_cleanup_restore(exc):
                             operation["cleanup_restore"] = best_effort_restore_groups(
                                 session=session,
                                 harness=harness,
@@ -3137,7 +3141,7 @@ def run(args) -> int:
                             ),
                             phase="completed-stream",
                         )
-                    except BaseException as exc:  # cleanup must also run for KeyboardInterrupt
+                    except BaseException as exc:
                         operation["status"] = (
                             "interrupted" if INTERRUPTED else "failed"
                         )
@@ -3152,7 +3156,7 @@ def run(args) -> int:
                             }
                         if isinstance(exc, StreamVerificationError):
                             operation["verification_failure"] = exc.details
-                        if target_may_be_disabled:
+                        if target_may_be_disabled and should_attempt_cleanup_restore(exc):
                             operation["cleanup_restore"] = best_effort_restore(
                                 session=session,
                                 harness=harness,

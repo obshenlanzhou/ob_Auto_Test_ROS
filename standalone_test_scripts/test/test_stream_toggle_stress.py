@@ -38,6 +38,18 @@ def test_stream_target_mapping_supports_nested_camera_namespace():
     assert target.service == "/rig/camera_01/toggle_left_ir"
 
 
+def test_cleanup_restore_is_skipped_for_interruption(monkeypatch):
+    module = load_script()
+
+    monkeypatch.setattr(module, "INTERRUPTED", False)
+    assert module.should_attempt_cleanup_restore(RuntimeError("failed"))
+    assert not module.should_attempt_cleanup_restore(KeyboardInterrupt())
+    assert not module.should_attempt_cleanup_restore(SystemExit())
+
+    monkeypatch.setattr(module, "INTERRUPTED", True)
+    assert not module.should_attempt_cleanup_restore(RuntimeError("interrupted"))
+
+
 @pytest.mark.parametrize(
     "topic",
     ["/camera/color/compressed", "/color/image_raw", "/camera/depth/image_unaligned"],

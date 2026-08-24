@@ -86,6 +86,7 @@ standalone_test_scripts/
 未指定 `--results-dir` 时，默认结果目录名采用
 `YYYYMMDD_HHMMSS_<测试名称>_v<工具版本>` 格式。
 每次完成的运行还会生成 `result.json`、`summary.md` 和 `events.jsonl`。
+`result.json` 的 `invocation` 字段记录可复现的完整命令字符串、原始参数数组和运行工作目录。
 `result.json` 的状态统一为 `passed`、`failed`、`interrupted`，对应退出码分别为
 `0`、`1`、`130`；命令行参数错误返回 `2`。脚本特有的日志、图片、CSV 和导出文件
 统一在 `result.json` 的 `artifacts` 中列出。
