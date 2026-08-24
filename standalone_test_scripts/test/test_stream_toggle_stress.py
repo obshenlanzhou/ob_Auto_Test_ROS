@@ -877,6 +877,9 @@ def test_profile_verification_recreates_zero_frame_subscriptions_once(monkeypatc
     assert warnings[0]["topics"] == [color_topic]
     assert "retrying once" in emitted[0]
     assert result["subscription_recovery"]["attempted"] is True
+    assert result["subscription_recovery"]["outcome"] == "recovered"
+    assert warnings[0]["outcome"] == "recovered"
+    assert emitted[-1].startswith("RECOVERED:")
 
 
 def test_profile_verification_does_not_recreate_when_frames_were_received(monkeypatch):
@@ -980,7 +983,10 @@ def test_enabled_verification_recreates_stalled_subscriptions_once(monkeypatch):
     assert monitor.recreated == [[color_topic]]
     assert warnings[0]["action"] == "recreate-stream-subscriptions"
     assert result["subscription_recovery"]["attempted"] is True
+    assert result["subscription_recovery"]["outcome"] == "recovered"
+    assert warnings[0]["outcome"] == "recovered"
     assert "retrying once" in emitted[0]
+    assert emitted[-1].startswith("RECOVERED:")
 
 
 def test_enabled_verification_does_not_recreate_when_streams_are_stable(monkeypatch):
@@ -1041,6 +1047,8 @@ def test_enabled_verification_preserves_recovery_details_after_retry_failure(
         def recreate_subscriptions(self, topics):
             assert topics == [topic]
 
+    warnings = []
+    emitted = []
     with pytest.raises(module.StreamVerificationError) as raised:
         module.wait_for_enabled_state_with_subscription_recovery(
             session=object(),
@@ -1051,13 +1059,73 @@ def test_enabled_verification_preserves_recovery_details_after_retry_failure(
             timeout=20.0,
             cycle_index=4,
             operation_label=topic,
-            warnings=[],
-            emit=lambda _message: None,
+            warnings=warnings,
+            emit=emitted.append,
         )
 
     recovery = raised.value.details["subscription_recovery"]
     assert recovery["attempted"] is True
     assert recovery["topics"] == [topic]
+    assert recovery["outcome"] == "failed"
+    assert warnings[0]["outcome"] == "failed"
+    assert emitted[-1].startswith("FAILED:")
+
+
+def test_result_statistics_and_summary_distinguish_recovery_outcomes():
+    module = load_script()
+    result = {
+        "status": "failed",
+        "command": ["ros2", "launch", "orbbec_camera", "camera.launch.py"],
+        "cycles": [
+            {"cycle": 1, "status": "passed", "operations": []},
+            {
+                "cycle": 2,
+                "status": "failed",
+                "error": "stream-profile verification timed out after 30.0s",
+                "profile_switch": {
+                    "profile_set": "A",
+                    "verification_failure": {
+                        "subscription_recovery": {
+                            "topics": ["/camera/color/image_raw"],
+                            "outcome": "failed",
+                        }
+                    },
+                },
+                "operations": [],
+            },
+        ],
+        "warnings": [
+            {
+                "action": "recreate-stream-subscriptions",
+                "outcome": "recovered",
+                "message": "retrying once",
+                "outcome_message": "RECOVERED: cycle 1",
+            },
+            {
+                "action": "recreate-stream-subscriptions",
+                "outcome": "failed",
+                "message": "retrying once",
+                "outcome_message": "FAILED: cycle 2",
+            },
+        ],
+        "errors": ["stream-profile verification timed out after 30.0s"],
+    }
+
+    statistics = module.build_result_statistics(result)
+    summary = module.build_summary(result)
+
+    assert statistics["attempted_cycles"] == 2
+    assert statistics["passed_cycles"] == 1
+    assert statistics["failed_cycles"] == 1
+    assert statistics["recovery_successes"] == 1
+    assert statistics["recovery_failures"] == 1
+    assert "- Attempted cycles: 2" in summary
+    assert "- Failed cycles: 1" in summary
+    assert "## Failed Cycles" in summary
+    assert "Cycle 2, profile set A" in summary
+    assert "recovery topics: /camera/color/image_raw" in summary
+    assert "- RECOVERED: cycle 1" in summary
+    assert "- FAILED: cycle 2" in summary
 
 
 def test_all_disabled_state_requires_every_target_to_be_quiet(monkeypatch):

@@ -44,6 +44,12 @@ const RESULT_SUMMARY_LABELS = {
   completed_runs: "完成轮次",
   passed_tests: "通过测试",
   completed_tests: "完成测试",
+  attempted_cycles: "执行轮次",
+  passed_cycles: "通过轮次",
+  failed_cycles: "失败轮次",
+  completed_cycles: "完成轮次",
+  recovery_successes: "恢复成功",
+  recovery_failures: "恢复失败",
   topic_count: "Topic 数量",
   warning_count: "警告数量",
 };
@@ -1313,6 +1319,28 @@ function displayResultValue(value) {
   return String(value);
 }
 
+function resultWarningMessage(warning) {
+  if (!warning || typeof warning !== "object") return warning || "";
+  return warning.outcome_message || warning.message || "";
+}
+
+function resultFailureMessage(result = {}) {
+  const errorValue = result.error?.message || result.error;
+  if (errorValue) return displayResultValue(errorValue);
+  const details = result.details && typeof result.details === "object" ? result.details : {};
+  const cycles = Array.isArray(details.cycles) ? details.cycles : [];
+  const failedCycle = cycles.find(
+    (cycle) => cycle && typeof cycle === "object" && cycle.status === "failed"
+  );
+  if (failedCycle) {
+    const cycleLabel = failedCycle.cycle === undefined ? "轮次" : `第 ${failedCycle.cycle} 轮`;
+    const message = failedCycle.error || "测试轮次失败";
+    return `${cycleLabel}失败：${displayResultValue(message)}`;
+  }
+  const errors = Array.isArray(details.errors) ? details.errors : [];
+  return errors.length ? displayResultValue(errors[0]) : "";
+}
+
 function resultSummaryLabel(key) {
   return RESULT_SUMMARY_LABELS[key] || String(key).replaceAll("_", " ");
 }
@@ -1359,7 +1387,10 @@ function renderResultSummary(snapshot, detail = {}) {
   );
   const elapsed = snapshot.standalone?.elapsed_seconds ?? snapshot.performance?.elapsed_seconds;
   const warnings = Array.isArray(result.warnings) ? result.warnings : [];
-  const errorValue = result.error?.message || result.error;
+  const errorValue = snapshot.status === "failed"
+    ? resultFailureMessage(result)
+    : result.error?.message || result.error;
+  const warningValue = warnings.length ? resultWarningMessage(warnings[0]) : "";
 
   panel.dataset.status = snapshot.status;
   $("runResultMark").textContent = presentation.mark;
@@ -1367,8 +1398,8 @@ function renderResultSummary(snapshot, detail = {}) {
   $("runResultTitle").textContent = presentation.title;
   $("runResultMessage").textContent = errorValue
     ? displayResultValue(errorValue)
-    : warnings.length
-      ? displayResultValue(warnings[0])
+    : warningValue
+      ? displayResultValue(warningValue)
       : presentation.message;
 
   const facts = [

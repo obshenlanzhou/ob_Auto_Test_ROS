@@ -37,7 +37,7 @@ from _sensor_artifacts import (
 
 ENV_READY_VAR = "STREAM_TOGGLE_STRESS_TEST_ENV_READY"
 INTERRUPTED = False
-TOOL_VERSION = "1.9.6"
+TOOL_VERSION = "1.9.7"
 TEST_ID = "stream_toggle_stress_test"
 DEFAULT_STRESS_LAUNCH_ARGS = {
     "enable_heartbeat": "true",
@@ -1434,8 +1434,23 @@ def wait_for_enabled_state_with_subscription_recovery(
                 timeout=timeout,
             )
         except StreamVerificationError as retry_error:
+            subscription_recovery["outcome"] = "failed"
+            warning["outcome"] = "failed"
+            warning["outcome_message"] = (
+                f"FAILED: cycle {cycle_index}: {operation_label} verification still "
+                f"failed for {', '.join(stalled_topics)} after recreating subscriptions "
+                "and retrying once"
+            )
             retry_error.details["subscription_recovery"] = subscription_recovery
+            emit(warning["outcome_message"])
             raise
+        subscription_recovery["outcome"] = "recovered"
+        warning["outcome"] = "recovered"
+        warning["outcome_message"] = (
+            f"RECOVERED: cycle {cycle_index}: frames resumed on "
+            f"{', '.join(stalled_topics)} after recreating subscriptions"
+        )
+        emit(warning["outcome_message"])
     state["subscription_recovery"] = subscription_recovery
     return state
 
@@ -1697,8 +1712,23 @@ def apply_profile_set(
                 timeout=stream_timeout,
             )
         except StreamVerificationError as retry_error:
+            subscription_recovery["outcome"] = "failed"
+            warning["outcome"] = "failed"
+            warning["outcome_message"] = (
+                f"FAILED: cycle {cycle_index}: profile set {label} verification still "
+                f"failed for {', '.join(stalled_topics)} after recreating subscriptions "
+                "and retrying once"
+            )
             retry_error.details["subscription_recovery"] = subscription_recovery
+            emit(warning["outcome_message"])
             raise
+        subscription_recovery["outcome"] = "recovered"
+        warning["outcome"] = "recovered"
+        warning["outcome_message"] = (
+            f"RECOVERED: cycle {cycle_index}: frames resumed on "
+            f"{', '.join(stalled_topics)} during profile set {label} verification"
+        )
+        emit(warning["outcome_message"])
     return {
         "profile_set": label,
         "services": service_results,
@@ -2098,10 +2128,73 @@ def build_stress_launch_args(
     return merge_launch_arg_overrides(launch_args, raw_launch_args)
 
 
+def build_result_statistics(result: Dict[str, Any]) -> Dict[str, int]:
+    cycles = [
+        cycle
+        for cycle in result.get("cycles", [])
+        if isinstance(cycle, dict)
+    ]
+    recovery_attempts = [
+        warning
+        for warning in result.get("warnings", [])
+        if isinstance(warning, dict)
+        and warning.get("action") == "recreate-stream-subscriptions"
+    ]
+    return {
+        "attempted_cycles": len(cycles),
+        "passed_cycles": sum(cycle.get("status") == "passed" for cycle in cycles),
+        "failed_cycles": sum(cycle.get("status") == "failed" for cycle in cycles),
+        "partial_cycles": sum(cycle.get("status") == "partial" for cycle in cycles),
+        "interrupted_cycles": sum(
+            cycle.get("status") == "interrupted" for cycle in cycles
+        ),
+        "recovery_attempts": len(recovery_attempts),
+        "recovery_successes": sum(
+            warning.get("outcome") == "recovered" for warning in recovery_attempts
+        ),
+        "recovery_failures": sum(
+            warning.get("outcome") == "failed" for warning in recovery_attempts
+        ),
+    }
+
+
+def failed_cycle_summary(cycle: Dict[str, Any]) -> str:
+    cycle_index = cycle.get("cycle", "?")
+    error = str(cycle.get("error") or "cycle failed")
+    context = ""
+    recovery_topics: List[str] = []
+    profile_switch = cycle.get("profile_switch")
+    if isinstance(profile_switch, dict):
+        profile_set = profile_switch.get("profile_set")
+        if profile_set:
+            context = f", profile set {profile_set}"
+        verification = profile_switch.get("verification_failure")
+        if isinstance(verification, dict):
+            recovery = verification.get("subscription_recovery")
+            if isinstance(recovery, dict):
+                recovery_topics.extend(str(topic) for topic in recovery.get("topics", []))
+    for operation in cycle.get("operations", []):
+        if not isinstance(operation, dict) or operation.get("status") != "failed":
+            continue
+        topic = operation.get("topic")
+        if topic and not context:
+            context = f", topic {topic}"
+        verification = operation.get("verification_failure")
+        if not isinstance(verification, dict):
+            continue
+        recovery = verification.get("subscription_recovery")
+        if isinstance(recovery, dict):
+            recovery_topics.extend(str(topic) for topic in recovery.get("topics", []))
+    unique_topics = list(dict.fromkeys(topic for topic in recovery_topics if topic))
+    topics_text = f"; recovery topics: {', '.join(unique_topics)}" if unique_topics else ""
+    return f"Cycle {cycle_index}{context}: {error}{topics_text}"
+
+
 def build_summary(result: Dict[str, Any]) -> str:
     command_text = " ".join(
         shlex.quote(str(item)) for item in result.get("command", [])
     )
+    statistics = build_result_statistics(result)
     lines = [
         "# Stream Toggle Stress Test",
         "",
@@ -2124,9 +2217,14 @@ def build_summary(result: Dict[str, Any]) -> str:
         f"- Last active profile set: {result.get('active_profile_set', '') or 'none'}",
         f"- Stream off seconds: {result.get('stream_off_seconds', 4)}",
         f"- Stream on/preview seconds: {result.get('stream_on_preview_seconds', 4)}",
-        f"- Completed cycles: {result.get('completed_cycles', 0)}",
+        f"- Attempted cycles: {statistics['attempted_cycles']}",
+        f"- Passed cycles: {statistics['passed_cycles']}",
+        f"- Failed cycles: {statistics['failed_cycles']}",
         f"- Completed stream operations: {result.get('completed_operations', 0)}",
-        f"- Service retry warnings: {len(result.get('warnings', []))}",
+        f"- Subscription recovery attempts: {statistics['recovery_attempts']}",
+        f"- Subscription recoveries succeeded: {statistics['recovery_successes']}",
+        f"- Subscription recoveries failed: {statistics['recovery_failures']}",
+        f"- Total warnings: {len(result.get('warnings', []))}",
         f"- Saved images: {result.get('saved_image_count', 0)}",
         f"- Saved point cloud/IMU artifacts: {result.get('saved_sensor_plot_count', 0)}",
         f"- Elapsed seconds: {float(result.get('elapsed_seconds', 0.0) or 0.0):.1f}",
@@ -2153,10 +2251,25 @@ def build_summary(result: Dict[str, Any]) -> str:
         lines.extend(["", "## Skipped Image Topics", ""])
         for item in skipped:
             lines.append(f"- `{item.get('topic', '')}`: {item.get('reason', '')}")
+    failed_cycles = [
+        cycle
+        for cycle in result.get("cycles", [])
+        if isinstance(cycle, dict) and cycle.get("status") == "failed"
+    ]
+    if failed_cycles:
+        lines.extend(["", "## Failed Cycles", ""])
+        lines.extend(f"- {failed_cycle_summary(cycle)}" for cycle in failed_cycles)
     if result.get("warnings"):
         lines.extend(["", "## Warnings", ""])
         for warning in result["warnings"]:
-            lines.append(f"- {warning.get('message', warning)}")
+            if isinstance(warning, dict):
+                message = warning.get("outcome_message") or warning.get("message", warning)
+            else:
+                message = warning
+            lines.append(f"- {message}")
+    if result.get("errors"):
+        lines.extend(["", "## Errors", ""])
+        lines.extend(f"- {error}" for error in dict.fromkeys(result["errors"]))
     if result.get("error"):
         lines.extend(["", "## Error", "", str(result["error"])])
     return "\n".join(lines) + "\n"
@@ -2643,12 +2756,23 @@ def run(args) -> int:
                         cycle["ended_at"] = iso_now()
                         result["status"] = "failed"
                         result.setdefault("errors", []).append(str(exc))
+                        emit(
+                            f"cycle {cycle_index}: profile switch failed"
+                            + (
+                                "; continuing with the next cycle"
+                                if args.continue_on_failure
+                                else ""
+                            ),
+                            event="failure",
+                            status="failed",
+                            current=cycle_index,
+                            total=args.run_count,
+                            cycle=cycle_index,
+                            phase="failed-cycle",
+                            error=str(exc),
+                        )
                         if not args.continue_on_failure:
                             raise
-                        emit(
-                            f"cycle {cycle_index}: profile switch failed; "
-                            "continuing with the next cycle"
-                        )
                         continue
                     except StreamVerificationError as exc:
                         cycle["profile_switch"] = {
@@ -2662,12 +2786,23 @@ def run(args) -> int:
                         cycle["ended_at"] = iso_now()
                         result["status"] = "failed"
                         result.setdefault("errors", []).append(str(exc))
+                        emit(
+                            f"cycle {cycle_index}: profile verification failed"
+                            + (
+                                "; continuing with the next cycle"
+                                if args.continue_on_failure
+                                else ""
+                            ),
+                            event="failure",
+                            status="failed",
+                            current=cycle_index,
+                            total=args.run_count,
+                            cycle=cycle_index,
+                            phase="failed-cycle",
+                            error=str(exc),
+                        )
                         if not args.continue_on_failure:
                             raise
-                        emit(
-                            f"cycle {cycle_index}: profile verification failed; "
-                            "continuing with the next cycle"
-                        )
                         continue
                 if args.toggle_mode == "all":
                     operation = {
@@ -2831,19 +2966,28 @@ def run(args) -> int:
                                 emit=emit,
                             )
                             groups_may_be_disabled = False
-                        if (
-                            isinstance(exc, (KeyboardInterrupt, SystemExit))
-                            or INTERRUPTED
-                            or not args.continue_on_failure
-                        ):
+                        if isinstance(exc, (KeyboardInterrupt, SystemExit)) or INTERRUPTED:
                             raise
                         cycle["status"] = "failed"
                         result["status"] = "failed"
                         result.setdefault("errors", []).append(str(exc))
                         emit(
-                            f"cycle {cycle_index}: all-stream operation failed; "
-                            "continuing with the next cycle"
+                            f"cycle {cycle_index}: all-stream operation failed"
+                            + (
+                                "; continuing with the next cycle"
+                                if args.continue_on_failure
+                                else ""
+                            ),
+                            event="failure",
+                            status="failed",
+                            current=cycle_index,
+                            total=args.run_count,
+                            cycle=cycle_index,
+                            phase="failed-cycle",
+                            error=str(exc),
                         )
+                        if not args.continue_on_failure:
+                            raise
                     finally:
                         operation["ended_at"] = iso_now()
                     cycle["ended_at"] = iso_now()
@@ -3019,19 +3163,30 @@ def run(args) -> int:
                                 emit=emit,
                             )
                             target_may_be_disabled = False
-                        if (
-                            isinstance(exc, (KeyboardInterrupt, SystemExit))
-                            or INTERRUPTED
-                            or not args.continue_on_failure
-                        ):
+                        if isinstance(exc, (KeyboardInterrupt, SystemExit)) or INTERRUPTED:
                             raise
+                        first_cycle_failure = cycle["status"] != "failed"
                         cycle["status"] = "failed"
                         result["status"] = "failed"
                         result.setdefault("errors", []).append(str(exc))
-                        emit(
-                            f"cycle {cycle_index}: {target.topic} failed; "
-                            "continuing with the remaining work"
-                        )
+                        if first_cycle_failure:
+                            emit(
+                                f"cycle {cycle_index}: {target.topic} failed"
+                                + (
+                                    "; continuing with the remaining work"
+                                    if args.continue_on_failure
+                                    else ""
+                                ),
+                                event="failure",
+                                status="failed",
+                                current=cycle_index,
+                                total=args.run_count,
+                                cycle=cycle_index,
+                                phase="failed-cycle",
+                                error=str(exc),
+                            )
+                        if not args.continue_on_failure:
+                            raise
                     finally:
                         operation["ended_at"] = iso_now()
                 cycle["ended_at"] = iso_now()
@@ -3085,6 +3240,7 @@ def run(args) -> int:
                 result["status"] = "failed"
                 result["error"] = f"failed to stop launch cleanly: {exc}"
         result["elapsed_seconds"] = time.monotonic() - test_started_monotonic
+        result["statistics"] = build_result_statistics(result)
         (results_dir / "summary.md").write_text(build_summary(result), encoding="utf-8")
         emit(
             f"test finished with status {result['status']}",
@@ -3099,9 +3255,14 @@ def run(args) -> int:
             request=namespace_request(args),
             details=result,
             summary={
+                "attempted_cycles": result["statistics"]["attempted_cycles"],
+                "passed_cycles": result["statistics"]["passed_cycles"],
+                "failed_cycles": result["statistics"]["failed_cycles"],
+                "recovery_successes": result["statistics"]["recovery_successes"],
+                "recovery_failures": result["statistics"]["recovery_failures"],
+                "warning_count": len(result["warnings"]),
                 "completed_cycles": result["completed_cycles"],
                 "completed_operations": result["completed_operations"],
-                "warning_count": len(result["warnings"]),
                 "saved_image_count": result["saved_image_count"],
                 "saved_sensor_plot_count": result["saved_sensor_plot_count"],
             },

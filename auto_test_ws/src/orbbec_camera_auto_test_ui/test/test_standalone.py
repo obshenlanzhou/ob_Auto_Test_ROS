@@ -755,6 +755,23 @@ def test_standalone_ui_renders_grouped_sections_and_completion_statuses():
     assert "满足任一条件即结束；留空表示不限制。" in script
 
 
+def test_standalone_ui_prefers_failed_cycle_over_retry_warning():
+    script = (
+        PACKAGE_ROOT
+        / "orbbec_camera_auto_test_ui"
+        / "static"
+        / "app.js"
+    ).read_text(encoding="utf-8")
+
+    assert "function resultFailureMessage(result = {})" in script
+    assert 'cycle.status === "failed"' in script
+    assert "failedCycle.error" in script
+    assert "warning.outcome_message || warning.message" in script
+    assert 'failed_cycles: "失败轮次"' in script
+    assert 'recovery_successes: "恢复成功"' in script
+    assert 'recovery_failures: "恢复失败"' in script
+
+
 def test_standalone_paths_use_full_width_and_bilingual_labels():
     script = (
         PACKAGE_ROOT
