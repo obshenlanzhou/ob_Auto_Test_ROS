@@ -209,6 +209,23 @@ def test_image_stats_stop_on_failure_by_default_and_can_opt_in_to_continue():
     assert enabled.continue_on_failure is True
 
 
+@pytest.mark.parametrize(
+    ("ros_version", "expected_suffix"),
+    [
+        ("ros1", "_image_receive_stats_v1.9"),
+        ("ros2", "_image_receive_stats_ros2_v1.9"),
+    ],
+)
+def test_image_stats_default_result_directory_includes_tool_version(
+    ros_version, expected_suffix
+):
+    module = load_script(SCRIPTS["image_receive_stats"])
+
+    output_dir = Path(module.default_output_dir(ros_version))
+
+    assert re.fullmatch(r"\d{8}_\d{6}" + re.escape(expected_suffix), output_dir.name)
+
+
 def test_all_ui_manifests_expose_continue_on_failure_disabled_by_default():
     for script in SCRIPTS.values():
         manifest = json.loads(

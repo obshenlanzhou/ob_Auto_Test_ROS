@@ -343,7 +343,7 @@ def run(args) -> int:
     if restart_delay < 0:
         raise ValueError("--restart-delay must be >= 0")
 
-    run_id = datetime.now().strftime("%Y%m%d_%H%M%S_firmware_update")
+    run_id = datetime.now().strftime("%Y%m%d_%H%M%S_firmware_update") + f"_v{TOOL_VERSION}"
     run_started_at = iso_now()
     results_dir = ensure_dir(
         Path(args.results_dir or (SCRIPT_DIR / "results" / run_id)).expanduser().resolve()

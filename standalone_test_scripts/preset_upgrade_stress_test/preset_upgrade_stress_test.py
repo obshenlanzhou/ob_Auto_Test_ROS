@@ -1070,7 +1070,7 @@ def run(args) -> int:
     configured_imu_topics = expand_topic_templates(args.imu_topic, camera_names)
     sensor_baseline: Optional[tuple[List[str], List[str], Dict[str, str]]] = None
 
-    run_id = datetime.now().strftime("%Y%m%d_%H%M%S_preset_upgrade")
+    run_id = datetime.now().strftime("%Y%m%d_%H%M%S_preset_upgrade") + f"_v{TOOL_VERSION}"
     run_started_at = iso_now()
     results_dir = ensure_dir(
         Path(args.results_dir or (SCRIPT_DIR / "results" / run_id)).expanduser().resolve()

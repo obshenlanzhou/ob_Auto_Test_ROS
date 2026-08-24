@@ -1274,7 +1274,7 @@ def run(args) -> int:
         raise ValueError("--save-image-count must be >= 0")
     save_image_timeout = parse_duration(args.save_image_timeout, 30.0)
 
-    run_id = datetime.now().strftime("%Y%m%d_%H%M%S_export_load")
+    run_id = datetime.now().strftime("%Y%m%d_%H%M%S_export_load") + f"_v{TOOL_VERSION}"
     run_started_at = iso_now()
     default_results_dir = Path(__file__).resolve().parent / "results" / run_id
     results_dir = ensure_dir(Path(args.results_dir).resolve() if args.results_dir else default_results_dir)

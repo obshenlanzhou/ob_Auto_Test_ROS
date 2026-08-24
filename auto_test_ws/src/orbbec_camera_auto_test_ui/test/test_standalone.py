@@ -29,6 +29,7 @@ from orbbec_camera_auto_test_ui.run_manager import (  # noqa: E402
     RunManager,
     TestJob as _TestJob,
     _build_standalone_progress,
+    _standalone_base_run_id,
 )
 
 
@@ -106,6 +107,14 @@ def test_standalone_ui_exposes_tool_version():
     ).read_text(encoding="utf-8")
     assert 'id="standaloneVersion"' in template
     assert "test.version" in app_js
+
+
+def test_standalone_ui_run_directory_includes_tool_version():
+    run_id = _standalone_base_run_id("stream_toggle_stress_test", "1.9.7")
+    assert re.fullmatch(
+        r"\d{8}_\d{6}_standalone_stream_toggle_stress_test_v1\.9\.7",
+        run_id,
+    )
 
 
 def test_manifest_options_exist_in_script_help():

@@ -123,7 +123,7 @@ config/g336x_K_High_Accuracy_0.0.2.bin   → device_preset: K High Accuracy
 每次运行会创建结果目录：
 
 ```text
-preset_upgrade_stress_test/results/YYYYMMDD_HHMMSS_preset_upgrade/
+preset_upgrade_stress_test/results/YYYYMMDD_HHMMSS_preset_upgrade_v1.9/
 ├── summary.md                              # 最终摘要
 ├── result.json                             # 完整机器可读结果
 ├── events.jsonl                            # 结构化生命周期和进度事件

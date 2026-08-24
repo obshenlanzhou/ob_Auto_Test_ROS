@@ -259,8 +259,10 @@ def parse_bool(value):
 def default_output_dir(ros_version):
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     if ros_version == "ros2":
-        return os.path.abspath("image_receive_stats_ros2_{}".format(timestamp))
-    return os.path.abspath("image_receive_stats_{}".format(timestamp))
+        return os.path.abspath(
+            "{}_image_receive_stats_ros2_v{}".format(timestamp, TOOL_VERSION)
+        )
+    return os.path.abspath("{}_image_receive_stats_v{}".format(timestamp, TOOL_VERSION))
 
 
 def ensure_dir(path):

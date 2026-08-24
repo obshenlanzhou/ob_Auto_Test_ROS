@@ -2433,7 +2433,7 @@ def run(args) -> int:
     apply_python_paths(runtime_env)
     environment = collect_test_environment(args)
 
-    run_id = datetime.now().strftime("%Y%m%d_%H%M%S_stream_toggle")
+    run_id = datetime.now().strftime("%Y%m%d_%H%M%S_stream_toggle") + f"_v{TOOL_VERSION}"
     started_at = iso_now()
     default_results_dir = Path(__file__).resolve().parent / "results" / run_id
     results_dir = ensure_dir(

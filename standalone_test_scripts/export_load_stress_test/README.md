@@ -118,7 +118,7 @@ To use different files, pass `--config-json` repeatedly in the desired order:
 Each run creates:
 
 ```text
-export_load_stress_test/results/YYYYMMDD_HHMMSS_export_load/
+export_load_stress_test/results/YYYYMMDD_HHMMSS_export_load_v1.9/
 ├── summary.md       # Final result and per-test pass/fail status
 ├── result.json      # Full machine-readable result
 ├── events.jsonl     # Structured lifecycle and progress events

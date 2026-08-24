@@ -60,7 +60,7 @@ python3 ./image_topic_receive_stats.py \
 | Option | Description | Default |
 | --- | --- | --- |
 | `--image-topic` | Required `sensor_msgs/Image` topic; repeatable | None |
-| `--results-dir` | Output directory | Timestamped directory |
+| `--results-dir` | Output directory | `YYYYMMDD_HHMMSS_image_receive_stats[_ros2]_v<tool-version>` |
 | `--warning-interval-sec` | Warn when consecutive receive gaps exceed this value | `1.0` |
 | `--warmup-sec` | Ignore frames during startup warmup | `2.0` |
 | `--queue-size` | Subscriber queue size | `10` |

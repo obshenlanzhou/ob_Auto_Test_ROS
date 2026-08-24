@@ -139,7 +139,7 @@ values are `debug`, `info`, `warn`, `error`, `fatal`, and `none`.
 Each run creates:
 
 ```text
-launch_param_load_stress/results/YYYYMMDD_HHMMSS_launch_param_load_stress/
+launch_param_load_stress/results/YYYYMMDD_HHMMSS_launch_param_load_stress_v1.9/
 ├── test_0001/
 │   ├── camera1.launch.log      # ROS launch log for camera1
 │   ├── camera2.launch.log      # ROS launch log for camera2 (multi-camera only)

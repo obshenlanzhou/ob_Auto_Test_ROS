@@ -806,6 +806,11 @@ def _safe_text(value: Any) -> str:
     return "" if value is None else str(value).strip()
 
 
+def _standalone_base_run_id(test_id: str, tool_version: str) -> str:
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return f"{timestamp}_standalone_{test_id}_v{tool_version}"
+
+
 def _append_arg(args: List[str], name: str, value: Any) -> None:
     text = _safe_text(value)
     if text:
@@ -1416,7 +1421,7 @@ class RunManager:
             }
         )
 
-        base_run_id = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_standalone_{test_id}"
+        base_run_id = _standalone_base_run_id(test_id, manifest["version"])
         run_id, run_root = create_unique_run_dir(base_run_id)
         args, values = build_standalone_command(manifest, values, run_root)
         command_line = _quote_command(args)

@@ -1499,7 +1499,10 @@ def run(args) -> int:
     configured_imu_topics = expand_topic_templates(args.imu_topic, camera_names)
     sensor_baseline: Optional[tuple[List[str], List[str], Dict[str, str]]] = None
 
-    run_id = datetime.now().strftime("%Y%m%d_%H%M%S_launch_param_load_stress")
+    run_id = (
+        datetime.now().strftime("%Y%m%d_%H%M%S_launch_param_load_stress")
+        + f"_v{TOOL_VERSION}"
+    )
     run_started_at = iso_now()
     default_results_dir = Path(__file__).resolve().parent / "results" / run_id
     results_dir = ensure_dir(Path(args.results_dir).resolve() if args.results_dir else default_results_dir)

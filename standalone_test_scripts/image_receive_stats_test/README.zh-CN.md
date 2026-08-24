@@ -56,7 +56,7 @@ python3 ./image_topic_receive_stats.py \
 | 参数 | 说明 | 默认值 |
 | --- | --- | --- |
 | `--image-topic` | 必填的 `sensor_msgs/Image` 话题，可重复传入 | 无 |
-| `--results-dir` | 输出目录 | 带时间戳的目录 |
+| `--results-dir` | 输出目录 | `YYYYMMDD_HHMMSS_image_receive_stats[_ros2]_v<工具版本>` |
 | `--warning-interval-sec` | 相邻两帧接收间隔超过该值时记录告警 | `1.0` |
 | `--warmup-sec` | 启动预热时间，预热期间不记录统计 | `2.0` |
 | `--queue-size` | Subscriber 队列大小 | `10` |

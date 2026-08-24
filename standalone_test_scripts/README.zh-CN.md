@@ -83,6 +83,8 @@ standalone_test_scripts/
 但最终结果和退出码仍会报告失败。
 
 每次运行都会生成 `terminal.log`，实时保存脚本自身的标准输出和标准错误，同时保持终端正常输出。
+未指定 `--results-dir` 时，默认结果目录名采用
+`YYYYMMDD_HHMMSS_<测试名称>_v<工具版本>` 格式。
 每次完成的运行还会生成 `result.json`、`summary.md` 和 `events.jsonl`。
 `result.json` 的状态统一为 `passed`、`failed`、`interrupted`，对应退出码分别为
 `0`、`1`、`130`；命令行参数错误返回 `2`。脚本特有的日志、图片、CSV 和导出文件
@@ -96,6 +98,9 @@ standalone_test_scripts/
 ```text
 http://127.0.0.1:8000/?workspace=standalone
 ```
+
+UI 运行目录位于 `auto_test_ws/results/ui_runs/`，目录名采用
+`YYYYMMDD_HHMMSS_standalone_<测试 ID>_v<工具版本>` 格式。
 
 清单声明字段类型、默认值、风险等级和停止策略。脚本仍须保持独立：清单可以描述脚本的
 CLI，但脚本本身不能导入 Web UI 包。

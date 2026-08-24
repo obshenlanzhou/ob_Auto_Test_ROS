@@ -90,6 +90,8 @@ script continues with the next cycle, preset, update, or frame as applicable;
 the final result and exit code still report failure.
 
 Every run writes `terminal.log`, teeing the script's stdout and stderr without suppressing live terminal output.
+When `--results-dir` is omitted, the default result directory name uses the
+`YYYYMMDD_HHMMSS_<test-name>_v<tool-version>` format.
 Every completed run also writes `result.json`, `summary.md`, and `events.jsonl`.
 `result.json` uses the common status values `passed`, `failed`, and
 `interrupted`; the corresponding process exit codes are `0`, `1`, and `130`.
@@ -105,6 +107,9 @@ forms without exposing a raw argument field:
 ```text
 http://127.0.0.1:8000/?workspace=standalone
 ```
+
+UI run directories live under `auto_test_ws/results/ui_runs/` and use the
+`YYYYMMDD_HHMMSS_standalone_<test-id>_v<tool-version>` format.
 
 The manifest declares field types, defaults, risk level, and stop policy. Keep
 the script independent: the manifest may describe its CLI, but the script must
