@@ -154,7 +154,7 @@ and angular-velocity plots.
 Each run creates:
 
 ```text
-stream_toggle_stress_test/results/YYYYMMDD_HHMMSS_stream_toggle_v1.9.7/
+stream_toggle_stress_test/results/YYYYMMDD_HHMMSS_stream_toggle_v2.0.0/
 ├── logs/camera.launch.log     # ROS launch log
 ├── logs/sdk/                  # SDK logs
 ├── images/                    # Raw color/IR, colorized depth, point-cloud, and IMU artifacts

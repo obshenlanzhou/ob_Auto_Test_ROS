@@ -30,7 +30,7 @@ from _test_protocol import (
 ENV_READY_VAR = "FIRMWARE_UPDATE_STRESS_TEST_ENV_READY"
 INTERRUPTED = False
 SCRIPT_DIR = Path(__file__).resolve().parent
-TOOL_VERSION = "1.9"
+TOOL_VERSION = "2.0.0"
 TEST_ID = "firmware_update_stress_test"
 SUCCESS_RE = re.compile(
     r"Firmware tool completed successfully\. Updated (?P<updated>\d+)/(?P<total>\d+) target device\(s\)\."

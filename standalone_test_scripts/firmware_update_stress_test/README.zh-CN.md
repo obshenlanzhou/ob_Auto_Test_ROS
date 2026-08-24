@@ -96,7 +96,7 @@ USB 和网络选择字段必须最终对应一个目标值。
 每次运行会创建结果目录：
 
 ```text
-firmware_update_stress_test/results/YYYYMMDD_HHMMSS_firmware_update_v1.9/
+firmware_update_stress_test/results/YYYYMMDD_HHMMSS_firmware_update_v2.0.0/
 ├── summary.md                  # 最终结果和每次压测通过/失败状态
 ├── result.json                 # 完整机器可读结果
 ├── events.jsonl                # 结构化生命周期和进度事件

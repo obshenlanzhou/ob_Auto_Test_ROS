@@ -126,7 +126,7 @@ cp ./config/sample_config_file_path.yaml /tmp/my_config.yaml
 每次运行会创建结果目录：
 
 ```text
-launch_param_load_stress/results/YYYYMMDD_HHMMSS_launch_param_load_stress_v1.9/
+launch_param_load_stress/results/YYYYMMDD_HHMMSS_launch_param_load_stress_v2.0.0/
 ├── test_0001/
 │   ├── camera1.launch.log      # camera1 的 ROS launch 日志
 │   ├── camera2.launch.log      # camera2 的 ROS launch 日志（多相机时）

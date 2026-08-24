@@ -146,7 +146,7 @@ A、B 两组必须配置相同的话题，且配置内容必须不同。
 每次运行会创建结果目录：
 
 ```text
-stream_toggle_stress_test/results/YYYYMMDD_HHMMSS_stream_toggle_v1.9.7/
+stream_toggle_stress_test/results/YYYYMMDD_HHMMSS_stream_toggle_v2.0.0/
 ├── logs/camera.launch.log     # ROS launch 日志
 ├── logs/sdk/                  # SDK 日志
 ├── images/                    # raw 彩色/IR、彩色深度、点云和 IMU 证据

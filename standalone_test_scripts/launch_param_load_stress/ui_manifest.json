@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "id": "launch_param_load_stress",
-  "version": "1.9",
+  "version": "2.0.0",
   "title": "Launch 参数加载压测",
   "description": "加载相机 YAML 参数，验证参数、Service 与图像 Topic。",
   "script": "launch_param_load_stress.py",

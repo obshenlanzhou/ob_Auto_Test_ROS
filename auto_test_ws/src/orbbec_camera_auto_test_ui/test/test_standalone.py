@@ -110,9 +110,9 @@ def test_standalone_ui_exposes_tool_version():
 
 
 def test_standalone_ui_run_directory_includes_tool_version():
-    run_id = _standalone_base_run_id("stream_toggle_stress_test", "1.9.7")
+    run_id = _standalone_base_run_id("stream_toggle_stress_test", "2.0.0")
     assert re.fullmatch(
-        r"\d{8}_\d{6}_standalone_stream_toggle_stress_test_v1\.9\.7",
+        r"\d{8}_\d{6}_standalone_stream_toggle_stress_test_v2\.0\.0",
         run_id,
     )
 

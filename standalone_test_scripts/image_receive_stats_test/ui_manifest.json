@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "id": "image_receive_stats_test",
-  "version": "1.9",
+  "version": "2.0.0",
   "title": "图像接收统计",
   "description": "订阅图像 Topic，记录帧间隔、时间戳、停流告警与 CSV。",
   "script": "image_topic_receive_stats.py",
