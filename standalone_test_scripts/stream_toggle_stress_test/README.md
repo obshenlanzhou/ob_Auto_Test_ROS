@@ -20,7 +20,7 @@ The per-stream workflow is:
 
 ```text
 Stop one stream → verify it is quiet while other streams remain stable
-Restore it → verify all streams recover → save images for that stream
+Restore it → save the first new images → verify all streams remain stable
 Continue with the next stream → start a new cycle after all targets pass
 ```
 
@@ -134,7 +134,7 @@ decode or validate compressed data; it writes `CompressedImage.data` directly to
 | `--switch-stream-profile` | `0` | Set to `1` to alternate A/B stream profiles |
 | `--stream-off-seconds` | `4` | Off-state dwell and verification time in seconds |
 | `--stream-on-preview-seconds` | `4` | Preview and verification time after enabling |
-| `--save-image-count` | `1` | Artifacts per topic: image/IMU PNG and point-cloud PLY; `0` keeps validation only |
+| `--save-image-count` | `1` | Artifacts per topic; image frames are saved as soon as output resumes, before stability validation completes; `0` keeps validation only |
 | `--run-count` | empty | Maximum completed cycles |
 | `--continue-on-failure` | disabled | Restore streams after a failed operation and continue; the final result still fails |
 | `--duration` | empty | Maximum duration; supports `15m` and `2h` |

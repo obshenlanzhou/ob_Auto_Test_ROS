@@ -2898,6 +2898,19 @@ def run(args) -> int:
                                 }
                                 result["warnings"].append(warning)
                                 emit(warning["message"])
+                        if image_writer is not None and image_save_monitor is not None:
+                            for target in targets:
+                                images = save_target_images(
+                                    session=session,
+                                    harness=harness,
+                                    monitor=image_save_monitor,
+                                    writer=image_writer,
+                                    targets=save_targets_by_topic[target.topic],
+                                    count=args.save_image_count,
+                                    timeout=config["save_image_timeout"],
+                                )
+                                operation["images"].extend(images)
+                                result["saved_image_count"] += len(images)
                         operation["enabled_state"] = (
                             wait_for_enabled_state_with_subscription_recovery(
                                 session=session,
@@ -2918,19 +2931,6 @@ def run(args) -> int:
                                 operation["enabled_state"]["topics"],
                             )
                         groups_may_be_disabled = False
-                        if image_writer is not None and image_save_monitor is not None:
-                            for target in targets:
-                                images = save_target_images(
-                                    session=session,
-                                    harness=harness,
-                                    monitor=image_save_monitor,
-                                    writer=image_writer,
-                                    targets=save_targets_by_topic[target.topic],
-                                    count=args.save_image_count,
-                                    timeout=config["save_image_timeout"],
-                                )
-                                operation["images"].extend(images)
-                                result["saved_image_count"] += len(images)
                         operation["sensors"] = capture_on_state_sensors()
                         operation["status"] = "passed"
                         result["completed_operations"] += len(targets)
@@ -3099,6 +3099,17 @@ def run(args) -> int:
                             }
                             result["warnings"].append(warning)
                             emit(warning["message"])
+                        if image_writer is not None and image_save_monitor is not None:
+                            operation["images"] = save_target_images(
+                                session=session,
+                                harness=harness,
+                                monitor=image_save_monitor,
+                                writer=image_writer,
+                                targets=save_targets_by_topic[target.topic],
+                                count=args.save_image_count,
+                                timeout=config["save_image_timeout"],
+                            )
+                            result["saved_image_count"] += len(operation["images"])
                         operation["enabled_state"] = (
                             wait_for_enabled_state_with_subscription_recovery(
                                 session=session,
@@ -3119,17 +3130,6 @@ def run(args) -> int:
                                 operation["enabled_state"]["topics"],
                             )
                         target_may_be_disabled = False
-                        if image_writer is not None and image_save_monitor is not None:
-                            operation["images"] = save_target_images(
-                                session=session,
-                                harness=harness,
-                                monitor=image_save_monitor,
-                                writer=image_writer,
-                                targets=save_targets_by_topic[target.topic],
-                                count=args.save_image_count,
-                                timeout=config["save_image_timeout"],
-                            )
-                            result["saved_image_count"] += len(operation["images"])
                         operation["sensors"] = capture_on_state_sensors()
                         operation["status"] = "passed"
                         result["completed_operations"] += 1

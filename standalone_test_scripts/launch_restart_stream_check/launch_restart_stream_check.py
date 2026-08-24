@@ -1030,6 +1030,32 @@ def run(args) -> int:
                     )
                 elif auto_discover_topics:
                     pass
+                image_ok, image_snapshot, image_message = save_images(
+                    session=session,
+                    harness=harness,
+                    topics=monitored_topics,
+                    output_root=results_dir / "images",
+                    count=save_image_count,
+                    timeout=save_image_timeout,
+                )
+                attempt["images"] = image_snapshot
+                if not image_ok:
+                    attempt["status"] = "failed"
+                    attempt["message"] = image_message
+                    attempt["ended_at"] = datetime.now().isoformat(timespec="seconds")
+                    result["status"] = "failed"
+                    result.setdefault("errors", []).append(image_message)
+                    if args.continue_on_failure:
+                        emit(
+                            f"attempt {attempt_index}: {image_message}; continuing "
+                            "with the next cycle"
+                        )
+                        session.stop()
+                        active_session = None
+                        current_attempt = None
+                        continue
+                    raise RuntimeError(image_message)
+
                 ok, snapshot, message = wait_for_stable_streams(
                     session=session,
                     harness=harness,
@@ -1087,32 +1113,6 @@ def run(args) -> int:
                     while session.poll() is None:
                         time.sleep(1.0)
                     break
-
-                image_ok, image_snapshot, image_message = save_images(
-                    session=session,
-                    harness=harness,
-                    topics=monitored_topics,
-                    output_root=results_dir / "images",
-                    count=save_image_count,
-                    timeout=save_image_timeout,
-                )
-                attempt["images"] = image_snapshot
-                if not image_ok:
-                    attempt["status"] = "failed"
-                    attempt["message"] = image_message
-                    attempt["ended_at"] = datetime.now().isoformat(timespec="seconds")
-                    result["status"] = "failed"
-                    result.setdefault("errors", []).append(image_message)
-                    if args.continue_on_failure:
-                        emit(
-                            f"attempt {attempt_index}: {image_message}; continuing "
-                            "with the next cycle"
-                        )
-                        session.stop()
-                        active_session = None
-                        current_attempt = None
-                        continue
-                    raise RuntimeError(image_message)
 
                 if sensor_baseline is None:
                     camera_names = sorted(

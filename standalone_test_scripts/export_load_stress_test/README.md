@@ -4,15 +4,15 @@
 
 ## Introduction
 
-Alternately load two config JSON files, start the camera launch, wait for
-streams to become stable, save images, export the current JSON via service, and
+Alternately load two config JSON files, start the camera launch, save images as
+soon as streams publish, verify stream stability, export the current JSON via service, and
 compare only the `parameters` field to verify that settings took effect.
 
 Typical flow per test:
 
 ```text
 Load config JSON → start launch per camera
-Wait for all streams to become stable → save images
+Save the first images as soon as streams publish → verify continued stability
 Export JSON via service → compare parameters field with imported JSON
 Stop launch → switch to next config → repeat
 ```
@@ -65,7 +65,7 @@ python3 ./export_load_stress_test/export_load_stress_test.py \
 | `--continue-on-failure` | disabled | Record a failed cycle and continue with the next one; the final result still fails |
 | `--duration` | empty | Optional maximum wall time; the first configured limit reached stops the run |
 | `--sdk-log-level` | `debug` | Orbbec SDK log level |
-| `--save-image-count` | `1` | Artifacts per topic: image/IMU PNG and point-cloud PLY (`0` = validation only) |
+| `--save-image-count` | `1` | Artifacts per topic; image frames are saved immediately without waiting for stability validation (`0` = validation only) |
 | `--image-topic` | auto-discovered | Explicit `Image` or `CompressedImage` topic to monitor and save; repeatable |
 | `--point-cloud-topic` | first-test discovery | Required `PointCloud2` topic; repeatable, supports `{camera}` |
 | `--imu-topic` | first-test discovery | Required `Imu` topic; repeatable, supports `{camera}` |

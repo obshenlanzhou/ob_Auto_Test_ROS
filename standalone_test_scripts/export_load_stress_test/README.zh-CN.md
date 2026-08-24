@@ -4,14 +4,14 @@ English: [README.md](README.md)
 
 ## 工具介绍
 
-交替加载两份 JSON 参数文件，启动相机 launch，等待出流稳定后保存图像，
+交替加载两份 JSON 参数文件，启动相机 launch，出流后立即保存图像并继续验证稳定性，
 通过 service 导出 JSON，只对比 `parameters` 字段，验证导入参数是否生效。
 
 每次压测的典型流程：
 
 ```text
 加载 JSON → 启动各相机 launch
-等待所有流稳定 → 保存图像
+所有流开始出流后立即保存图像 → 继续验证出流稳定性
 通过 service 导出 JSON → 对比 parameters 字段
 关闭 launch → 切换到下一份 JSON → 重复
 ```
@@ -63,7 +63,7 @@ python3 ./export_load_stress_test/export_load_stress_test.py \
 | `--continue-on-failure` | 关闭 | 记录失败并继续下一轮；最终结果仍为失败 |
 | `--duration` | 空 | 可选的最长运行时间；任一已配置上限先达到即结束 |
 | `--sdk-log-level` | `debug` | Orbbec SDK 日志级别 |
-| `--save-image-count` | `1` | 每轮每个图像、点云和 IMU topic 的 PNG 产物数（`0` = 仅检测） |
+| `--save-image-count` | `1` | 每轮每个 topic 的产物数；图像收到即存，不等待稳定验证完成（`0` = 仅检测） |
 | `--image-topic` | 自动发现 | 指定后只监控并保存这些 `Image` 或 `CompressedImage` topic，可重复传入 |
 | `--point-cloud-topic` | 首轮自动发现 | 强制要求的 `PointCloud2` topic，可重复传入并支持 `{camera}` |
 | `--imu-topic` | 首轮自动发现 | 强制要求的 `Imu` topic，可重复传入并支持 `{camera}` |

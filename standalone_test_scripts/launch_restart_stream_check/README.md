@@ -11,7 +11,7 @@ Typical flow per restart:
 
 ```text
 Start launch → discover or subscribe to image topics
-Wait for all streams to become stable
+Save the first images as soon as streams publish → verify continued stability
 Stop launch → wait restart delay → repeat until duration ends
 ```
 
@@ -78,7 +78,7 @@ python3 ./launch_restart_stream_check/launch_restart_stream_check.py \
 | `--image-topic` | auto-discovered | Image topic to monitor; repeatable |
 | `--point-cloud-topic` | first-launch discovery | Required `PointCloud2` topic after every restart; repeatable, supports `{camera}` |
 | `--imu-topic` | first-launch discovery | Required `Imu` topic after every restart; repeatable, supports `{camera}` |
-| `--save-image-count` | `1` | Artifacts per topic after each restart: image/IMU PNG and point-cloud PLY; `0` = validation only |
+| `--save-image-count` | `1` | Artifacts per topic after each restart; image frames are saved immediately without waiting for stability validation; `0` = validation only |
 | `--launch-arg` | — | Extra launch argument (e.g. `enable_ir=true`); repeatable, format `KEY=VALUE` or `KEY:=VALUE` |
 | `--sdk-log-level` | `debug` | Orbbec SDK log level |
 | `--duration` | empty | Total run time; supports seconds, `30m`, `2h`, and similar formats |

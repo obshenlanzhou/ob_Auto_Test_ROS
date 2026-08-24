@@ -1445,41 +1445,6 @@ def run(args) -> int:
                     )
                     emit(f"{test_name}: discovered image topics: {', '.join(image_topics)}")
 
-                ok, snapshot, message = wait_for_stable_streams(
-                    sessions=sessions,
-                    harness=harness,
-                    topics=image_topics,
-                    stable_seconds=stable_seconds,
-                    timeout=stream_timeout,
-                    max_gap_seconds=max_gap_seconds,
-                    emit=emit,
-                )
-                test_payload["topics"] = snapshot
-                if not ok:
-                    test_payload["status"] = "failed"
-                    test_payload["message"] = message
-                    test_payload["ended_at"] = datetime.now().isoformat(timespec="seconds")
-                    result["status"] = "failed"
-                    result.setdefault("errors", []).append(f"{test_name}: {message}")
-                    if args.continue_on_failure:
-                        emit(f"{test_name}: streams not stable; continuing after cleanup")
-                        for session in reversed(sessions):
-                            session.stop()
-                        active_sessions = []
-                        current_test = None
-                        continue
-                    result["manual_confirmation_required"] = True
-                    result["manual_confirmation_message"] = (
-                        f"{test_name}: {message}; launches were kept running until manual "
-                        "check finished"
-                    )
-                    keep_launch_running = True
-                    emit(f"{test_name}: streams not stable, launches kept running")
-                    emit("please manually check the launches, press Ctrl+C to stop them and finish")
-                    while any(session.poll() is None for session in sessions):
-                        time.sleep(1.0)
-                    break
-
                 ok, image_snapshot, image_message = save_images(
                     sessions=sessions,
                     harness=harness,
@@ -1518,6 +1483,41 @@ def run(args) -> int:
                         time.sleep(1.0)
                     break
                 emit(f"{test_name}: {image_message}")
+
+                ok, snapshot, message = wait_for_stable_streams(
+                    sessions=sessions,
+                    harness=harness,
+                    topics=image_topics,
+                    stable_seconds=stable_seconds,
+                    timeout=stream_timeout,
+                    max_gap_seconds=max_gap_seconds,
+                    emit=emit,
+                )
+                test_payload["topics"] = snapshot
+                if not ok:
+                    test_payload["status"] = "failed"
+                    test_payload["message"] = message
+                    test_payload["ended_at"] = datetime.now().isoformat(timespec="seconds")
+                    result["status"] = "failed"
+                    result.setdefault("errors", []).append(f"{test_name}: {message}")
+                    if args.continue_on_failure:
+                        emit(f"{test_name}: streams not stable; continuing after cleanup")
+                        for session in reversed(sessions):
+                            session.stop()
+                        active_sessions = []
+                        current_test = None
+                        continue
+                    result["manual_confirmation_required"] = True
+                    result["manual_confirmation_message"] = (
+                        f"{test_name}: {message}; launches were kept running until manual "
+                        "check finished"
+                    )
+                    keep_launch_running = True
+                    emit(f"{test_name}: streams not stable, launches kept running")
+                    emit("please manually check the launches, press Ctrl+C to stop them and finish")
+                    while any(session.poll() is None for session in sessions):
+                        time.sleep(1.0)
+                    break
 
                 if sensor_baseline is None:
                     sensor_baseline = discover_sensor_topics(

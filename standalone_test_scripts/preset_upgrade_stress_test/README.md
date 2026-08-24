@@ -6,14 +6,14 @@
 
 Alternately upgrade two optional depth preset bin files, start the camera launch
 with the matching `device_preset` after each update, and verify that image
-streams are stable. Optionally saves images per test.
+streams publish. Optionally saves the first received images per test.
 
 Typical flow per test:
 
 ```text
 Upgrade preset bin → start launch with matching device_preset
 Wait for "Loaded device preset:" in log
-Subscribe to image topics → verify streams are stable → save images
+Subscribe to image topics → save the first received images while verifying output
 Stop launch → wait for `--restart-delay` (2 seconds by default) → switch to next preset → repeat
 ```
 
@@ -76,7 +76,7 @@ python3 ./preset_upgrade_stress_test/preset_upgrade_stress_test.py \
 | `--run-count` | empty | Optional maximum number of upgrade cycles |
 | `--continue-on-failure` | disabled | Clean up a failed preset test and continue with the next one; the final result still fails |
 | `--duration` | empty | Maximum wall time; supports `300`, `15m`, and `2h` |
-| `--save-image-count` | `1` | Artifacts per topic: image/IMU PNG and point-cloud PLY (`0` = validation only) |
+| `--save-image-count` | `1` | Artifacts per topic; image frames are saved immediately on receipt (`0` = validation only) |
 | `--image-topic` | auto-discovered | Explicit `Image` or `CompressedImage` topic to monitor and save; repeatable, supports `{camera}` |
 | `--point-cloud-topic` | first-test discovery | Required `PointCloud2` topic; repeatable, supports `{camera}` |
 | `--imu-topic` | first-test discovery | Required `Imu` topic; repeatable, supports `{camera}` |

@@ -5,14 +5,14 @@ English: [README.md](README.md)
 ## 工具介绍
 
 交替升级两份 optional depth preset bin 文件，每次升级成功后启动相机 launch 并传入
-对应 `device_preset`，验证图像流是否稳定。可选择保存图像。
+对应 `device_preset`，验证图像流是否出流。可选择保存最先收到的图像。
 
 每次升级的典型流程：
 
 ```text
 升级 preset bin → 启动 launch 并传入对应 device_preset
 等待日志出现 "Loaded device preset:"
-订阅图像 topic → 验证流稳定 → 保存图像
+订阅图像 topic → 收到图像立即保存，同时验证出流
 关闭 launch → 等待 `--restart-delay`（默认 2 秒）→ 切换到下一份 preset → 重复
 ```
 
@@ -73,7 +73,7 @@ python3 ./preset_upgrade_stress_test/preset_upgrade_stress_test.py \
 | `--run-count` | 空 | 可选的升级最大轮次数 |
 | `--continue-on-failure` | 关闭 | 清理失败的 Preset 测试后继续下一个；最终结果仍为失败 |
 | `--duration` | 空 | 最长运行时间，支持 `300`、`15m`、`2h` |
-| `--save-image-count` | `1` | 每轮每个图像、点云和 IMU topic 的 PNG 产物数（`0` = 仅检测） |
+| `--save-image-count` | `1` | 每轮每个 topic 的产物数；图像收到即存（`0` = 仅检测） |
 | `--image-topic` | 自动发现 | 指定后只监控并保存这些 `Image` 或 `CompressedImage` topic，可重复传入并支持 `{camera}` |
 | `--point-cloud-topic` | 首轮自动发现 | 强制要求的 `PointCloud2` topic，可重复传入并支持 `{camera}` |
 | `--imu-topic` | 首轮自动发现 | 强制要求的 `Imu` topic，可重复传入并支持 `{camera}` |

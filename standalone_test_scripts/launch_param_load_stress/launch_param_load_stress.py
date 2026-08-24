@@ -1378,6 +1378,16 @@ def _check_one_camera(
         "image_topics": [],
         "saved_images": [],
     }
+    if save_images_count > 0 and images_dir is not None:
+        cam["saved_images"], cam["image_topics"] = save_topic_images(
+            ros_version=ros_version,
+            camera_name=camera_name,
+            image_topic_templates=image_topic_templates,
+            output_root=images_dir,
+            save_images_count=save_images_count,
+            timeout=topic_timeout,
+            emit=emit,
+        )
     cam["param_checks"] = check_params(
         yaml_params=yaml_params,
         supported_params=supported_params,
@@ -1408,16 +1418,6 @@ def _check_one_camera(
             camera_name=camera_name,
             env=runtime_env,
             timeout=service_timeout,
-            emit=emit,
-        )
-    if save_images_count > 0 and images_dir is not None:
-        cam["saved_images"], cam["image_topics"] = save_topic_images(
-            ros_version=ros_version,
-            camera_name=camera_name,
-            image_topic_templates=image_topic_templates,
-            output_root=images_dir,
-            save_images_count=save_images_count,
-            timeout=topic_timeout,
             emit=emit,
         )
     return cam

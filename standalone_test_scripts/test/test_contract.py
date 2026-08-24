@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import importlib.util
 import io
 import json
@@ -617,6 +618,69 @@ def test_all_image_savers_colorize_depth_png_and_preserve_compressed_bytes(tmp_p
     assert np.all(decoded[pixels == 0] == 0)
     assert "preview_path" not in raw_record
     assert Path(compressed_record["path"]).read_bytes() == compressed_message.data
+
+
+def _run_call_lines(script: Path, call_name: str) -> list[int]:
+    tree = ast.parse(script.read_text(encoding="utf-8"))
+    run_node = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "run"
+    )
+    return sorted(
+        node.lineno
+        for node in ast.walk(run_node)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == call_name
+    )
+
+
+def test_stress_scripts_capture_images_before_stability_validation():
+    for test_id in ("launch_restart", "export_load"):
+        save_lines = _run_call_lines(SCRIPTS[test_id], "save_images")
+        stable_lines = _run_call_lines(SCRIPTS[test_id], "wait_for_stable_streams")
+        assert len(save_lines) == len(stable_lines) == 1
+        assert save_lines[0] < stable_lines[0], test_id
+
+    save_lines = _run_call_lines(SCRIPTS["stream_toggle"], "save_target_images")
+    stable_lines = _run_call_lines(
+        SCRIPTS["stream_toggle"],
+        "wait_for_enabled_state_with_subscription_recovery",
+    )
+    assert len(save_lines) == len(stable_lines) == 2
+    assert all(save < stable for save, stable in zip(save_lines, stable_lines))
+
+
+def test_launch_param_saves_images_before_other_camera_checks():
+    module = load_script(SCRIPTS["launch_param_load"])
+    calls = []
+    module.save_topic_images = lambda **_kwargs: (
+        calls.append("images") or ["image.png"],
+        ["/camera/color/image_raw"],
+    )
+    module.check_params = lambda **_kwargs: calls.append("params") or []
+    module.check_topics = lambda **_kwargs: calls.append("topics") or []
+    module.check_services = lambda **_kwargs: calls.append("services") or []
+
+    module._check_one_camera(
+        camera_name="camera",
+        yaml_params={},
+        supported_params=set(),
+        declaration_filter_enabled=False,
+        ros_version="2",
+        runtime_env={},
+        topic_timeout=1.0,
+        service_timeout=1.0,
+        skip_topic_check=False,
+        skip_service_check=False,
+        save_images_count=1,
+        image_topic_templates=["/camera/color/image_raw"],
+        images_dir=Path("images"),
+        emit=lambda _message: None,
+    )
+
+    assert calls == ["images", "params", "topics", "services"]
 
 
 def test_default_image_discovery_finds_all_raw_streams_per_camera():
