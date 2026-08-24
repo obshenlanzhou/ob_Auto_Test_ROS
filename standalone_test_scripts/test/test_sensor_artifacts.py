@@ -250,6 +250,62 @@ def test_sensor_monitor_validates_when_saving_is_disabled(monkeypatch, tmp_path)
     monitor.close()
 
 
+def test_persistent_sensor_monitor_reuses_subscriptions_across_captures(tmp_path):
+    module = load_helper()
+
+    class PublishingHarness(FakeHarness):
+        def __init__(self):
+            super().__init__()
+            self.create_count = 0
+            self.destroy_count = 0
+
+        def create_sensor_subscription(self, topic, kind, callback):
+            self.create_count += 1
+            return super().create_sensor_subscription(topic, kind, callback)
+
+        def destroy_subscription(self, subscription):
+            self.destroy_count += 1
+            super().destroy_subscription(subscription)
+
+        def spin_once(self, _timeout):
+            self.callbacks["/camera/depth/points"][1](point_cloud_message())
+
+    harness = PublishingHarness()
+    monitor = module.SensorCaptureMonitor(
+        harness=harness,
+        point_cloud_topics=["/camera/depth/points"],
+        imu_topics=[],
+        topic_cameras={"/camera/depth/points": "camera"},
+        output_root=tmp_path,
+        save_count=0,
+        active=False,
+    )
+
+    snapshots = []
+    for _ in range(2):
+        ok, snapshot, _message = module.capture_sensor_artifacts(
+            harness=harness,
+            point_cloud_topics=["/camera/depth/points"],
+            imu_topics=[],
+            topic_cameras={"/camera/depth/points": "camera"},
+            output_root=tmp_path,
+            save_count=0,
+            timeout=1,
+            monitor=monitor,
+        )
+        assert ok
+        snapshots.append(snapshot)
+
+    assert [snapshot[0]["message_count"] for snapshot in snapshots] == [1, 1]
+    assert harness.create_count == 1
+    assert harness.destroy_count == 0
+    assert len(harness.callbacks) == 1
+
+    monitor.close()
+    assert harness.destroy_count == 1
+    assert not harness.callbacks
+
+
 def test_sensor_paths_use_stable_stream_names_and_continue_indices(tmp_path):
     module = load_helper()
     existing = tmp_path / "camera" / "point_cloud_depth" / "image_0003.png"

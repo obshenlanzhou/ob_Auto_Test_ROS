@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "id": "stream_toggle_stress_test",
-  "version": "1.9.5",
+  "version": "1.9.6",
   "title": "开关流压测",
   "description": "支持逐路或整体关闭和恢复图像流，可在两组分辨率/帧率/出流格式配置间交替切换，并验证单/多相机目标流稳定恢复。",
   "script": "stream_toggle_stress_test.py",

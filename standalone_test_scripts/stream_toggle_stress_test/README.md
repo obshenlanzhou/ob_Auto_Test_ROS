@@ -31,6 +31,8 @@ If verification times out with zero frames on a topic, the tool recreates that s
 rebuilds its dedicated executor, records a warning, and verifies once more before failing.
 ROS 2 uses one rclpy context for compatibility with both Fast DDS and Cyclone DDS. Service clients
 remain persistent during the stress loop instead of being created and destroyed every cycle.
+Point-cloud and IMU subscriptions are also established before the stress loop and remain alive
+until the test ends. Each enabled-state check resets only its capture window and artifact counts.
 
 ROS 1 supports only the default `individual` mode. The `all` mode is currently ROS 2 only.
 

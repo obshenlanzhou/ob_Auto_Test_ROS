@@ -28,6 +28,7 @@ from _test_protocol import (
     test_environment_markdown,
 )
 from _sensor_artifacts import (
+    SensorCaptureMonitor,
     capture_sensor_artifacts,
     discover_sensor_topics,
     expand_topic_templates,
@@ -36,7 +37,7 @@ from _sensor_artifacts import (
 
 ENV_READY_VAR = "STREAM_TOGGLE_STRESS_TEST_ENV_READY"
 INTERRUPTED = False
-TOOL_VERSION = "1.9.5"
+TOOL_VERSION = "1.9.6"
 TEST_ID = "stream_toggle_stress_test"
 DEFAULT_STRESS_LAUNCH_ARGS = {
     "enable_heartbeat": "true",
@@ -617,11 +618,10 @@ class RosHarness:
                 self.rmw_implementation = str(get_rmw_identifier())
             self.node = rclpy.create_node(self.node_name)
             # Keep one executor attached for the full harness lifetime. Using the
-            # process-global executor through rclpy.spin_once(node) while creating
-            # and destroying temporary point-cloud subscriptions and service
-            # clients can leave its wait set stale after repeated stream toggles.
-            # A dedicated single-threaded executor also guarantees that callbacks
-            # finish before their subscriptions are destroyed.
+            # process-global executor through rclpy.spin_once(node) while mutating
+            # subscriptions and service clients can leave its wait set stale after
+            # repeated stream toggles. A dedicated single-threaded executor also
+            # guarantees that callbacks finish before recovery destroys a subscription.
             self._executor = SingleThreadedExecutor()
             self._executor.add_node(self.node)
             self._image_type = Image
@@ -2524,6 +2524,21 @@ def run(args) -> int:
                 f"sensor baseline: {len(point_cloud_topics)} point cloud, "
                 f"{len(imu_topics)} IMU topic(s)"
             )
+            sensor_monitor = (
+                SensorCaptureMonitor(
+                    harness=harness,
+                    point_cloud_topics=point_cloud_topics,
+                    imu_topics=imu_topics,
+                    topic_cameras=sensor_topic_cameras,
+                    output_root=results_dir / "images",
+                    save_count=args.save_image_count,
+                    active=False,
+                )
+                if point_cloud_topics or imu_topics
+                else None
+            )
+            if sensor_monitor is not None:
+                emit("persistent point cloud/IMU subscriptions are ready")
 
             def capture_on_state_sensors():
                 sensor_timeout = max(
@@ -2539,6 +2554,7 @@ def run(args) -> int:
                     save_count=args.save_image_count,
                     timeout=sensor_timeout,
                     ensure_running=session.assert_running,
+                    monitor=sensor_monitor,
                 )
                 if not ok:
                     raise StreamVerificationError(message, {"sensors": snapshot})

@@ -465,8 +465,11 @@ class SensorCaptureMonitor:
         imu_window_seconds: float = 2.0,
         imu_min_samples: int = 10,
         max_points: int = 50000,
+        active: bool = True,
     ) -> None:
         self.harness = harness
+        self.point_cloud_topics = list(point_cloud_topics)
+        self.imu_topics = list(imu_topics)
         self.topic_cameras = topic_cameras
         self.save_count = max(int(save_count), 0)
         self.required_outputs = max(self.save_count, 1)
@@ -475,17 +478,10 @@ class SensorCaptureMonitor:
         self.max_points = int(max_points)
         self.paths = SensorArtifactPathSequence(output_root)
         self.subscriptions: List[Any] = []
-        self.state: Dict[str, Dict[str, Any]] = {}
+        self.state: Dict[str, Dict[str, Any]] = self._new_state()
+        self.active = bool(active)
 
-        for topic in point_cloud_topics:
-            self.state[topic] = {
-                "kind": "point_cloud",
-                "message_count": 0,
-                "valid_count": 0,
-                "saved_point_count": 0,
-                "files": [],
-                "error": "",
-            }
+        for topic in self.point_cloud_topics:
             self.subscriptions.append(
                 harness.create_sensor_subscription(
                     topic,
@@ -495,17 +491,7 @@ class SensorCaptureMonitor:
                     ),
                 )
             )
-        for topic in imu_topics:
-            self.state[topic] = {
-                "kind": "imu",
-                "mode": imu_mode(topic),
-                "message_count": 0,
-                "valid_sample_count": 0,
-                "completed_windows": 0,
-                "current_window": [],
-                "files": [],
-                "error": "",
-            }
+        for topic in self.imu_topics:
             self.subscriptions.append(
                 harness.create_sensor_subscription(
                     topic,
@@ -516,7 +502,40 @@ class SensorCaptureMonitor:
                 )
             )
 
+    def _new_state(self) -> Dict[str, Dict[str, Any]]:
+        state: Dict[str, Dict[str, Any]] = {}
+        for topic in self.point_cloud_topics:
+            state[topic] = {
+                "kind": "point_cloud",
+                "message_count": 0,
+                "valid_count": 0,
+                "saved_point_count": 0,
+                "files": [],
+                "error": "",
+            }
+        for topic in self.imu_topics:
+            state[topic] = {
+                "kind": "imu",
+                "mode": imu_mode(topic),
+                "message_count": 0,
+                "valid_sample_count": 0,
+                "completed_windows": 0,
+                "current_window": [],
+                "files": [],
+                "error": "",
+            }
+        return state
+
+    def begin_capture(self) -> None:
+        self.state = self._new_state()
+        self.active = True
+
+    def end_capture(self) -> None:
+        self.active = False
+
     def _on_point_cloud(self, topic: str, message: Any) -> None:
+        if not self.active:
+            return
         item = self.state[topic]
         item["message_count"] += 1
         if item["valid_count"] >= self.required_outputs or item["error"]:
@@ -545,6 +564,8 @@ class SensorCaptureMonitor:
             item["error"] = str(exc)
 
     def _on_imu(self, topic: str, message: Any) -> None:
+        if not self.active:
+            return
         item = self.state[topic]
         item["message_count"] += 1
         if item["completed_windows"] >= self.required_outputs or item["error"]:
@@ -629,6 +650,7 @@ class SensorCaptureMonitor:
         return rows
 
     def close(self) -> None:
+        self.end_capture()
         for subscription in list(self.subscriptions):
             self.harness.destroy_subscription(subscription)
         self.subscriptions = []
@@ -644,17 +666,25 @@ def capture_sensor_artifacts(
     save_count: int,
     timeout: float,
     ensure_running: Optional[Callable[[], None]] = None,
+    monitor: Optional[SensorCaptureMonitor] = None,
 ) -> Tuple[bool, List[Dict[str, Any]], str]:
     if not point_cloud_topics and not imu_topics:
         return True, [], "no point cloud or IMU topics selected"
-    monitor = SensorCaptureMonitor(
-        harness=harness,
-        point_cloud_topics=point_cloud_topics,
-        imu_topics=imu_topics,
-        topic_cameras=topic_cameras,
-        output_root=output_root,
-        save_count=save_count,
-    )
+    owns_monitor = monitor is None
+    if monitor is None:
+        monitor = SensorCaptureMonitor(
+            harness=harness,
+            point_cloud_topics=point_cloud_topics,
+            imu_topics=imu_topics,
+            topic_cameras=topic_cameras,
+            output_root=output_root,
+            save_count=save_count,
+            active=False,
+        )
+    configured_topics = set(point_cloud_topics) | set(imu_topics)
+    if set(monitor.state) != configured_topics:
+        raise ValueError("sensor monitor topics do not match capture topics")
+    monitor.begin_capture()
     deadline = time.monotonic() + max(float(timeout), 0.0)
     try:
         while time.monotonic() < deadline:
@@ -677,4 +707,6 @@ def capture_sensor_artifacts(
             f"point cloud/IMU streams were not complete within {timeout:.1f}s",
         )
     finally:
-        monitor.close()
+        monitor.end_capture()
+        if owns_monitor:
+            monitor.close()
