@@ -66,10 +66,6 @@ def handle_sigint(signum, frame) -> None:
     raise KeyboardInterrupt
 
 
-def should_attempt_cleanup_restore(exc: BaseException) -> bool:
-    return not INTERRUPTED and not isinstance(exc, (KeyboardInterrupt, SystemExit))
-
-
 def parse_duration(value: Any, default: float) -> float:
     if value is None or str(value).strip() == "":
         return default
@@ -1797,109 +1793,6 @@ def call_toggle_with_retry(
     )
 
 
-def best_effort_restore(
-    *,
-    session: LaunchSession,
-    harness: RosHarness,
-    monitor: StreamMonitor,
-    target: StreamTarget,
-    service_timeout: float,
-    confirmation_timeout: float,
-    emit: StatusLogger,
-) -> Dict[str, Any]:
-    outcome: Dict[str, Any] = {"attempted": True, "success": False, "message": ""}
-    try:
-        session.assert_running()
-        response = harness.call_set_bool(target.service, True, service_timeout)
-        if not response.get("success"):
-            raise RuntimeError(response.get("message") or "restore returned success=false")
-        baseline_sequence, _ = monitor.latest(target.topic)
-        deadline = time.monotonic() + confirmation_timeout
-        while time.monotonic() < deadline:
-            session.assert_running()
-            harness.spin_once(0.1)
-            current_sequence, _ = monitor.latest(target.topic)
-            if current_sequence > baseline_sequence:
-                outcome.update(success=True, message="target stream restored and confirmed")
-                return outcome
-        raise RuntimeError("target stream did not resume during cleanup confirmation")
-    except Exception as exc:  # noqa: BLE001
-        outcome["message"] = str(exc)
-        emit(f"cleanup restore failed for {target.topic}: {exc}")
-        return outcome
-
-
-def best_effort_restore_groups(
-    *,
-    session: LaunchSession,
-    harness: RosHarness,
-    monitor: StreamMonitor,
-    groups: Sequence[StreamGroupTarget],
-    service_timeout: float,
-    confirmation_timeout: float,
-    emit: StatusLogger,
-) -> Dict[str, Any]:
-    baselines = {topic: monitor.latest(topic)[0] for topic in monitor.topics}
-    outcomes = []
-    service_success = True
-    for group in groups:
-        try:
-            session.assert_running()
-            response = harness.call_set_bool(group.service, True, service_timeout)
-            success = bool(response.get("success"))
-            message = str(response.get("message", ""))
-            if not success:
-                service_success = False
-            outcomes.append(
-                {
-                    "camera_namespace": group.camera_namespace,
-                    "service": group.service,
-                    "success": success,
-                    "message": message,
-                }
-            )
-        except Exception as exc:  # noqa: BLE001
-            service_success = False
-            outcomes.append(
-                {
-                    "camera_namespace": group.camera_namespace,
-                    "service": group.service,
-                    "success": False,
-                    "message": str(exc),
-                }
-            )
-    resumed_topics = set()
-    deadline = time.monotonic() + confirmation_timeout
-    try:
-        while service_success and time.monotonic() < deadline:
-            session.assert_running()
-            harness.spin_once(0.1)
-            for topic, baseline in baselines.items():
-                if monitor.latest(topic)[0] > baseline:
-                    resumed_topics.add(topic)
-            if len(resumed_topics) == len(baselines):
-                return {
-                    "attempted": True,
-                    "success": True,
-                    "services": outcomes,
-                    "resumed_topics": sorted(resumed_topics),
-                    "message": "all stream groups restored and confirmed",
-                }
-    except Exception as exc:  # noqa: BLE001
-        outcomes.append({"success": False, "message": str(exc)})
-    message = "one or more all-stream services failed"
-    if service_success:
-        message = "not all target streams resumed during cleanup confirmation"
-    emit(f"all-stream cleanup restore failed: {message}")
-    return {
-        "attempted": True,
-        "success": False,
-        "services": outcomes,
-        "resumed_topics": sorted(resumed_topics),
-        "message": message,
-    }
-
-
 def sanitize_path_part(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "_", value.strip("/")) or "unknown"
 
@@ -2513,8 +2406,6 @@ def run(args) -> int:
     )
     image_writer: Optional[ImageWriter] = None
     image_save_monitor: Optional[ImageSaveMonitor] = None
-    target_may_be_disabled = False
-    groups_may_be_disabled = False
     monitor: Optional[StreamMonitor] = None
     test_started_monotonic = time.monotonic()
     deadline = (
@@ -2823,7 +2714,6 @@ def run(args) -> int:
                         "sensors": [],
                     }
                     cycle["operations"].append(operation)
-                    groups_may_be_disabled = True
                     emit(
                         f"cycle {cycle_index}: disable all streams",
                         event="progress",
@@ -2930,7 +2820,6 @@ def run(args) -> int:
                                 active_profile_specs,
                                 operation["enabled_state"]["topics"],
                             )
-                        groups_may_be_disabled = False
                         operation["sensors"] = capture_on_state_sensors()
                         operation["status"] = "passed"
                         result["completed_operations"] += len(targets)
@@ -2959,17 +2848,6 @@ def run(args) -> int:
                             )
                         if isinstance(exc, StreamVerificationError):
                             operation["verification_failure"] = exc.details
-                        if groups_may_be_disabled and should_attempt_cleanup_restore(exc):
-                            operation["cleanup_restore"] = best_effort_restore_groups(
-                                session=session,
-                                harness=harness,
-                                monitor=monitor,
-                                groups=groups,
-                                service_timeout=config["service_timeout"],
-                                confirmation_timeout=config["stream_timeout"],
-                                emit=emit,
-                            )
-                            groups_may_be_disabled = False
                         if isinstance(exc, (KeyboardInterrupt, SystemExit)) or INTERRUPTED:
                             raise
                         cycle["status"] = "failed"
@@ -3026,7 +2904,6 @@ def run(args) -> int:
                         "sensors": [],
                     }
                     cycle["operations"].append(operation)
-                    target_may_be_disabled = True
                     emit(
                         f"cycle {cycle_index}, stream {target_index}/{len(targets)}: "
                         f"disable {target.topic}",
@@ -3129,7 +3006,6 @@ def run(args) -> int:
                                 active_profile_specs,
                                 operation["enabled_state"]["topics"],
                             )
-                        target_may_be_disabled = False
                         operation["sensors"] = capture_on_state_sensors()
                         operation["status"] = "passed"
                         result["completed_operations"] += 1
@@ -3156,17 +3032,6 @@ def run(args) -> int:
                             }
                         if isinstance(exc, StreamVerificationError):
                             operation["verification_failure"] = exc.details
-                        if target_may_be_disabled and should_attempt_cleanup_restore(exc):
-                            operation["cleanup_restore"] = best_effort_restore(
-                                session=session,
-                                harness=harness,
-                                monitor=monitor,
-                                target=target,
-                                service_timeout=config["service_timeout"],
-                                confirmation_timeout=config["stream_timeout"],
-                                emit=emit,
-                            )
-                            target_may_be_disabled = False
                         if isinstance(exc, (KeyboardInterrupt, SystemExit)) or INTERRUPTED:
                             raise
                         first_cycle_failure = cycle["status"] != "failed"

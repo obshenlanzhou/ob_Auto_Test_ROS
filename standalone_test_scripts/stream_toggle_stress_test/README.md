@@ -26,7 +26,7 @@ Continue with the next stream → start a new cycle after all targets pass
 
 All-stream mode stops every target stream, verifies the stopped state, restores all streams, then
 verifies and saves each stream. A failed service call is retried once. A successful retry records a
-warning and continues; a second failure marks the cycle failed and attempts to restore the streams.
+warning and continues; a second failure marks the cycle failed without running a cleanup restore.
 If verification times out with zero frames on a topic, the tool recreates that subscription,
 rebuilds its dedicated executor, records a warning, and verifies once more. The result records
 whether that recovery succeeded or the cycle still failed; `--continue-on-failure` keeps later
@@ -136,7 +136,7 @@ decode or validate compressed data; it writes `CompressedImage.data` directly to
 | `--stream-on-preview-seconds` | `4` | Preview and verification time after enabling |
 | `--save-image-count` | `1` | Artifacts per topic; image frames are saved as soon as output resumes, before stability validation completes; `0` keeps validation only |
 | `--run-count` | empty | Maximum completed cycles |
-| `--continue-on-failure` | disabled | Restore streams after a failed operation and continue; the final result still fails |
+| `--continue-on-failure` | disabled | Continue after a failed operation without a cleanup restore; the final result still fails |
 | `--duration` | empty | Maximum duration; supports `15m` and `2h` |
 
 At least one of `--run-count` and `--duration` is required. Both may be supplied; the first limit
