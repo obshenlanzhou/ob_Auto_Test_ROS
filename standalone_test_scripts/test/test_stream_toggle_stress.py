@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import sys
+import threading
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
@@ -36,18 +37,6 @@ def test_stream_target_mapping_supports_nested_camera_namespace():
     assert target.camera_name == "rig_camera_01"
     assert target.stream == "left_ir"
     assert target.service == "/rig/camera_01/toggle_left_ir"
-
-
-def test_cleanup_restore_is_skipped_for_interruption(monkeypatch):
-    module = load_script()
-
-    monkeypatch.setattr(module, "INTERRUPTED", False)
-    assert module.should_attempt_cleanup_restore(RuntimeError("failed"))
-    assert not module.should_attempt_cleanup_restore(KeyboardInterrupt())
-    assert not module.should_attempt_cleanup_restore(SystemExit())
-
-    monkeypatch.setattr(module, "INTERRUPTED", True)
-    assert not module.should_attempt_cleanup_restore(RuntimeError("interrupted"))
 
 
 @pytest.mark.parametrize(
@@ -135,6 +124,26 @@ def test_all_stream_groups_require_one_set_bool_service_per_camera():
         module.build_stream_groups(targets, {"/camera_01/set_streams_enable": ["std_srvs/SetBool"]})
 
 
+def test_all_stream_groups_scale_to_four_discovered_camera_namespaces():
+    module = load_script()
+    camera_namespaces = [f"/camera_{index:02d}" for index in range(1, 5)]
+    targets = [
+        module.stream_target_from_topic(f"{namespace}/color/image_raw")
+        for namespace in camera_namespaces
+    ]
+    service_types = {
+        f"{namespace}/set_streams_enable": ["std_srvs/srv/SetBool"]
+        for namespace in camera_namespaces
+    }
+
+    groups = module.build_stream_groups(targets, service_types)
+
+    assert [group.camera_namespace for group in groups] == camera_namespaces
+    assert [group.topics for group in groups] == [
+        (f"{namespace}/color/image_raw",) for namespace in camera_namespaces
+    ]
+
+
 def test_toggle_mode_defaults_to_individual_and_accepts_all():
     module = load_script()
 
@@ -145,6 +154,14 @@ def test_toggle_mode_defaults_to_individual_and_accepts_all():
         ).toggle_mode
         == "all"
     )
+
+
+def test_ros2_executor_thread_tuning_is_not_exposed_by_cli():
+    module = load_script()
+
+    args = module.parse_args(["--launch-file", "test.launch.py"])
+
+    assert not hasattr(args, "executor_threads")
 
 
 def test_individual_progress_fields_keep_cycle_and_stream_positions_separate():
@@ -562,8 +579,9 @@ def test_ros2_set_bool_client_is_reused_across_toggle_cycles():
         def __init__(self):
             self.created = []
 
-        def create_client(self, service_type, service_name):
+        def create_client(self, service_type, service_name, callback_group):
             assert service_type is SetBool
+            assert callback_group is harness._control_callback_group
             self.created.append(service_name)
             return Client()
 
@@ -576,7 +594,55 @@ def test_ros2_set_bool_client_is_reused_across_toggle_cycles():
     assert harness.node.created == ["/camera/set_streams_enable"]
 
 
-def test_ros2_harness_uses_dedicated_single_threaded_executor(monkeypatch):
+def test_ros2_subscriptions_share_groups_per_camera_and_use_depth_one_qos():
+    module = load_script()
+    created = []
+
+    class CallbackGroup:
+        pass
+
+    class Node:
+        def create_subscription(
+            self, message_type, topic, callback, qos, *, callback_group
+        ):
+            subscription = object()
+            created.append(
+                (subscription, message_type, topic, callback, qos, callback_group)
+            )
+            return subscription
+
+    harness = module.RosHarness("2", "test", 10)
+    harness.node = Node()
+    harness._image_type = object()
+    harness._sensor_qos = SimpleNamespace(depth=1)
+    harness._subscription_callback_group_type = CallbackGroup
+
+    first = harness.create_image_subscription(
+        "/rig/camera_01/color/image_raw", lambda _m: None
+    )
+    second = harness.create_image_subscription(
+        "/rig/camera_01/depth/image_raw", lambda _m: None
+    )
+    third = harness.create_image_subscription(
+        "/rig/camera_02/color/image_raw", lambda _m: None
+    )
+    fourth = harness.create_sensor_subscription(
+        "/rig/camera_01/gyro_accel/sample", "imu", lambda _m: None
+    )
+
+    assert first is created[0][0]
+    assert second is created[1][0]
+    assert third is created[2][0]
+    assert fourth is created[3][0]
+    assert created[0][4].depth == 1
+    assert isinstance(created[0][5], CallbackGroup)
+    assert isinstance(created[1][5], CallbackGroup)
+    assert created[0][5] is created[1][5]
+    assert created[0][5] is not created[2][5]
+    assert created[0][5] is created[3][5]
+
+
+def test_ros2_harness_uses_background_multithreaded_executor(monkeypatch):
     module = load_script()
     calls = []
 
@@ -588,14 +654,16 @@ def test_ros2_harness_uses_dedicated_single_threaded_executor(monkeypatch):
 
     class FakeExecutor:
         def __init__(self):
+            self.stopped = threading.Event()
             calls.append(("executor_init",))
 
         def add_node(self, added_node):
             assert added_node is node
             calls.append(("add_node",))
 
-        def spin_once(self, timeout_sec):
-            calls.append(("spin_once", timeout_sec))
+        def spin(self):
+            calls.append(("spin",))
+            self.stopped.wait(timeout=5.0)
 
         def remove_node(self, removed_node):
             assert removed_node is node
@@ -603,6 +671,14 @@ def test_ros2_harness_uses_dedicated_single_threaded_executor(monkeypatch):
 
         def shutdown(self, timeout_sec):
             calls.append(("executor_shutdown", timeout_sec))
+            self.stopped.set()
+
+    class FakeCallbackGroup:
+        pass
+
+    class FakeQoSProfile:
+        def __init__(self, **kwargs):
+            self.settings = kwargs
 
     rclpy = ModuleType("rclpy")
     rclpy.init = lambda *, args: calls.append(("rclpy_init", args))
@@ -613,9 +689,14 @@ def test_ros2_harness_uses_dedicated_single_threaded_executor(monkeypatch):
     rclpy.shutdown = lambda: calls.append(("rclpy_shutdown",))
 
     executors = ModuleType("rclpy.executors")
-    executors.SingleThreadedExecutor = FakeExecutor
+    executors.MultiThreadedExecutor = FakeExecutor
+    callback_groups = ModuleType("rclpy.callback_groups")
+    callback_groups.MutuallyExclusiveCallbackGroup = FakeCallbackGroup
     qos = ModuleType("rclpy.qos")
-    qos.qos_profile_sensor_data = object()
+    qos.QoSProfile = FakeQoSProfile
+    qos.HistoryPolicy = SimpleNamespace(KEEP_LAST="keep_last")
+    qos.ReliabilityPolicy = SimpleNamespace(BEST_EFFORT="best_effort")
+    qos.DurabilityPolicy = SimpleNamespace(VOLATILE="volatile")
     sensor_msgs = ModuleType("sensor_msgs")
     sensor_msgs_msg = ModuleType("sensor_msgs.msg")
     sensor_msgs_msg.CompressedImage = type("CompressedImage", (), {})
@@ -629,6 +710,7 @@ def test_ros2_harness_uses_dedicated_single_threaded_executor(monkeypatch):
     for name, fake_module in {
         "rclpy": rclpy,
         "rclpy.executors": executors,
+        "rclpy.callback_groups": callback_groups,
         "rclpy.qos": qos,
         "sensor_msgs": sensor_msgs,
         "sensor_msgs.msg": sensor_msgs_msg,
@@ -638,21 +720,66 @@ def test_ros2_harness_uses_dedicated_single_threaded_executor(monkeypatch):
         monkeypatch.setitem(sys.modules, name, fake_module)
 
     with module.RosHarness("2", "stream_toggle_test", 10) as harness:
-        harness.spin_once(0.25)
-        harness.rebuild_executor()
-        harness.spin_once(0.5)
+        assert harness._sensor_qos.settings == {
+            "history": "keep_last",
+            "depth": 1,
+            "reliability": "best_effort",
+            "durability": "volatile",
+        }
         assert isinstance(harness._executor, FakeExecutor)
 
     assert ("rclpy_init", []) in calls
-    assert ("spin_once", 0.25) in calls
-    assert ("spin_once", 0.5) in calls
-    assert calls.count(("executor_init",)) == 2
-    assert calls.count(("add_node",)) == 2
-    assert calls.count(("remove_node",)) == 2
-    assert calls.count(("executor_shutdown", 5.0)) == 2
-    assert calls.index(("add_node",)) < calls.index(("spin_once", 0.25))
+    assert calls.count(("executor_init",)) == 1
+    assert calls.count(("add_node",)) == 1
+    assert calls.count(("remove_node",)) == 1
+    assert calls.count(("executor_shutdown", 5.0)) == 1
+    assert calls.count(("spin",)) == 1
+    assert calls.index(("add_node",)) < calls.index(("spin",))
     assert calls.index(("remove_node",)) < calls.index(("destroy_node",))
     assert calls[-1] == ("rclpy_shutdown",)
+
+
+def test_stream_monitor_reports_receive_and_header_timing(monkeypatch):
+    module = load_script()
+    monotonic_values = iter([0.0, 1.0, 1.05, 1.10])
+    monkeypatch.setattr(module.time, "monotonic", lambda: next(monotonic_values))
+    monkeypatch.setattr(module.time, "time", lambda: 100.0)
+
+    class Harness:
+        def create_image_subscription(self, topic, callback):
+            return SimpleNamespace(topic=topic, callback=callback)
+
+        def destroy_subscription(self, _subscription):
+            pass
+
+    def image(stamp):
+        seconds = int(stamp)
+        return SimpleNamespace(
+            width=848,
+            height=480,
+            encoding="rgb8",
+            data=b"frame",
+            header=SimpleNamespace(
+                stamp=SimpleNamespace(
+                    sec=seconds,
+                    nanosec=int(round((stamp - seconds) * 1_000_000_000)),
+                )
+            ),
+        )
+
+    topic = "/camera_01/color/image_raw"
+    monitor = module.StreamMonitor(Harness(), [topic])
+    monitor._on_message(topic, image(99.0))
+    monitor._on_message(topic, image(99.05))
+    row = monitor.snapshot()[0]
+
+    assert row["window_message_count"] == 2
+    assert row["window_receive_max_gap_seconds"] == pytest.approx(0.05)
+    assert row["window_header_max_gap_seconds"] == pytest.approx(0.05)
+    assert row["window_receive_fps"] == pytest.approx(20.0)
+    assert row["window_header_fps"] == pytest.approx(20.0)
+    assert row["last_source_age_seconds"] == pytest.approx(0.95)
+    assert row["stable_window_reset_count"] == 0
 
 
 def test_single_camera_args_are_injected_only_when_provided():
@@ -1322,6 +1449,9 @@ def test_stream_monitor_tracks_quiet_stability_and_max_gap(monkeypatch):
     assert not monitor.topics_are_stable(
         ["/camera/depth/image_raw"], stable_seconds=2.0, max_gap_seconds=1.5
     )
+    interrupted = monitor.snapshot()[1]
+    assert interrupted["stable_window_reset_count"] == 1
+    assert interrupted["last_exceeded_gap_seconds"] == pytest.approx(2.0)
 
     clock.now = 5.0
     callbacks["/camera/depth/image_raw"](message)
@@ -1378,6 +1508,9 @@ def test_stream_monitor_rebuilds_executor_after_subscription_recovery():
 
         def destroy_subscription(self, subscription):
             self.destroyed.append(subscription)
+
+        def pause_executor(self):
+            return True
 
         def rebuild_executor(self):
             self.rebuild_count += 1

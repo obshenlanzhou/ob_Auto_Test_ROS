@@ -25,16 +25,7 @@ Continue with the next stream → start a new cycle after all targets pass
 ```
 
 All-stream mode stops every target stream, verifies the stopped state, restores all streams, then
-verifies and saves each stream. A failed service call is retried once. A successful retry records a
-warning and continues; a second failure marks the cycle failed without running a cleanup restore.
-If verification times out with zero frames on a topic, the tool recreates that subscription,
-rebuilds its dedicated executor, records a warning, and verifies once more. The result records
-whether that recovery succeeded or the cycle still failed; `--continue-on-failure` keeps later
-cycles running without changing the failed cycle or final failed status.
-ROS 2 uses one rclpy context for compatibility with both Fast DDS and Cyclone DDS. Service clients
-remain persistent during the stress loop instead of being created and destroyed every cycle.
-Point-cloud and IMU subscriptions are also established before the stress loop and remain alive
-until the test ends. Each enabled-state check resets only its capture window and artifact counts.
+verifies and saves each stream.
 
 ROS 1 supports only the default `individual` mode. The `all` mode is currently ROS 2 only.
 
