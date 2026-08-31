@@ -10,6 +10,7 @@ import subprocess
 import sys
 import threading
 import time
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
 from datetime import datetime
@@ -986,6 +987,7 @@ class ImageCaptureMonitor:
         self._state_lock = threading.Lock()
         self._state_changed = threading.Condition(self._state_lock)
         self._writer = ThreadPoolExecutor(max_workers=1, thread_name_prefix="image-writer")
+        self._frozen = False
         for topic in topics:
             topic_kind = harness.resolve_image_topic_kind(topic)
             self.state[topic] = {
@@ -993,7 +995,11 @@ class ImageCaptureMonitor:
                 "first_at": None,
                 "topic_kind": topic_kind,
                 "pending_saves": 0,
+                "selected_count": 0,
+                "received_count": 0,
+                "buffer": deque(maxlen=save_images_count),
                 "error": "",
+                "errors": [],
             }
             harness.create_subscription(
                 topic,
@@ -1041,16 +1047,49 @@ class ImageCaptureMonitor:
             item = self.state[topic]
             if item["first_at"] is None:
                 item["first_at"] = time.monotonic()
+            item["received_count"] += 1
             if self.save_images_count <= 0:
                 return
             if (
-                len(item["saved_files"]) >= self.save_images_count
-                or item["pending_saves"]
+                self._frozen
                 or item["error"]
+                or len(item["buffer"]) >= self.save_images_count
             ):
                 return
-            item["pending_saves"] += 1
-        self._writer.submit(self._save_message, topic, message)
+            item["buffer"].append(message)
+
+    def buffer_ready(self) -> bool:
+        with self._state_lock:
+            return all(
+                len(item["buffer"]) >= self.save_images_count
+                for item in self.state.values()
+            )
+
+    def submit_first_frames(self) -> None:
+        with self._state_lock:
+            if self._frozen or self.save_images_count <= 0:
+                return
+            if not all(
+                len(item["buffer"]) >= self.save_images_count
+                for item in self.state.values()
+            ):
+                return
+            self._frozen = True
+            for topic, item in self.state.items():
+                messages = list(item["buffer"])
+                item["buffer"].clear()
+                item["selected_count"] = len(messages)
+                item["pending_saves"] = len(messages)
+                for message in messages:
+                    try:
+                        self._writer.submit(self._save_message, topic, message)
+                    except Exception as exc:  # noqa: BLE001
+                        error = str(exc)
+                        if not item["error"]:
+                            item["error"] = error
+                        item["errors"].append(error)
+                        item["pending_saves"] -= 1
+            self._state_changed.notify_all()
 
     def _save_message(self, topic: str, message: Any) -> None:
         try:
@@ -1065,7 +1104,10 @@ class ImageCaptureMonitor:
                 self.state[topic]["saved_files"].append(str(target))
         except Exception as exc:  # noqa: BLE001
             with self._state_lock:
-                self.state[topic]["error"] = str(exc)
+                error = str(exc)
+                if not self.state[topic]["error"]:
+                    self.state[topic]["error"] = error
+                self.state[topic]["errors"].append(error)
         finally:
             with self._state_changed:
                 self.state[topic]["pending_saves"] -= 1
@@ -1082,6 +1124,12 @@ class ImageCaptureMonitor:
                 if item["error"]:
                     return f"{topic}: {item['error']}"
         return ""
+
+    def saving_finished(self) -> bool:
+        with self._state_lock:
+            return self._frozen and not any(
+                item["pending_saves"] for item in self.state.values()
+            )
 
     def all_done(self) -> bool:
         with self._state_lock:
@@ -1116,9 +1164,11 @@ def save_topic_images(
     timeout: float,
     emit: StatusLogger,
     path_sequence: Optional[ImagePathSequence] = None,
-) -> tuple[List[str], List[str]]:
+) -> tuple[List[str], List[str], str]:
     emit(f"[IMAGE] saving up to {save_images_count} image(s) per topic for {camera_name}")
     node_name = f"launch_param_load_stress_{camera_name}".replace("-", "_")
+    image_topics: List[str] = []
+    saved: List[str] = []
     try:
         with RosImageHarness(ros_version, node_name) as harness:
             if image_topic_templates:
@@ -1146,19 +1196,28 @@ def save_topic_images(
             )
             try:
                 deadline = time.monotonic() + timeout
-                while time.monotonic() < deadline and not monitor.all_done():
+                while time.monotonic() < deadline and not monitor.buffer_ready():
+                    harness.spin_once(0.1)
+                if not monitor.buffer_ready():
+                    raise TimeoutError(
+                        f"did not receive {save_images_count} image(s) per topic "
+                        f"within {timeout:.1f}s"
+                    )
+                monitor.submit_first_frames()
+                while not monitor.saving_finished():
                     harness.spin_once(0.1)
                     monitor.wait_for_pending_save(0.01)
-                    if monitor.first_error():
-                        raise RuntimeError(monitor.first_error())
+                if monitor.first_error():
+                    saved = monitor.saved_files()
+                    raise RuntimeError(monitor.first_error())
                 saved = monitor.saved_files()
                 emit(f"[IMAGE] saved {len(saved)} image(s) for {camera_name}")
-                return saved, image_topics
+                return saved, image_topics, ""
             finally:
                 monitor.close()
     except Exception as exc:  # noqa: BLE001
         emit(f"[IMAGE][WARN] image saving failed for {camera_name}: {exc}")
-        return [], []
+        return saved, image_topics, str(exc)
 
 
 def list_services(ros_version: str, env: Dict[str, str], timeout: float) -> set[str]:
@@ -1439,9 +1498,15 @@ def _check_one_camera(
         "service_checks": [],
         "image_topics": [],
         "saved_images": [],
+        "image_save_status": "disabled",
+        "image_save_error": "",
     }
     if save_images_count > 0 and images_dir is not None:
-        cam["saved_images"], cam["image_topics"] = save_topic_images(
+        (
+            cam["saved_images"],
+            cam["image_topics"],
+            cam["image_save_error"],
+        ) = save_topic_images(
             ros_version=ros_version,
             camera_name=camera_name,
             image_topic_templates=image_topic_templates,
@@ -1450,6 +1515,9 @@ def _check_one_camera(
             timeout=topic_timeout,
             emit=emit,
             path_sequence=image_path_sequence,
+        )
+        cam["image_save_status"] = (
+            "failed" if cam["image_save_error"] else "passed"
         )
     cam["param_checks"] = check_params(
         yaml_params=yaml_params,
@@ -1695,6 +1763,15 @@ def run(args) -> int:
                         emit=emit,
                     )
                     run_result["cameras"].append(cam)
+                    if cam["image_save_status"] == "failed":
+                        warning = {
+                            "run": run_index,
+                            "camera": camera.name,
+                            "action": "save-images",
+                            "message": cam["image_save_error"],
+                        }
+                        run_result.setdefault("warnings", []).append(warning)
+                        result.setdefault("warnings", []).append(warning)
 
                 with RosImageHarness(
                     args.ros_version,

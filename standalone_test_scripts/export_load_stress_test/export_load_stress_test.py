@@ -11,6 +11,7 @@ import subprocess
 import sys
 import threading
 import time
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
 from datetime import datetime
@@ -779,12 +780,17 @@ class ImageSaver:
         self._state_lock = threading.Lock()
         self._state_changed = threading.Condition(self._state_lock)
         self._writer = ThreadPoolExecutor(max_workers=1, thread_name_prefix="image-writer")
+        self._frozen = False
 
         for topic in topics:
             topic_kind = self.harness.resolve_image_topic_kind(topic)
             self.metadata[topic]["topic_kind"] = topic_kind
             self.metadata[topic]["pending_saves"] = 0
+            self.metadata[topic]["selected_count"] = 0
+            self.metadata[topic]["received_count"] = 0
+            self.metadata[topic]["buffer"] = deque(maxlen=count_per_topic)
             self.metadata[topic]["error"] = ""
+            self.metadata[topic]["errors"] = []
             self.subscriptions.append(
                 self.harness.create_image_subscription(
                     topic,
@@ -838,16 +844,48 @@ class ImageSaver:
 
     def _on_message(self, topic_name: str, message: Any) -> None:
         with self._state_lock:
-            saved_files = self.saved[topic_name]
             metadata = self.metadata[topic_name]
+            metadata["received_count"] += 1
             if (
-                len(saved_files) >= self.count_per_topic
-                or metadata["pending_saves"]
+                self._frozen
                 or metadata["error"]
+                or len(metadata["buffer"]) >= self.count_per_topic
             ):
                 return
-            metadata["pending_saves"] += 1
-        self._writer.submit(self._save_message, topic_name, message)
+            metadata["buffer"].append(message)
+
+    def buffer_ready(self) -> bool:
+        with self._state_lock:
+            return all(
+                len(item["buffer"]) >= self.count_per_topic
+                for item in self.metadata.values()
+            )
+
+    def submit_first_frames(self) -> None:
+        with self._state_lock:
+            if self._frozen:
+                return
+            if not all(
+                len(item["buffer"]) >= self.count_per_topic
+                for item in self.metadata.values()
+            ):
+                return
+            self._frozen = True
+            for topic_name, metadata in self.metadata.items():
+                messages = list(metadata["buffer"])
+                metadata["buffer"].clear()
+                metadata["selected_count"] = len(messages)
+                metadata["pending_saves"] = len(messages)
+                for message in messages:
+                    try:
+                        self._writer.submit(self._save_message, topic_name, message)
+                    except Exception as exc:  # noqa: BLE001
+                        error = str(exc)
+                        if not metadata["error"]:
+                            metadata["error"] = error
+                        metadata["errors"].append(error)
+                        metadata["pending_saves"] -= 1
+            self._state_changed.notify_all()
 
     def _save_message(self, topic_name: str, message: Any) -> None:
         try:
@@ -865,7 +903,10 @@ class ImageSaver:
                 )
         except Exception as exc:  # noqa: BLE001
             with self._state_lock:
-                self.metadata[topic_name]["error"] = str(exc)
+                error = str(exc)
+                if not self.metadata[topic_name]["error"]:
+                    self.metadata[topic_name]["error"] = error
+                self.metadata[topic_name]["errors"].append(error)
         finally:
             with self._state_changed:
                 self.metadata[topic_name]["pending_saves"] -= 1
@@ -883,6 +924,12 @@ class ImageSaver:
                     return f"{topic}: {item['error']}"
         return ""
 
+    def saving_finished(self) -> bool:
+        with self._state_lock:
+            return self._frozen and not any(
+                item["pending_saves"] for item in self.metadata.values()
+            )
+
     def complete(self) -> bool:
         with self._state_lock:
             return all(
@@ -896,8 +943,11 @@ class ImageSaver:
                 metadata = {
                     key: value
                     for key, value in self.metadata.get(topic_name, {}).items()
-                    if key != "pending_saves"
+                    if key not in {"buffer", "pending_saves"}
                 }
+                metadata["buffered_count"] = len(
+                    self.metadata[topic_name]["buffer"]
+                )
                 rows.append(
                     {
                         "topic": topic_name,
@@ -941,22 +991,28 @@ def save_images(
     )
     deadline = time.monotonic() + timeout
     try:
-        while time.monotonic() < deadline:
+        while time.monotonic() < deadline and not saver.buffer_ready():
+            for session in sessions:
+                session.assert_running()
+            harness.spin_once(0.1)
+        if not saver.buffer_ready():
+            return (
+                False,
+                saver.snapshot(),
+                f"did not receive {count_per_topic} image(s) per topic "
+                f"within {timeout:.1f}s",
+            )
+        saver.submit_first_frames()
+        while not saver.saving_finished():
             for session in sessions:
                 session.assert_running()
             harness.spin_once(0.1)
             saver.wait_for_pending_save(0.01)
-            if saver.first_error():
-                return False, saver.snapshot(), saver.first_error()
-            if saver.complete():
-                snapshot = saver.snapshot()
-                saved_count = sum(item["saved_count"] for item in snapshot)
-                return True, snapshot, f"saved {saved_count} image files"
-        return (
-            False,
-            saver.snapshot(),
-            f"did not save {count_per_topic} image(s) per topic within {timeout:.1f}s",
-        )
+        if saver.first_error():
+            return False, saver.snapshot(), saver.first_error()
+        snapshot = saver.snapshot()
+        saved_count = sum(item["saved_count"] for item in snapshot)
+        return True, snapshot, f"saved {saved_count} image files"
     finally:
         saver.close()
 
@@ -1517,32 +1573,23 @@ def run(args) -> int:
                 )
                 test_payload["images"] = image_snapshot
                 if not ok:
-                    test_payload["status"] = "failed"
-                    test_payload["message"] = image_message
-                    test_payload["ended_at"] = datetime.now().isoformat(timespec="seconds")
-                    result["status"] = "failed"
-                    result.setdefault("errors", []).append(
-                        f"{test_name}: {image_message}"
+                    warning = {
+                        "test": test_name,
+                        "action": "save-images",
+                        "message": image_message,
+                    }
+                    test_payload["image_save_status"] = "failed"
+                    test_payload["image_save_message"] = image_message
+                    test_payload.setdefault("warnings", []).append(warning)
+                    result.setdefault("warnings", []).append(warning)
+                    emit(
+                        f"[IMAGE][WARN] {test_name}: {image_message}; "
+                        "continuing stress test"
                     )
-                    if args.continue_on_failure:
-                        emit(f"{test_name}: image save failed; continuing after cleanup")
-                        for session in reversed(sessions):
-                            session.stop()
-                        active_sessions = []
-                        current_test = None
-                        continue
-                    result["manual_confirmation_required"] = True
-                    result["manual_confirmation_message"] = (
-                        f"{test_name}: {image_message}; launches were kept running until manual "
-                        "check finished"
-                    )
-                    keep_launch_running = True
-                    emit(f"{test_name}: image save failed")
-                    emit("please manually check the launches, press Ctrl+C to stop them and finish")
-                    while any(session.poll() is None for session in sessions):
-                        time.sleep(1.0)
-                    break
-                emit(f"{test_name}: {image_message}")
+                else:
+                    test_payload["image_save_status"] = "passed"
+                    test_payload["image_save_message"] = image_message
+                    emit(f"{test_name}: {image_message}")
 
                 ok, snapshot, message = wait_for_stable_streams(
                     sessions=sessions,

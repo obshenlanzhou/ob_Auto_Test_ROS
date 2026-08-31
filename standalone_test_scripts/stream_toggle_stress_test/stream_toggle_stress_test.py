@@ -1053,6 +1053,8 @@ class StreamMonitor:
         self.harness = harness
         self.topics = list(topics)
         self.lock = threading.Lock()
+        self._capture_buffers: Optional[Dict[str, List[Any]]] = None
+        self._capture_count = 0
         now = time.monotonic()
         self.state: Dict[str, Dict[str, Any]] = {
             topic: {
@@ -1127,6 +1129,10 @@ class StreamMonitor:
             item["message_count"] += 1
             item["last_message_at"] = now
             item["latest_message"] = message
+            if self._capture_buffers is not None and topic in self._capture_buffers:
+                capture_buffer = self._capture_buffers[topic]
+                if len(capture_buffer) < self._capture_count:
+                    capture_buffer.append(message)
             item["width"] = int(getattr(message, "width", 0) or 0)
             item["height"] = int(getattr(message, "height", 0) or 0)
             item["encoding"] = str(getattr(message, "encoding", "") or "")
@@ -1192,6 +1198,48 @@ class StreamMonitor:
             item = self.state[topic]
             return int(item["message_count"]), item["latest_message"]
 
+    def begin_capture(self, topics: Sequence[str], count: int) -> None:
+        selected = set(topics)
+        unknown = selected.difference(self.topics)
+        if unknown:
+            raise ValueError(
+                "cannot capture unknown topics: " + ", ".join(sorted(unknown))
+            )
+        with self.lock:
+            if self._capture_buffers is not None:
+                raise RuntimeError("an image capture is already active")
+            self._capture_count = max(int(count), 0)
+            self._capture_buffers = {topic: [] for topic in selected}
+
+    def capture_ready(self) -> bool:
+        with self.lock:
+            return self._capture_buffers is not None and all(
+                len(messages) >= self._capture_count
+                for messages in self._capture_buffers.values()
+            )
+
+    def take_capture(self) -> Dict[str, List[Any]]:
+        with self.lock:
+            if self._capture_buffers is None:
+                raise RuntimeError("no image capture is active")
+            if not all(
+                len(messages) >= self._capture_count
+                for messages in self._capture_buffers.values()
+            ):
+                raise RuntimeError("image capture is not complete")
+            captured = {
+                topic: list(messages)
+                for topic, messages in self._capture_buffers.items()
+            }
+            self._capture_buffers = None
+            self._capture_count = 0
+            return captured
+
+    def cancel_capture(self) -> None:
+        with self.lock:
+            self._capture_buffers = None
+            self._capture_count = 0
+
     def snapshot(self, topics: Optional[Sequence[str]] = None) -> List[Dict[str, Any]]:
         selected = list(topics) if topics is not None else self.topics
         now = time.monotonic()
@@ -1226,6 +1274,7 @@ class StreamMonitor:
         return rows
 
     def close(self) -> None:
+        self.cancel_capture()
         for subscription in list(self.subscriptions):
             self.harness.destroy_subscription(subscription)
         self.subscriptions = []
@@ -1236,6 +1285,19 @@ class StreamVerificationError(RuntimeError):
     def __init__(self, message: str, details: Dict[str, Any]) -> None:
         super().__init__(message)
         self.details = details
+
+
+class ImageSaveError(RuntimeError):
+    def __init__(
+        self,
+        message: str,
+        *,
+        saved: Sequence[Dict[str, Any]],
+        failures: Sequence[Dict[str, str]],
+    ) -> None:
+        super().__init__(message)
+        self.saved = list(saved)
+        self.failures = list(failures)
 
 
 def wait_for_initial_stability(
@@ -1946,6 +2008,10 @@ class ImageSaveMonitor:
             set(shared_monitor.topics) if shared_monitor is not None else set()
         )
         self.lock = threading.Lock()
+        self._capture_active = False
+        self._capture_count = 0
+        self._capture_buffers: Dict[str, List[Any]] = {}
+        self._capture_shared_topics: List[str] = []
         supplemental_targets = {
             target.topic: target
             for target in targets
@@ -1969,6 +2035,10 @@ class ImageSaveMonitor:
             item = self.state[topic]
             item["sequence"] += 1
             item["latest_message"] = message
+            if self._capture_active and topic in self._capture_buffers:
+                capture_buffer = self._capture_buffers[topic]
+                if len(capture_buffer) < self._capture_count:
+                    capture_buffer.append(message)
 
     def latest(self, topic: str) -> Tuple[int, Any]:
         if topic in self.shared_topics and self.shared_monitor is not None:
@@ -1977,7 +2047,82 @@ class ImageSaveMonitor:
             item = self.state[topic]
             return int(item["sequence"]), item["latest_message"]
 
+    def begin_capture(self, topics: Sequence[str], count: int) -> None:
+        selected = set(topics)
+        known = self.shared_topics | set(self.state)
+        unknown = selected.difference(known)
+        if unknown:
+            raise ValueError(
+                "cannot capture unknown topics: " + ", ".join(sorted(unknown))
+            )
+        shared = sorted(selected & self.shared_topics)
+        supplemental = sorted(selected - self.shared_topics)
+        with self.lock:
+            if self._capture_active:
+                raise RuntimeError("an image capture is already active")
+            self._capture_active = True
+            self._capture_count = max(int(count), 0)
+            self._capture_buffers = {topic: [] for topic in supplemental}
+            self._capture_shared_topics = shared
+        if shared and self.shared_monitor is not None:
+            try:
+                self.shared_monitor.begin_capture(shared, count)
+            except Exception:
+                with self.lock:
+                    self._capture_active = False
+                    self._capture_count = 0
+                    self._capture_buffers = {}
+                    self._capture_shared_topics = []
+                raise
+
+    def capture_ready(self) -> bool:
+        with self.lock:
+            if not self._capture_active:
+                return False
+            supplemental_ready = all(
+                len(messages) >= self._capture_count
+                for messages in self._capture_buffers.values()
+            )
+            has_shared = bool(self._capture_shared_topics)
+        shared_ready = (
+            self.shared_monitor.capture_ready()
+            if has_shared and self.shared_monitor is not None
+            else True
+        )
+        return supplemental_ready and shared_ready
+
+    def take_capture(self) -> Dict[str, List[Any]]:
+        if not self.capture_ready():
+            raise RuntimeError("image capture is not complete")
+        shared_captured = (
+            self.shared_monitor.take_capture()
+            if self._capture_shared_topics and self.shared_monitor is not None
+            else {}
+        )
+        with self.lock:
+            captured = {
+                topic: list(messages)
+                for topic, messages in self._capture_buffers.items()
+            }
+            captured.update(shared_captured)
+            self._capture_active = False
+            self._capture_count = 0
+            self._capture_buffers = {}
+            self._capture_shared_topics = []
+            return captured
+
+    def cancel_capture(self) -> None:
+        with self.lock:
+            has_shared = bool(self._capture_shared_topics)
+            self._capture_active = False
+            self._capture_count = 0
+            self._capture_buffers = {}
+            self._capture_shared_topics = []
+        if has_shared and self.shared_monitor is not None:
+            self.shared_monitor.cancel_capture()
+
     def close(self) -> None:
+        self.cancel_capture()
         for subscription in list(self.subscriptions):
             self.harness.destroy_subscription(subscription)
         self.subscriptions = []
@@ -2079,16 +2224,11 @@ def save_target_images(
         return []
     saved: List[Dict[str, Any]] = []
     saved_counts = {target.topic: 0 for target in targets}
-    scheduled_counts = dict(saved_counts)
     pending = []
-    last_sequences = {
-        target.topic: monitor.latest(target.topic)[0] for target in targets
-    }
     deadline = time.monotonic() + timeout
-    last_error = ""
+    failures: List[Dict[str, str]] = []
 
     def collect_completed() -> None:
-        nonlocal last_error
         remaining = []
         for target, future in pending:
             if not future.done():
@@ -2098,38 +2238,63 @@ def save_target_images(
                 saved.append(future.result())
                 saved_counts[target.topic] += 1
             except Exception as exc:  # noqa: BLE001
-                last_error = str(exc)
+                failures.append(
+                    {"topic": target.topic, "message": str(exc)}
+                )
         pending[:] = remaining
 
-    while time.monotonic() < deadline and any(
-        saved_counts[target.topic] < count for target in targets
-    ):
-        session.assert_running()
-        harness.spin_once(0.1)
-        collect_completed()
-        pending_topics = {target.topic for target, _future in pending}
-        for target in targets:
-            if (
-                scheduled_counts[target.topic] >= count
-                or target.topic in pending_topics
-            ):
-                continue
-            sequence, message = monitor.latest(target.topic)
-            if sequence <= last_sequences[target.topic] or message is None:
-                continue
-            last_sequences[target.topic] = sequence
-            pending.append((target, writer.submit(target, message)))
-            scheduled_counts[target.topic] += 1
-        if pending:
-            time.sleep(0.01)
-        collect_completed()
+    def finish_submitted_tasks() -> None:
+        for target, future in list(pending):
+            try:
+                saved.append(future.result())
+                saved_counts[target.topic] += 1
+            except Exception as exc:  # noqa: BLE001
+                failures.append(
+                    {"topic": target.topic, "message": str(exc)}
+                )
+        pending.clear()
+
+    monitor.begin_capture([target.topic for target in targets], count)
+    try:
+        while time.monotonic() < deadline and not monitor.capture_ready():
+            session.assert_running()
+            harness.spin_once(0.1)
+        if monitor.capture_ready():
+            captured = monitor.take_capture()
+            for target in targets:
+                for message in captured[target.topic]:
+                    try:
+                        pending.append((target, writer.submit(target, message)))
+                    except Exception as exc:  # noqa: BLE001
+                        failures.append(
+                            {"topic": target.topic, "message": str(exc)}
+                        )
+            while pending:
+                session.assert_running()
+                harness.spin_once(0.1)
+                collect_completed()
+                if pending:
+                    time.sleep(0.01)
+    finally:
+        monitor.cancel_capture()
+        finish_submitted_tasks()
     if any(saved_counts[target.topic] != count for target in targets):
-        suffix = f"; last error: {last_error}" if last_error else ""
+        suffix = (
+            "; errors: "
+            + " | ".join(
+                f"{failure['topic']}: {failure['message']}"
+                for failure in failures
+            )
+            if failures
+            else ""
+        )
         counts = ", ".join(
             f"{target.topic}={saved_counts[target.topic]}/{count}" for target in targets
         )
-        raise RuntimeError(
-            f"image saving incomplete within {timeout:.1f}s: {counts}{suffix}"
+        raise ImageSaveError(
+            f"image saving incomplete within {timeout:.1f}s: {counts}{suffix}",
+            saved=saved,
+            failures=failures,
         )
     return saved
 
@@ -2713,6 +2878,50 @@ def run(args) -> int:
                     len(row.get("files", [])) for row in snapshot
                 )
                 return snapshot
+
+            def save_images_nonfatal(
+                operation: Dict[str, Any],
+                selected_targets: Sequence[SaveImageTarget],
+            ) -> List[Dict[str, Any]]:
+                if image_writer is None or image_save_monitor is None:
+                    return []
+                try:
+                    return save_target_images(
+                        session=session,
+                        harness=harness,
+                        monitor=image_save_monitor,
+                        writer=image_writer,
+                        targets=selected_targets,
+                        count=args.save_image_count,
+                        timeout=config["save_image_timeout"],
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    saved = list(exc.saved) if isinstance(exc, ImageSaveError) else []
+                    warning = {
+                        "cycle": cycle_index,
+                        "action": "save-images",
+                        "topics": [target.topic for target in selected_targets],
+                        "message": str(exc),
+                        "saved_count": len(saved),
+                        "failures": (
+                            list(exc.failures)
+                            if isinstance(exc, ImageSaveError)
+                            else []
+                        ),
+                    }
+                    operation.setdefault("image_save_failures", []).append(warning)
+                    result["warnings"].append(warning)
+                    emit(
+                        f"[IMAGE][WARN] cycle {cycle_index}: {exc}; "
+                        "continuing stress test",
+                        event="warning",
+                        cycle=cycle_index,
+                        action="save-images",
+                        topics=warning["topics"],
+                        error=str(exc),
+                    )
+                    return saved
+
             profile_sequence = ("A", "B")
             if config["profile_switch_enabled"]:
                 initial_a = evaluate_profile_state(
@@ -2934,14 +3143,9 @@ def run(args) -> int:
                                 emit(warning["message"])
                         if image_writer is not None and image_save_monitor is not None:
                             for target in targets:
-                                images = save_target_images(
-                                    session=session,
-                                    harness=harness,
-                                    monitor=image_save_monitor,
-                                    writer=image_writer,
-                                    targets=save_targets_by_topic[target.topic],
-                                    count=args.save_image_count,
-                                    timeout=config["save_image_timeout"],
+                                images = save_images_nonfatal(
+                                    operation,
+                                    save_targets_by_topic[target.topic],
                                 )
                                 operation["images"].extend(images)
                                 result["saved_image_count"] += len(images)
@@ -3134,14 +3338,9 @@ def run(args) -> int:
                             result["warnings"].append(warning)
                             emit(warning["message"])
                         if image_writer is not None and image_save_monitor is not None:
-                            operation["images"] = save_target_images(
-                                session=session,
-                                harness=harness,
-                                monitor=image_save_monitor,
-                                writer=image_writer,
-                                targets=save_targets_by_topic[target.topic],
-                                count=args.save_image_count,
-                                timeout=config["save_image_timeout"],
+                            operation["images"] = save_images_nonfatal(
+                                operation,
+                                save_targets_by_topic[target.topic],
                             )
                             result["saved_image_count"] += len(operation["images"])
                         operation["enabled_state"] = (

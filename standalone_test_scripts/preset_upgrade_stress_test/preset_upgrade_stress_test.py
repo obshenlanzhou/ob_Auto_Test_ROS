@@ -675,6 +675,7 @@ class ImageCaptureMonitor:
         self._state_lock = threading.Lock()
         self._state_changed = threading.Condition(self._state_lock)
         self._writer = ThreadPoolExecutor(max_workers=1, thread_name_prefix="image-writer")
+        self._frozen = False
         for topic in topics:
             topic_kind = self.harness.resolve_image_topic_kind(topic)
             self.state[topic] = {
@@ -688,7 +689,10 @@ class ImageCaptureMonitor:
                 "data_size": 0,
                 "saved_files": [],
                 "pending_saves": 0,
+                "selected_count": 0,
+                "buffer": deque(maxlen=save_images_count),
                 "error": "",
+                "errors": [],
             }
             self.subscriptions.append(
                 self.harness.create_image_subscription(
@@ -750,13 +754,45 @@ class ImageCaptureMonitor:
             if self.save_images_count <= 0:
                 return
             if (
-                len(item["saved_files"]) >= self.save_images_count
-                or item["pending_saves"]
+                self._frozen
                 or item["error"]
+                or len(item["buffer"]) >= self.save_images_count
             ):
                 return
-            item["pending_saves"] += 1
-        self._writer.submit(self._save_message, topic_name, message)
+            item["buffer"].append(message)
+
+    def buffer_ready(self) -> bool:
+        with self._state_lock:
+            return all(
+                len(item["buffer"]) >= self.save_images_count
+                for item in self.state.values()
+            )
+
+    def submit_first_frames(self) -> None:
+        with self._state_lock:
+            if self._frozen or self.save_images_count <= 0:
+                return
+            if not all(
+                len(item["buffer"]) >= self.save_images_count
+                for item in self.state.values()
+            ):
+                return
+            self._frozen = True
+            for topic_name, item in self.state.items():
+                messages = list(item["buffer"])
+                item["buffer"].clear()
+                item["selected_count"] = len(messages)
+                item["pending_saves"] = len(messages)
+                for message in messages:
+                    try:
+                        self._writer.submit(self._save_message, topic_name, message)
+                    except Exception as exc:  # noqa: BLE001
+                        error = str(exc)
+                        if not item["error"]:
+                            item["error"] = error
+                        item["errors"].append(error)
+                        item["pending_saves"] -= 1
+            self._state_changed.notify_all()
 
     def _save_message(self, topic_name: str, message: Any) -> None:
         try:
@@ -772,7 +808,10 @@ class ImageCaptureMonitor:
                 self.state[topic_name]["saved_files"].append(str(target_path))
         except Exception as exc:  # noqa: BLE001
             with self._state_lock:
-                self.state[topic_name]["error"] = str(exc)
+                error = str(exc)
+                if not self.state[topic_name]["error"]:
+                    self.state[topic_name]["error"] = error
+                self.state[topic_name]["errors"].append(error)
         finally:
             with self._state_changed:
                 self.state[topic_name]["pending_saves"] -= 1
@@ -789,6 +828,12 @@ class ImageCaptureMonitor:
                 if item["error"]:
                     return f"{topic}: {item['error']}"
         return ""
+
+    def saving_finished(self) -> bool:
+        with self._state_lock:
+            return self._frozen and not any(
+                item["pending_saves"] for item in self.state.values()
+            )
 
     def complete(self) -> bool:
         with self._state_lock:
@@ -820,8 +865,11 @@ class ImageCaptureMonitor:
                         "format": "",
                         "saved_count": len(item["saved_files"]),
                         "expected_count": self.save_images_count,
+                        "selected_count": item["selected_count"],
+                        "buffered_count": len(item["buffer"]),
                         "files": list(item["saved_files"]),
                         "error": item["error"],
+                        "errors": list(item["errors"]),
                     }
                 )
         return rows
@@ -854,19 +902,39 @@ def wait_for_images(
     )
     deadline = time.monotonic() + timeout
     try:
-        while time.monotonic() < deadline:
+        if save_images_count <= 0:
+            while time.monotonic() < deadline:
+                for session in sessions:
+                    session.assert_running()
+                harness.spin_once(0.1)
+                if monitor.complete():
+                    return True, monitor.snapshot(), "received all image streams"
+            return (
+                False,
+                monitor.snapshot(),
+                f"image streams were not complete within {timeout:.1f}s",
+            )
+        while time.monotonic() < deadline and not monitor.buffer_ready():
+            for session in sessions:
+                session.assert_running()
+            harness.spin_once(0.1)
+        if not monitor.buffer_ready():
+            return (
+                False,
+                monitor.snapshot(),
+                f"did not receive {save_images_count} image(s) per topic "
+                f"within {timeout:.1f}s",
+            )
+        monitor.submit_first_frames()
+        while not monitor.saving_finished():
             for session in sessions:
                 session.assert_running()
             harness.spin_once(0.1)
             monitor.wait_for_pending_save(0.01)
-            if monitor.first_error():
-                raise RuntimeError(monitor.first_error())
-            if monitor.complete():
-                if save_images_count > 0:
-                    total = sum(row["saved_count"] for row in monitor.snapshot())
-                    return True, monitor.snapshot(), f"received streams and saved {total} image file(s)"
-                return True, monitor.snapshot(), "received all image streams"
-        return False, monitor.snapshot(), f"image streams were not complete within {timeout:.1f}s"
+        if monitor.first_error():
+            return False, monitor.snapshot(), monitor.first_error()
+        total = sum(row["saved_count"] for row in monitor.snapshot())
+        return True, monitor.snapshot(), f"received streams and saved {total} image file(s)"
     finally:
         monitor.close()
 
@@ -1412,22 +1480,22 @@ def run(args) -> int:
                     test_record["images"] = image_snapshot
                     test_record["message"] = image_message
                     if not ok:
-                        if args.continue_on_failure:
-                            test_record["status"] = "failed"
-                            test_record["ended_at"] = datetime.now().isoformat(
-                                timespec="seconds"
-                            )
-                            result["status"] = "failed"
-                            result.setdefault("errors", []).append(image_message)
-                            emit(
-                                f"{test_name}: {image_message}; continuing with next "
-                                "preset after cleanup"
-                            )
-                            for session in reversed(sessions):
-                                session.stop()
-                            active_sessions = []
-                            continue
-                        raise RuntimeError(image_message)
+                        warning = {
+                            "test": test_name,
+                            "action": "save-images",
+                            "message": image_message,
+                        }
+                        test_record["image_save_status"] = "failed"
+                        test_record["image_save_message"] = image_message
+                        test_record.setdefault("warnings", []).append(warning)
+                        result.setdefault("warnings", []).append(warning)
+                        emit(
+                            f"[IMAGE][WARN] {test_name}: {image_message}; "
+                            "continuing stress test"
+                        )
+                    else:
+                        test_record["image_save_status"] = "passed"
+                        test_record["image_save_message"] = image_message
 
                     if sensor_baseline is None:
                         sensor_baseline = discover_sensor_topics(

@@ -8,6 +8,7 @@ import re
 import shlex
 import subprocess
 import sys
+from concurrent.futures import Future
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -539,7 +540,7 @@ def test_image_saving_uses_stream_directories_and_continuing_indices(tmp_path):
         assert compressed == output_root / "camera_01" / "color" / "image_0002.jpg"
 
 
-def test_preset_image_callback_writes_in_background_and_reuses_path_sequence(
+def test_preset_image_callback_buffers_first_frames_then_writes_in_background(
     monkeypatch, tmp_path
 ):
     module = load_script(SCRIPTS["preset_upgrade"])
@@ -571,37 +572,49 @@ def test_preset_image_callback_writes_in_background_and_reuses_path_sequence(
         topics=[topic],
         topic_cameras={topic: "camera"},
         output_root=output_root,
-        save_images_count=1,
+        save_images_count=2,
         path_sequence=paths,
     )
     worker_started = module.threading.Event()
     release_worker = module.threading.Event()
+    written_frames = []
 
-    def blocking_write(_topic, _message, target_path):
-        assert target_path.name == "image_0004.png"
+    def blocking_write(_topic, message, target_path):
+        written_frames.append(message.frame_index)
         worker_started.set()
         assert release_worker.wait(1.0)
         target_path.write_bytes(b"image")
 
     monkeypatch.setattr(monitor, "_write_image", blocking_write)
-    message = type(
-        "Image",
-        (),
-        {"width": 1, "height": 1, "encoding": "16UC1", "data": b"\0\0"},
-    )()
-    caller = module.threading.Thread(target=harness.callback, args=(message,))
-    caller.start()
+    for frame_index in (1, 2, 3):
+        message = type(
+            "Image",
+            (),
+            {
+                "frame_index": frame_index,
+                "width": 1,
+                "height": 1,
+                "encoding": "16UC1",
+                "data": b"\0\0",
+            },
+        )()
+        harness.callback(message)
+
+    assert not worker_started.is_set()
+    assert monitor.buffer_ready()
+    monitor.submit_first_frames()
     assert worker_started.wait(1.0)
-    caller.join(0.1)
-    assert not caller.is_alive()
     assert not monitor.complete()
 
     release_worker.set()
-    monitor.wait_for_pending_save(1.0)
+    deadline = module.time.monotonic() + 1.0
+    while not monitor.complete() and module.time.monotonic() < deadline:
+        monitor.wait_for_pending_save(0.1)
     assert monitor.complete()
     monitor.close()
 
-    assert paths.next_path(topic, "camera").name == "image_0005.png"
+    assert written_frames == [1, 2]
+    assert paths.next_path(topic, "camera").name == "image_0006.png"
 
 
 @pytest.mark.parametrize(
@@ -612,7 +625,7 @@ def test_preset_image_callback_writes_in_background_and_reuses_path_sequence(
         ("launch_restart", "_write"),
     ],
 )
-def test_other_image_callbacks_write_in_background(
+def test_other_image_callbacks_buffer_first_frames_then_write_in_background(
     monkeypatch, tmp_path, test_id, writer_method
 ):
     module = load_script(SCRIPTS[test_id])
@@ -647,7 +660,7 @@ def test_other_image_callbacks_write_in_background(
             topics=[topic],
             topic_cameras={topic: "camera"},
             output_root=output_root,
-            count_per_topic=1,
+            count_per_topic=2,
             path_sequence=paths,
         )
     elif test_id == "launch_param_load":
@@ -656,7 +669,7 @@ def test_other_image_callbacks_write_in_background(
             camera_name="camera",
             topics=[topic],
             output_root=output_root,
-            save_images_count=1,
+            save_images_count=2,
             path_sequence=paths,
         )
     else:
@@ -664,40 +677,50 @@ def test_other_image_callbacks_write_in_background(
             harness=harness,
             topics=[topic],
             output_root=output_root,
-            count=1,
+            count=2,
             path_sequence=paths,
         )
 
     worker_started = module.threading.Event()
     release_worker = module.threading.Event()
+    written_frames = []
 
-    def blocking_write(_topic, _message, target_path):
+    def blocking_write(_topic, message, target_path):
+        written_frames.append(message.frame_index)
         worker_started.set()
         assert release_worker.wait(1.0)
         target_path.parent.mkdir(parents=True, exist_ok=True)
         target_path.write_bytes(b"image")
 
     monkeypatch.setattr(saver, writer_method, blocking_write)
-    caller = module.threading.Thread(target=harness.callback, args=(object(),))
     try:
-        caller.start()
+        for frame_index in (1, 2, 3):
+            harness.callback(SimpleNamespace(frame_index=frame_index))
+        assert not worker_started.is_set()
+        assert saver.buffer_ready()
+        saver.submit_first_frames()
         assert worker_started.wait(1.0)
-        caller.join(0.1)
-        assert not caller.is_alive()
         if test_id == "launch_param_load":
             assert not saver.all_done()
         else:
             assert not saver.complete()
 
         release_worker.set()
-        saver.wait_for_pending_save(1.0)
+        deadline = module.time.monotonic() + 1.0
+        while module.time.monotonic() < deadline:
+            if test_id == "launch_param_load":
+                if saver.all_done():
+                    break
+            elif saver.complete():
+                break
+            saver.wait_for_pending_save(0.1)
         if test_id == "launch_param_load":
             assert saver.all_done()
         else:
             assert saver.complete()
+        assert written_frames == [1, 2]
     finally:
         release_worker.set()
-        caller.join(1.0)
         saver.close()
 
 
@@ -722,6 +745,316 @@ def test_stream_toggle_image_writer_submit_is_non_blocking(monkeypatch, tmp_path
     finally:
         release_worker.set()
         writer.close()
+
+
+def test_stream_toggle_monitor_captures_first_frames_per_topic():
+    module = load_script(SCRIPTS["stream_toggle"])
+    fast_topic = "/camera/color/image_raw"
+    slow_topic = "/camera/depth/image_raw"
+
+    class Harness:
+        def __init__(self):
+            self.callbacks = {}
+
+        def create_image_subscription(self, topic, callback, topic_kind=None):
+            self.callbacks[topic] = callback
+            return topic
+
+        def destroy_subscription(self, subscription):
+            self.callbacks.pop(subscription, None)
+
+    harness = Harness()
+    monitor = module.StreamMonitor(harness, [fast_topic, slow_topic])
+    try:
+        monitor.begin_capture([fast_topic, slow_topic], count=2)
+        for frame_index in (1, 2, 3):
+            harness.callbacks[fast_topic](
+                SimpleNamespace(
+                    frame_index=frame_index,
+                    width=1,
+                    height=1,
+                    data=b"image",
+                    encoding="mono8",
+                )
+            )
+        for frame_index in (10, 11):
+            harness.callbacks[slow_topic](
+                SimpleNamespace(
+                    frame_index=frame_index,
+                    width=1,
+                    height=1,
+                    data=b"image",
+                    encoding="mono8",
+                )
+            )
+        assert monitor.capture_ready()
+        captured = monitor.take_capture()
+        assert [message.frame_index for message in captured[fast_topic]] == [1, 2]
+        assert [message.frame_index for message in captured[slow_topic]] == [10, 11]
+        assert monitor.latest(fast_topic)[1].frame_index == 3
+    finally:
+        monitor.cancel_capture()
+        monitor.close()
+
+
+def test_stream_toggle_save_monitor_captures_first_shared_and_supplemental_frames():
+    module = load_script(SCRIPTS["stream_toggle"])
+    raw_topic = "/camera/depth/image_raw"
+    compressed_topic = raw_topic + "/compressed"
+
+    class Harness:
+        def __init__(self):
+            self.callbacks = {}
+
+        def create_image_subscription(self, topic, callback, topic_kind=None):
+            self.callbacks[topic] = callback
+            return topic
+
+        def destroy_subscription(self, subscription):
+            self.callbacks.pop(subscription, None)
+
+    harness = Harness()
+    shared = module.StreamMonitor(harness, [raw_topic])
+    targets = [
+        SimpleNamespace(topic=raw_topic, topic_kind="raw"),
+        SimpleNamespace(topic=compressed_topic, topic_kind="compressed"),
+    ]
+    monitor = module.ImageSaveMonitor(
+        harness,
+        targets,
+        shared_monitor=shared,
+    )
+    try:
+        monitor.begin_capture([raw_topic, compressed_topic], count=2)
+        for frame_index in (1, 2, 3):
+            harness.callbacks[raw_topic](
+                SimpleNamespace(
+                    frame_index=frame_index,
+                    width=1,
+                    height=1,
+                    data=b"raw",
+                )
+            )
+        for frame_index in (10, 11, 12):
+            harness.callbacks[compressed_topic](
+                SimpleNamespace(frame_index=frame_index, data=b"compressed")
+            )
+        assert monitor.capture_ready()
+        captured = monitor.take_capture()
+        assert [message.frame_index for message in captured[raw_topic]] == [1, 2]
+        assert [message.frame_index for message in captured[compressed_topic]] == [10, 11]
+    finally:
+        monitor.close()
+        shared.close()
+
+
+def test_image_writer_records_every_failure_before_finishing(monkeypatch, tmp_path):
+    module = load_script(SCRIPTS["preset_upgrade"])
+    topic = "/camera/depth/image_raw"
+
+    class Harness:
+        def __init__(self):
+            self.callback = None
+
+        def resolve_image_topic_kind(self, _topic):
+            return "raw"
+
+        def create_image_subscription(self, _topic, callback, topic_kind=None):
+            self.callback = callback
+            return callback
+
+        def destroy_subscription(self, _subscription):
+            self.callback = None
+
+    harness = Harness()
+    monitor = module.ImageCaptureMonitor(
+        harness=harness,
+        topics=[topic],
+        topic_cameras={topic: "camera"},
+        output_root=tmp_path,
+        save_images_count=2,
+    )
+
+    def fail_write(_topic, message, _target):
+        raise RuntimeError(f"disk failure {message.frame_index}")
+
+    monkeypatch.setattr(monitor, "_write_image", fail_write)
+    try:
+        harness.callback(SimpleNamespace(frame_index=1, data=b"one"))
+        harness.callback(SimpleNamespace(frame_index=2, data=b"two"))
+        monitor.submit_first_frames()
+        deadline = module.time.monotonic() + 1.0
+        while not monitor.saving_finished() and module.time.monotonic() < deadline:
+            monitor.wait_for_pending_save(0.1)
+        assert monitor.saving_finished()
+        snapshot = monitor.snapshot()[0]
+        assert snapshot["saved_count"] == 0
+        assert snapshot["errors"] == ["disk failure 1", "disk failure 2"]
+    finally:
+        monitor.close()
+
+
+def test_image_writer_records_task_submission_failures(monkeypatch, tmp_path):
+    module = load_script(SCRIPTS["preset_upgrade"])
+    topic = "/camera/depth/image_raw"
+
+    class Harness:
+        def __init__(self):
+            self.callback = None
+
+        def resolve_image_topic_kind(self, _topic):
+            return "raw"
+
+        def create_image_subscription(self, _topic, callback, topic_kind=None):
+            self.callback = callback
+            return callback
+
+        def destroy_subscription(self, _subscription):
+            self.callback = None
+
+    harness = Harness()
+    monitor = module.ImageCaptureMonitor(
+        harness=harness,
+        topics=[topic],
+        topic_cameras={topic: "camera"},
+        output_root=tmp_path,
+        save_images_count=2,
+    )
+    monkeypatch.setattr(
+        monitor._writer,
+        "submit",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("worker unavailable")
+        ),
+    )
+    try:
+        harness.callback(SimpleNamespace(data=b"one"))
+        harness.callback(SimpleNamespace(data=b"two"))
+        monitor.submit_first_frames()
+        assert monitor.saving_finished()
+        assert monitor.snapshot()[0]["errors"] == [
+            "worker unavailable",
+            "worker unavailable",
+        ]
+    finally:
+        monitor.close()
+
+
+def test_stream_toggle_image_save_error_keeps_successes_and_failures():
+    module = load_script(SCRIPTS["stream_toggle"])
+    topic = "/camera/depth/image_raw"
+    messages = [SimpleNamespace(frame_index=1), SimpleNamespace(frame_index=2)]
+
+    class Session:
+        def assert_running(self):
+            return None
+
+    class Harness:
+        def spin_once(self, _timeout):
+            return None
+
+    class Monitor:
+        def begin_capture(self, topics, count):
+            assert topics == [topic]
+            assert count == 2
+
+        def capture_ready(self):
+            return True
+
+        def take_capture(self):
+            return {topic: messages}
+
+        def cancel_capture(self):
+            return None
+
+    class Writer:
+        def submit(self, target, message):
+            future = Future()
+            if message.frame_index == 1:
+                future.set_result(
+                    {"topic": target.topic, "path": "image_0001.png"}
+                )
+            else:
+                future.set_exception(RuntimeError("disk full"))
+            return future
+
+    target = SimpleNamespace(topic=topic)
+    with pytest.raises(module.ImageSaveError) as raised:
+        module.save_target_images(
+            session=Session(),
+            harness=Harness(),
+            monitor=Monitor(),
+            writer=Writer(),
+            targets=[target],
+            count=2,
+            timeout=1.0,
+        )
+    assert raised.value.saved == [
+        {"topic": topic, "path": "image_0001.png"}
+    ]
+    assert raised.value.failures == [{"topic": topic, "message": "disk full"}]
+
+
+def test_stream_toggle_waits_for_submitted_image_task_before_returning():
+    module = load_script(SCRIPTS["stream_toggle"])
+    topic = "/camera/depth/image_raw"
+    future = Future()
+    submitted = module.threading.Event()
+    outcome = {}
+
+    class Session:
+        def assert_running(self):
+            return None
+
+    class Harness:
+        def spin_once(self, _timeout):
+            return None
+
+    class Monitor:
+        def begin_capture(self, _topics, _count):
+            return None
+
+        def capture_ready(self):
+            return True
+
+        def take_capture(self):
+            return {topic: [object()]}
+
+        def cancel_capture(self):
+            return None
+
+    class Writer:
+        def submit(self, _target, _message):
+            submitted.set()
+            return future
+
+    def invoke():
+        try:
+            module.save_target_images(
+                session=Session(),
+                harness=Harness(),
+                monitor=Monitor(),
+                writer=Writer(),
+                targets=[SimpleNamespace(topic=topic)],
+                count=1,
+                timeout=0.01,
+            )
+        except Exception as exc:  # noqa: BLE001
+            outcome["error"] = exc
+
+    caller = module.threading.Thread(target=invoke)
+    caller.start()
+    assert submitted.wait(1.0)
+    caller.join(0.05)
+    assert caller.is_alive()
+
+    future.set_exception(RuntimeError("write failed"))
+    caller.join(1.0)
+    assert not caller.is_alive()
+    assert isinstance(outcome["error"], module.ImageSaveError)
+    assert outcome["error"].failures == [
+        {"topic": topic, "message": "write failed"}
+    ]
 
 
 def test_all_image_savers_colorize_depth_png_and_preserve_compressed_bytes(tmp_path):
@@ -828,7 +1161,7 @@ def test_stress_scripts_capture_images_before_stability_validation():
         assert len(save_lines) == len(stable_lines) == 1
         assert save_lines[0] < stable_lines[0], test_id
 
-    save_lines = _run_call_lines(SCRIPTS["stream_toggle"], "save_target_images")
+    save_lines = _run_call_lines(SCRIPTS["stream_toggle"], "save_images_nonfatal")
     stable_lines = _run_call_lines(
         SCRIPTS["stream_toggle"],
         "wait_for_enabled_state_with_subscription_recovery",
@@ -843,6 +1176,7 @@ def test_launch_param_saves_images_before_other_camera_checks():
     module.save_topic_images = lambda **_kwargs: (
         calls.append("images") or ["image.png"],
         ["/camera/color/image_raw"],
+        "",
     )
     module.check_params = lambda **_kwargs: calls.append("params") or []
     module.check_topics = lambda **_kwargs: calls.append("topics") or []
@@ -866,6 +1200,40 @@ def test_launch_param_saves_images_before_other_camera_checks():
     )
 
     assert calls == ["images", "params", "topics", "services"]
+
+
+def test_launch_param_records_image_failure_and_continues_camera_checks():
+    module = load_script(SCRIPTS["launch_param_load"])
+    calls = []
+    module.save_topic_images = lambda **_kwargs: (
+        calls.append("images") or [],
+        ["/camera/color/image_raw"],
+        "disk full",
+    )
+    module.check_params = lambda **_kwargs: calls.append("params") or []
+    module.check_topics = lambda **_kwargs: calls.append("topics") or []
+    module.check_services = lambda **_kwargs: calls.append("services") or []
+
+    camera = module._check_one_camera(
+        camera_name="camera",
+        yaml_params={},
+        supported_params=set(),
+        declaration_filter_enabled=False,
+        ros_version="2",
+        runtime_env={},
+        topic_timeout=1.0,
+        service_timeout=1.0,
+        skip_topic_check=False,
+        skip_service_check=False,
+        save_images_count=1,
+        image_topic_templates=["/camera/color/image_raw"],
+        images_dir=Path("images"),
+        emit=lambda _message: None,
+    )
+
+    assert calls == ["images", "params", "topics", "services"]
+    assert camera["image_save_status"] == "failed"
+    assert camera["image_save_error"] == "disk full"
 
 
 def test_default_image_discovery_finds_all_raw_streams_per_camera():
