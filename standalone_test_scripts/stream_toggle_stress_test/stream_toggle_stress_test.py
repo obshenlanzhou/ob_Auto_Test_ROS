@@ -10,6 +10,7 @@ import subprocess
 import sys
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
@@ -1908,24 +1909,28 @@ class ImagePathSequence:
     def __init__(self, output_root: Path) -> None:
         self.output_root = output_root
         self._next_indices: Dict[Tuple[str, str], int] = {}
+        self._lock = threading.Lock()
 
     def next_path(self, target: SaveImageTarget) -> Path:
-        key = (target.camera_name, target.stream)
-        directory = self.output_root / sanitize_path_part(target.camera_name) / sanitize_path_part(
-            target.stream
-        )
-        if key not in self._next_indices:
-            highest = 0
-            if directory.is_dir():
-                for path in directory.glob("image_*.*"):
-                    match = re.fullmatch(r"image_(\d+)\.(?:png|jpg)", path.name)
-                    if match:
-                        highest = max(highest, int(match.group(1)))
-            self._next_indices[key] = highest + 1
-        index = self._next_indices[key]
-        self._next_indices[key] = index + 1
-        suffix = ".jpg" if target.topic_kind == "compressed" else ".png"
-        return directory / f"image_{index:04d}{suffix}"
+        with self._lock:
+            key = (target.camera_name, target.stream)
+            directory = (
+                self.output_root
+                / sanitize_path_part(target.camera_name)
+                / sanitize_path_part(target.stream)
+            )
+            if key not in self._next_indices:
+                highest = 0
+                if directory.is_dir():
+                    for path in directory.glob("image_*.*"):
+                        match = re.fullmatch(r"image_(\d+)\.(?:png|jpg)", path.name)
+                        if match:
+                            highest = max(highest, int(match.group(1)))
+                self._next_indices[key] = highest + 1
+            index = self._next_indices[key]
+            self._next_indices[key] = index + 1
+            suffix = ".jpg" if target.topic_kind == "compressed" else ".png"
+            return directory / f"image_{index:04d}{suffix}"
 
 
 class ImageSaveMonitor:
@@ -1983,6 +1988,7 @@ class ImageWriter:
         self.cv2 = None
         self.bridge = None
         self.paths = ImagePathSequence(output_root)
+        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="image-writer")
 
     def _ensure_cv_tools(self):
         if self.cv2 is not None and self.bridge is not None:
@@ -2052,6 +2058,12 @@ class ImageWriter:
             "topic_kind": target.topic_kind,
         }
 
+    def submit(self, target: SaveImageTarget, message: Any):
+        return self._executor.submit(self.write, target, message)
+
+    def close(self) -> None:
+        self._executor.shutdown(wait=True, cancel_futures=True)
+
 
 def save_target_images(
     *,
@@ -2067,28 +2079,50 @@ def save_target_images(
         return []
     saved: List[Dict[str, Any]] = []
     saved_counts = {target.topic: 0 for target in targets}
+    scheduled_counts = dict(saved_counts)
+    pending = []
     last_sequences = {
         target.topic: monitor.latest(target.topic)[0] for target in targets
     }
     deadline = time.monotonic() + timeout
     last_error = ""
+
+    def collect_completed() -> None:
+        nonlocal last_error
+        remaining = []
+        for target, future in pending:
+            if not future.done():
+                remaining.append((target, future))
+                continue
+            try:
+                saved.append(future.result())
+                saved_counts[target.topic] += 1
+            except Exception as exc:  # noqa: BLE001
+                last_error = str(exc)
+        pending[:] = remaining
+
     while time.monotonic() < deadline and any(
         saved_counts[target.topic] < count for target in targets
     ):
         session.assert_running()
         harness.spin_once(0.1)
+        collect_completed()
+        pending_topics = {target.topic for target, _future in pending}
         for target in targets:
-            if saved_counts[target.topic] >= count:
+            if (
+                scheduled_counts[target.topic] >= count
+                or target.topic in pending_topics
+            ):
                 continue
             sequence, message = monitor.latest(target.topic)
             if sequence <= last_sequences[target.topic] or message is None:
                 continue
             last_sequences[target.topic] = sequence
-            try:
-                saved.append(writer.write(target, message))
-                saved_counts[target.topic] += 1
-            except Exception as exc:  # noqa: BLE001
-                last_error = str(exc)
+            pending.append((target, writer.submit(target, message)))
+            scheduled_counts[target.topic] += 1
+        if pending:
+            time.sleep(0.01)
+        collect_completed()
     if any(saved_counts[target.topic] != count for target in targets):
         suffix = f"; last error: {last_error}" if last_error else ""
         counts = ", ".join(
@@ -3228,6 +3262,11 @@ def run(args) -> int:
         if image_save_monitor is not None:
             try:
                 image_save_monitor.close()
+            except Exception as exc:  # noqa: BLE001
+                result.setdefault("cleanup_errors", []).append(str(exc))
+        if image_writer is not None:
+            try:
+                image_writer.close()
             except Exception as exc:  # noqa: BLE001
                 result.setdefault("cleanup_errors", []).append(str(exc))
         if monitor is not None:

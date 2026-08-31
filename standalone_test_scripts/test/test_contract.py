@@ -539,6 +539,191 @@ def test_image_saving_uses_stream_directories_and_continuing_indices(tmp_path):
         assert compressed == output_root / "camera_01" / "color" / "image_0002.jpg"
 
 
+def test_preset_image_callback_writes_in_background_and_reuses_path_sequence(
+    monkeypatch, tmp_path
+):
+    module = load_script(SCRIPTS["preset_upgrade"])
+    topic = "/camera/depth/image_raw"
+
+    class Harness:
+        def __init__(self):
+            self.callback = None
+
+        def resolve_image_topic_kind(self, _topic):
+            return "raw"
+
+        def create_image_subscription(self, _topic, callback, topic_kind=None):
+            assert topic_kind == "raw"
+            self.callback = callback
+            return callback
+
+        def destroy_subscription(self, _subscription):
+            self.callback = None
+
+    output_root = tmp_path / "images"
+    existing = output_root / "camera" / "depth" / "image_0003.png"
+    existing.parent.mkdir(parents=True)
+    existing.write_bytes(b"existing")
+    paths = module.ImagePathSequence(output_root)
+    harness = Harness()
+    monitor = module.ImageCaptureMonitor(
+        harness=harness,
+        topics=[topic],
+        topic_cameras={topic: "camera"},
+        output_root=output_root,
+        save_images_count=1,
+        path_sequence=paths,
+    )
+    worker_started = module.threading.Event()
+    release_worker = module.threading.Event()
+
+    def blocking_write(_topic, _message, target_path):
+        assert target_path.name == "image_0004.png"
+        worker_started.set()
+        assert release_worker.wait(1.0)
+        target_path.write_bytes(b"image")
+
+    monkeypatch.setattr(monitor, "_write_image", blocking_write)
+    message = type(
+        "Image",
+        (),
+        {"width": 1, "height": 1, "encoding": "16UC1", "data": b"\0\0"},
+    )()
+    caller = module.threading.Thread(target=harness.callback, args=(message,))
+    caller.start()
+    assert worker_started.wait(1.0)
+    caller.join(0.1)
+    assert not caller.is_alive()
+    assert not monitor.complete()
+
+    release_worker.set()
+    monitor.wait_for_pending_save(1.0)
+    assert monitor.complete()
+    monitor.close()
+
+    assert paths.next_path(topic, "camera").name == "image_0005.png"
+
+
+@pytest.mark.parametrize(
+    ("test_id", "writer_method"),
+    [
+        ("export_load", "_write_image"),
+        ("launch_param_load", "_write_image"),
+        ("launch_restart", "_write"),
+    ],
+)
+def test_other_image_callbacks_write_in_background(
+    monkeypatch, tmp_path, test_id, writer_method
+):
+    module = load_script(SCRIPTS[test_id])
+    topic = "/camera/depth/image_raw"
+
+    class Harness:
+        def __init__(self):
+            self.callback = None
+
+        def resolve_image_topic_kind(self, _topic):
+            return "raw"
+
+        def create_image_subscription(self, _topic, callback, topic_kind=None):
+            assert topic_kind == "raw"
+            self.callback = callback
+            return callback
+
+        def create_subscription(self, _topic, callback, topic_kind=None):
+            return self.create_image_subscription(
+                _topic, callback, topic_kind=topic_kind
+            )
+
+        def destroy_subscription(self, _subscription):
+            self.callback = None
+
+    harness = Harness()
+    output_root = tmp_path / test_id / "images"
+    paths = module.ImagePathSequence(output_root)
+    if test_id == "export_load":
+        saver = module.ImageSaver(
+            harness=harness,
+            topics=[topic],
+            topic_cameras={topic: "camera"},
+            output_root=output_root,
+            count_per_topic=1,
+            path_sequence=paths,
+        )
+    elif test_id == "launch_param_load":
+        saver = module.ImageCaptureMonitor(
+            harness=harness,
+            camera_name="camera",
+            topics=[topic],
+            output_root=output_root,
+            save_images_count=1,
+            path_sequence=paths,
+        )
+    else:
+        saver = module.ImageSaver(
+            harness=harness,
+            topics=[topic],
+            output_root=output_root,
+            count=1,
+            path_sequence=paths,
+        )
+
+    worker_started = module.threading.Event()
+    release_worker = module.threading.Event()
+
+    def blocking_write(_topic, _message, target_path):
+        worker_started.set()
+        assert release_worker.wait(1.0)
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        target_path.write_bytes(b"image")
+
+    monkeypatch.setattr(saver, writer_method, blocking_write)
+    caller = module.threading.Thread(target=harness.callback, args=(object(),))
+    try:
+        caller.start()
+        assert worker_started.wait(1.0)
+        caller.join(0.1)
+        assert not caller.is_alive()
+        if test_id == "launch_param_load":
+            assert not saver.all_done()
+        else:
+            assert not saver.complete()
+
+        release_worker.set()
+        saver.wait_for_pending_save(1.0)
+        if test_id == "launch_param_load":
+            assert saver.all_done()
+        else:
+            assert saver.complete()
+    finally:
+        release_worker.set()
+        caller.join(1.0)
+        saver.close()
+
+
+def test_stream_toggle_image_writer_submit_is_non_blocking(monkeypatch, tmp_path):
+    module = load_script(SCRIPTS["stream_toggle"])
+    writer = module.ImageWriter(tmp_path / "stream_toggle")
+    worker_started = module.threading.Event()
+    release_worker = module.threading.Event()
+
+    def blocking_write(_target, _message):
+        worker_started.set()
+        assert release_worker.wait(1.0)
+        return {"path": "image.png"}
+
+    monkeypatch.setattr(writer, "write", blocking_write)
+    try:
+        future = writer.submit(object(), object())
+        assert worker_started.wait(1.0)
+        assert not future.done()
+        release_worker.set()
+        assert future.result(timeout=1.0) == {"path": "image.png"}
+    finally:
+        release_worker.set()
+        writer.close()
+
+
 def test_all_image_savers_colorize_depth_png_and_preserve_compressed_bytes(tmp_path):
     cv2 = pytest.importorskip("cv2")
     np = pytest.importorskip("numpy")

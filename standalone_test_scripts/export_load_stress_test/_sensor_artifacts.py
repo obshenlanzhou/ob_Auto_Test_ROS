@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import re
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
@@ -180,38 +182,40 @@ class SensorArtifactPathSequence:
     def __init__(self, output_root: Path) -> None:
         self.output_root = Path(output_root)
         self._next_indices: Dict[Tuple[str, str], int] = {}
+        self._lock = threading.Lock()
 
     def next_path(self, camera_name: str, topic: str, kind: str) -> Path:
-        safe_camera = _safe_path_part(camera_name)
-        stream_name = sensor_stream_name(topic, kind)
-        key = (safe_camera, stream_name)
-        stream_dir = self.output_root / safe_camera / stream_name
-        stream_dir.mkdir(parents=True, exist_ok=True)
-        next_index = self._next_indices.get(key)
-        if next_index is None:
-            indices = [
-                int(match.group(1))
-                for path in stream_dir.iterdir()
-                if path.is_file()
-                and (match := ARTIFACT_FILE_PATTERN.match(path.name))
-            ]
-            next_index = max(indices, default=0) + 1
-        filename = (
-            f"point_cloud_{next_index:04d}.ply"
-            if kind == "point_cloud"
-            else f"image_{next_index:04d}.png"
-        )
-        target = stream_dir / filename
-        while target.exists():
-            next_index += 1
+        with self._lock:
+            safe_camera = _safe_path_part(camera_name)
+            stream_name = sensor_stream_name(topic, kind)
+            key = (safe_camera, stream_name)
+            stream_dir = self.output_root / safe_camera / stream_name
+            stream_dir.mkdir(parents=True, exist_ok=True)
+            next_index = self._next_indices.get(key)
+            if next_index is None:
+                indices = [
+                    int(match.group(1))
+                    for path in stream_dir.iterdir()
+                    if path.is_file()
+                    and (match := ARTIFACT_FILE_PATTERN.match(path.name))
+                ]
+                next_index = max(indices, default=0) + 1
             filename = (
                 f"point_cloud_{next_index:04d}.ply"
                 if kind == "point_cloud"
                 else f"image_{next_index:04d}.png"
             )
             target = stream_dir / filename
-        self._next_indices[key] = next_index + 1
-        return target
+            while target.exists():
+                next_index += 1
+                filename = (
+                    f"point_cloud_{next_index:04d}.ply"
+                    if kind == "point_cloud"
+                    else f"image_{next_index:04d}.png"
+                )
+                target = stream_dir / filename
+            self._next_indices[key] = next_index + 1
+            return target
 
 
 def _field_map(message: Any) -> Dict[str, Any]:
@@ -466,6 +470,7 @@ class SensorCaptureMonitor:
         imu_min_samples: int = 10,
         max_points: int = 50000,
         active: bool = True,
+        path_sequence: Optional[SensorArtifactPathSequence] = None,
     ) -> None:
         self.harness = harness
         self.point_cloud_topics = list(point_cloud_topics)
@@ -476,7 +481,13 @@ class SensorCaptureMonitor:
         self.imu_window_seconds = float(imu_window_seconds)
         self.imu_min_samples = int(imu_min_samples)
         self.max_points = int(max_points)
-        self.paths = SensorArtifactPathSequence(output_root)
+        self.paths = path_sequence or SensorArtifactPathSequence(output_root)
+        self._state_lock = threading.Lock()
+        self._state_changed = threading.Condition(self._state_lock)
+        self._writer = ThreadPoolExecutor(
+            max_workers=max(1, min(len(self.point_cloud_topics) + len(self.imu_topics), 4)),
+            thread_name_prefix="sensor-writer",
+        )
         self.subscriptions: List[Any] = []
         self.state: Dict[str, Dict[str, Any]] = self._new_state()
         self.active = bool(active)
@@ -512,6 +523,7 @@ class SensorCaptureMonitor:
                 "saved_point_count": 0,
                 "files": [],
                 "error": "",
+                "pending_outputs": 0,
             }
         for topic in self.imu_topics:
             state[topic] = {
@@ -523,95 +535,153 @@ class SensorCaptureMonitor:
                 "current_window": [],
                 "files": [],
                 "error": "",
+                "pending_outputs": 0,
             }
         return state
 
     def begin_capture(self) -> None:
-        self.state = self._new_state()
-        self.active = True
+        with self._state_changed:
+            while any(item["pending_outputs"] for item in self.state.values()):
+                self._state_changed.wait()
+            self.state = self._new_state()
+            self.active = True
 
     def end_capture(self) -> None:
-        self.active = False
+        with self._state_lock:
+            self.active = False
 
     def _on_point_cloud(self, topic: str, message: Any) -> None:
-        if not self.active:
-            return
-        item = self.state[topic]
-        item["message_count"] += 1
-        if item["valid_count"] >= self.required_outputs or item["error"]:
-            return
+        with self._state_lock:
+            if not self.active:
+                return
+            item = self.state[topic]
+            item["message_count"] += 1
+            if (
+                item["valid_count"] >= self.required_outputs
+                or item["pending_outputs"]
+                or item["error"]
+            ):
+                return
+            item["pending_outputs"] += 1
+        self._writer.submit(self._process_point_cloud, topic, message)
+
+    def _process_point_cloud(self, topic: str, message: Any) -> None:
         try:
             points, colors, valid_count = extract_point_cloud(
                 message,
                 max_points=None if self.save_count > 0 else self.max_points,
             )
-            item["valid_count"] += 1
-            item["finite_point_count"] = valid_count
-            item["data_size"] = len(getattr(message, "data", b"") or b"")
-            item["width"] = int(getattr(message, "width", 0) or 0)
-            item["height"] = int(getattr(message, "height", 0) or 0)
+            path = None
             if self.save_count > 0:
                 camera_name = self.topic_cameras.get(topic, "unknown_camera")
                 path = self.paths.next_path(camera_name, topic, "point_cloud")
-                write_point_cloud_ply(
-                    path,
-                    points=points,
-                    colors=colors,
-                )
-                item["files"].append(str(path))
+                write_point_cloud_ply(path, points=points, colors=colors)
+            with self._state_lock:
+                item = self.state[topic]
+                item["valid_count"] += 1
+                item["finite_point_count"] = valid_count
+                item["data_size"] = len(getattr(message, "data", b"") or b"")
+                item["width"] = int(getattr(message, "width", 0) or 0)
+                item["height"] = int(getattr(message, "height", 0) or 0)
+                if path is not None:
+                    item["files"].append(str(path))
                 item["saved_point_count"] = len(points)
         except Exception as exc:  # noqa: BLE001
-            item["error"] = str(exc)
+            with self._state_lock:
+                self.state[topic]["error"] = str(exc)
+        finally:
+            with self._state_changed:
+                self.state[topic]["pending_outputs"] -= 1
+                self._state_changed.notify_all()
 
     def _on_imu(self, topic: str, message: Any) -> None:
-        if not self.active:
-            return
-        item = self.state[topic]
-        item["message_count"] += 1
-        if item["completed_windows"] >= self.required_outputs or item["error"]:
-            return
+        with self._state_lock:
+            if not self.active:
+                return
+            self.state[topic]["message_count"] += 1
         try:
             sample = extract_imu_sample(message, topic, time.monotonic())
+        except Exception as exc:  # noqa: BLE001
+            with self._state_lock:
+                self.state[topic]["error"] = str(exc)
+            return
+        with self._state_lock:
+            if not self.active:
+                return
+            item = self.state[topic]
+            if (
+                item["completed_windows"] >= self.required_outputs
+                or item["pending_outputs"]
+                or item["error"]
+            ):
+                return
             item["valid_sample_count"] += 1
             window = item["current_window"]
             window.append(sample)
-            if (
+            if not (
                 len(window) >= self.imu_min_samples
                 and window[-1]["received_at"] - window[0]["received_at"]
                 >= self.imu_window_seconds
             ):
+                return
+            item["pending_outputs"] += 1
+            item["current_window"] = []
+        self._writer.submit(self._process_imu_window, topic, window)
+
+    def _process_imu_window(self, topic: str, window: Sequence[Dict[str, Any]]) -> None:
+        try:
+            path = None
+            if self.save_count > 0:
+                camera_name = self.topic_cameras.get(topic, "unknown_camera")
+                path = self.paths.next_path(camera_name, topic, "imu")
+                render_imu_png(path, topic=topic, samples=window)
+            with self._state_lock:
+                item = self.state[topic]
                 item["completed_windows"] += 1
-                if self.save_count > 0:
-                    camera_name = self.topic_cameras.get(topic, "unknown_camera")
-                    path = self.paths.next_path(camera_name, topic, "imu")
-                    render_imu_png(path, topic=topic, samples=window)
+                if path is not None:
                     item["files"].append(str(path))
                 item["last_window_sample_count"] = len(window)
                 item["last_window_duration"] = (
                     window[-1]["received_at"] - window[0]["received_at"]
                 )
-                item["current_window"] = []
         except Exception as exc:  # noqa: BLE001
-            item["error"] = str(exc)
+            with self._state_lock:
+                self.state[topic]["error"] = str(exc)
+        finally:
+            with self._state_changed:
+                self.state[topic]["pending_outputs"] -= 1
+                self._state_changed.notify_all()
+
+    def wait_for_pending_output(self, timeout: float) -> None:
+        with self._state_changed:
+            if any(item["pending_outputs"] for item in self.state.values()):
+                self._state_changed.wait(timeout=max(float(timeout), 0.0))
 
     def first_error(self) -> str:
-        for topic, item in self.state.items():
-            if item.get("error"):
-                return f"{topic}: {item['error']}"
+        with self._state_lock:
+            for topic, item in self.state.items():
+                if item.get("error"):
+                    return f"{topic}: {item['error']}"
         return ""
 
     def complete(self) -> bool:
-        for item in self.state.values():
-            if item["kind"] == "point_cloud":
-                if item["valid_count"] < self.required_outputs:
+        with self._state_lock:
+            for item in self.state.values():
+                if item["kind"] == "point_cloud":
+                    if item["valid_count"] < self.required_outputs:
+                        return False
+                elif item["completed_windows"] < self.required_outputs:
                     return False
-            elif item["completed_windows"] < self.required_outputs:
-                return False
-        return True
+            return True
 
     def snapshot(self) -> List[Dict[str, Any]]:
         rows: List[Dict[str, Any]] = []
-        for topic, item in self.state.items():
+        with self._state_lock:
+            state_items = [
+                (topic, {**item, "files": list(item["files"])})
+                for topic, item in self.state.items()
+            ]
+        for topic, item in state_items:
             row = {
                 "name": topic,
                 "topic": topic,
@@ -654,6 +724,7 @@ class SensorCaptureMonitor:
         for subscription in list(self.subscriptions):
             self.harness.destroy_subscription(subscription)
         self.subscriptions = []
+        self._writer.shutdown(wait=True, cancel_futures=True)
 
 
 def capture_sensor_artifacts(
@@ -667,6 +738,7 @@ def capture_sensor_artifacts(
     timeout: float,
     ensure_running: Optional[Callable[[], None]] = None,
     monitor: Optional[SensorCaptureMonitor] = None,
+    path_sequence: Optional[SensorArtifactPathSequence] = None,
 ) -> Tuple[bool, List[Dict[str, Any]], str]:
     if not point_cloud_topics and not imu_topics:
         return True, [], "no point cloud or IMU topics selected"
@@ -680,6 +752,7 @@ def capture_sensor_artifacts(
             output_root=output_root,
             save_count=save_count,
             active=False,
+            path_sequence=path_sequence,
         )
     configured_topics = set(point_cloud_topics) | set(imu_topics)
     if set(monitor.state) != configured_topics:
@@ -691,6 +764,7 @@ def capture_sensor_artifacts(
             if ensure_running is not None:
                 ensure_running()
             harness.spin_once(0.1)
+            monitor.wait_for_pending_output(0.01)
             if monitor.first_error():
                 return False, monitor.snapshot(), monitor.first_error()
             if monitor.complete():

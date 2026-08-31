@@ -241,12 +241,48 @@ def test_sensor_monitor_validates_when_saving_is_disabled(monkeypatch, tmp_path)
     harness.callbacks["/camera/depth/points"][1](point_cloud_message())
     for _ in range(10):
         harness.callbacks["/camera/accel/sample"][1](imu_message())
+    monitor.wait_for_pending_output(1.0)
     assert monitor.complete()
     snapshot = {row["topic"]: row for row in monitor.snapshot()}
     assert snapshot["/camera/depth/points"]["finite_point_count"] == 3
     assert snapshot["/camera/accel/sample"]["completed_windows"] == 1
     assert not list(tmp_path.rglob("*.png"))
     assert not list(tmp_path.rglob("*.ply"))
+    monitor.close()
+
+
+def test_sensor_point_cloud_processing_runs_outside_ros_callback(monkeypatch, tmp_path):
+    module = load_helper()
+    harness = FakeHarness()
+    monitor = module.SensorCaptureMonitor(
+        harness=harness,
+        point_cloud_topics=["/camera/depth/points"],
+        imu_topics=[],
+        topic_cameras={"/camera/depth/points": "camera"},
+        output_root=tmp_path,
+        save_count=0,
+    )
+    worker_started = module.threading.Event()
+    release_worker = module.threading.Event()
+    original_extract = module.extract_point_cloud
+
+    def blocking_extract(message, max_points):
+        worker_started.set()
+        assert release_worker.wait(1.0)
+        return original_extract(message, max_points=max_points)
+
+    monkeypatch.setattr(module, "extract_point_cloud", blocking_extract)
+    callback = harness.callbacks["/camera/depth/points"][1]
+    caller = module.threading.Thread(target=callback, args=(point_cloud_message(),))
+    caller.start()
+    assert worker_started.wait(1.0)
+    caller.join(0.1)
+    assert not caller.is_alive()
+    assert not monitor.complete()
+
+    release_worker.set()
+    monitor.wait_for_pending_output(1.0)
+    assert monitor.complete()
     monitor.close()
 
 

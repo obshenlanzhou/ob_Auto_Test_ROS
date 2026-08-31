@@ -12,6 +12,7 @@ import sys
 import threading
 import time
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
@@ -30,6 +31,7 @@ from _test_protocol import (
     test_environment_markdown,
 )
 from _sensor_artifacts import (
+    SensorArtifactPathSequence,
     capture_sensor_artifacts,
     discover_sensor_topics,
     expand_topic_templates,
@@ -158,26 +160,28 @@ class ImagePathSequence:
     def __init__(self, output_root: Path) -> None:
         self.output_root = output_root
         self._next_indices: Dict[tuple[str, str], int] = {}
+        self._lock = threading.Lock()
 
     def next_path(self, topic: str, camera_name: str, suffix: str = ".png") -> Path:
-        stream_name = image_stream_name(topic)
-        safe_camera_name = sanitize_path_part(camera_name or "unknown_camera")
-        sequence_key = (safe_camera_name, stream_name)
-        stream_dir = ensure_dir(self.output_root / safe_camera_name / stream_name)
-        next_index = self._next_indices.get(sequence_key)
-        if next_index is None:
-            existing_indices = [
-                int(match.group(1))
-                for path in stream_dir.iterdir()
-                if path.is_file() and (match := IMAGE_FILE_PATTERN.match(path.name))
-            ]
-            next_index = max(existing_indices, default=0) + 1
-        target = stream_dir / f"image_{next_index:04d}{suffix}"
-        while target.exists():
-            next_index += 1
+        with self._lock:
+            stream_name = image_stream_name(topic)
+            safe_camera_name = sanitize_path_part(camera_name or "unknown_camera")
+            sequence_key = (safe_camera_name, stream_name)
+            stream_dir = ensure_dir(self.output_root / safe_camera_name / stream_name)
+            next_index = self._next_indices.get(sequence_key)
+            if next_index is None:
+                existing_indices = [
+                    int(match.group(1))
+                    for path in stream_dir.iterdir()
+                    if path.is_file() and (match := IMAGE_FILE_PATTERN.match(path.name))
+                ]
+                next_index = max(existing_indices, default=0) + 1
             target = stream_dir / f"image_{next_index:04d}{suffix}"
-        self._next_indices[sequence_key] = next_index + 1
-        return target
+            while target.exists():
+                next_index += 1
+                target = stream_dir / f"image_{next_index:04d}{suffix}"
+            self._next_indices[sequence_key] = next_index + 1
+            return target
 
 
 def expand_camera_template(value: str, camera_name: str) -> str:
@@ -656,6 +660,7 @@ class ImageCaptureMonitor:
         topic_cameras: Dict[str, str],
         output_root: Path,
         save_images_count: int,
+        path_sequence: Optional[ImagePathSequence] = None,
     ) -> None:
         self.harness = harness
         self.topics = topics
@@ -666,7 +671,10 @@ class ImageCaptureMonitor:
         self.subscriptions = []
         self._bridge = None
         self._cv2 = None
-        self._image_paths = ImagePathSequence(output_root)
+        self._image_paths = path_sequence or ImagePathSequence(output_root)
+        self._state_lock = threading.Lock()
+        self._state_changed = threading.Condition(self._state_lock)
+        self._writer = ThreadPoolExecutor(max_workers=1, thread_name_prefix="image-writer")
         for topic in topics:
             topic_kind = self.harness.resolve_image_topic_kind(topic)
             self.state[topic] = {
@@ -679,6 +687,8 @@ class ImageCaptureMonitor:
                 "encoding": "",
                 "data_size": 0,
                 "saved_files": [],
+                "pending_saves": 0,
+                "error": "",
             }
             self.subscriptions.append(
                 self.harness.create_image_subscription(
@@ -727,60 +737,100 @@ class ImageCaptureMonitor:
 
     def _on_message(self, topic_name: str, message: Any) -> None:
         now = time.monotonic()
-        item = self.state[topic_name]
-        item["message_count"] += 1
-        item["last_message_at"] = now
-        item["width"] = int(getattr(message, "width", 0) or 0)
-        item["height"] = int(getattr(message, "height", 0) or 0)
-        item["encoding"] = str(getattr(message, "encoding", "") or "")
-        item["data_size"] = len(getattr(message, "data", b"") or b"")
-        if item["first_message_at"] is None:
-            item["first_message_at"] = now
-        if self.save_images_count <= 0:
-            return
-        saved_files = item["saved_files"]
-        if len(saved_files) >= self.save_images_count:
-            return
-        camera_name = self.topic_cameras.get(topic_name, "unknown_camera")
-        suffix = ".jpg" if item["topic_kind"] == "compressed" else ".png"
-        target_path = self._image_paths.next_path(topic_name, camera_name, suffix)
-        self._write_image(topic_name, message, target_path)
-        saved_files.append(str(target_path))
+        with self._state_lock:
+            item = self.state[topic_name]
+            item["message_count"] += 1
+            item["last_message_at"] = now
+            item["width"] = int(getattr(message, "width", 0) or 0)
+            item["height"] = int(getattr(message, "height", 0) or 0)
+            item["encoding"] = str(getattr(message, "encoding", "") or "")
+            item["data_size"] = len(getattr(message, "data", b"") or b"")
+            if item["first_message_at"] is None:
+                item["first_message_at"] = now
+            if self.save_images_count <= 0:
+                return
+            if (
+                len(item["saved_files"]) >= self.save_images_count
+                or item["pending_saves"]
+                or item["error"]
+            ):
+                return
+            item["pending_saves"] += 1
+        self._writer.submit(self._save_message, topic_name, message)
+
+    def _save_message(self, topic_name: str, message: Any) -> None:
+        try:
+            camera_name = self.topic_cameras.get(topic_name, "unknown_camera")
+            suffix = (
+                ".jpg"
+                if self.state[topic_name]["topic_kind"] == "compressed"
+                else ".png"
+            )
+            target_path = self._image_paths.next_path(topic_name, camera_name, suffix)
+            self._write_image(topic_name, message, target_path)
+            with self._state_lock:
+                self.state[topic_name]["saved_files"].append(str(target_path))
+        except Exception as exc:  # noqa: BLE001
+            with self._state_lock:
+                self.state[topic_name]["error"] = str(exc)
+        finally:
+            with self._state_changed:
+                self.state[topic_name]["pending_saves"] -= 1
+                self._state_changed.notify_all()
+
+    def wait_for_pending_save(self, timeout: float) -> None:
+        with self._state_changed:
+            if any(item["pending_saves"] for item in self.state.values()):
+                self._state_changed.wait(timeout=max(float(timeout), 0.0))
+
+    def first_error(self) -> str:
+        with self._state_lock:
+            for topic, item in self.state.items():
+                if item["error"]:
+                    return f"{topic}: {item['error']}"
+        return ""
 
     def complete(self) -> bool:
-        for item in self.state.values():
-            if item["first_message_at"] is None:
-                return False
-            if self.save_images_count > 0 and len(item["saved_files"]) < self.save_images_count:
-                return False
-        return True
+        with self._state_lock:
+            for item in self.state.values():
+                if item["first_message_at"] is None:
+                    return False
+                if (
+                    self.save_images_count > 0
+                    and len(item["saved_files"]) < self.save_images_count
+                ):
+                    return False
+            return True
 
     def snapshot(self) -> List[Dict[str, Any]]:
         rows = []
-        for topic, item in self.state.items():
-            rows.append(
-                {
-                    "name": topic,
-                    "topic": topic,
-                    "camera": self.topic_cameras.get(topic, ""),
-                    "topic_kind": item["topic_kind"],
-                    "message_count": item["message_count"],
-                    "width": item["width"],
-                    "height": item["height"],
-                    "data_size": item["data_size"],
-                    "encoding": item["encoding"],
-                    "format": "",
-                    "saved_count": len(item["saved_files"]),
-                    "expected_count": self.save_images_count,
-                    "files": list(item["saved_files"]),
-                }
-            )
+        with self._state_lock:
+            for topic, item in self.state.items():
+                rows.append(
+                    {
+                        "name": topic,
+                        "topic": topic,
+                        "camera": self.topic_cameras.get(topic, ""),
+                        "topic_kind": item["topic_kind"],
+                        "message_count": item["message_count"],
+                        "width": item["width"],
+                        "height": item["height"],
+                        "data_size": item["data_size"],
+                        "encoding": item["encoding"],
+                        "format": "",
+                        "saved_count": len(item["saved_files"]),
+                        "expected_count": self.save_images_count,
+                        "files": list(item["saved_files"]),
+                        "error": item["error"],
+                    }
+                )
         return rows
 
     def close(self) -> None:
         for subscription in list(self.subscriptions):
             self.harness.destroy_subscription(subscription)
         self.subscriptions = []
+        self._writer.shutdown(wait=True, cancel_futures=True)
 
 
 def wait_for_images(
@@ -792,6 +842,7 @@ def wait_for_images(
     output_root: Path,
     save_images_count: int,
     timeout: float,
+    path_sequence: Optional[ImagePathSequence] = None,
 ) -> tuple[bool, List[Dict[str, Any]], str]:
     monitor = ImageCaptureMonitor(
         harness=harness,
@@ -799,6 +850,7 @@ def wait_for_images(
         topic_cameras=topic_cameras,
         output_root=output_root,
         save_images_count=save_images_count,
+        path_sequence=path_sequence,
     )
     deadline = time.monotonic() + timeout
     try:
@@ -806,6 +858,9 @@ def wait_for_images(
             for session in sessions:
                 session.assert_running()
             harness.spin_once(0.1)
+            monitor.wait_for_pending_save(0.01)
+            if monitor.first_error():
+                raise RuntimeError(monitor.first_error())
             if monitor.complete():
                 if save_images_count > 0:
                     total = sum(row["saved_count"] for row in monitor.snapshot())
@@ -1123,6 +1178,9 @@ def run(args) -> int:
     )
     active_sessions: List[LaunchSession] = []
     test_index = 0
+    test_image_dir = results_dir / "images"
+    image_paths = ImagePathSequence(test_image_dir)
+    sensor_paths = SensorArtifactPathSequence(test_image_dir)
 
     try:
         with RosImageHarness(args.ros_version, "preset_upgrade_stress_test", args.queue_size) as harness:
@@ -1147,7 +1205,6 @@ def run(args) -> int:
                     test_index += 1
                     test_name = f"test_{test_index:04d}"
                     test_log_dir = ensure_dir(results_dir / "logs" / test_name)
-                    test_image_dir = results_dir / "images"
                     test_record: Dict[str, Any] = {
                         "test_index": test_index,
                         "round": round_index,
@@ -1339,6 +1396,7 @@ def run(args) -> int:
                         output_root=test_image_dir,
                         save_images_count=save_images_count,
                         timeout=stream_timeout,
+                        path_sequence=image_paths,
                     )
                     test_record["topics"] = [
                         {
@@ -1401,6 +1459,7 @@ def run(args) -> int:
                         output_root=test_image_dir,
                         save_count=save_images_count,
                         timeout=sensor_timeout,
+                        path_sequence=sensor_paths,
                         ensure_running=lambda: [
                             session.assert_running() for session in sessions
                         ],

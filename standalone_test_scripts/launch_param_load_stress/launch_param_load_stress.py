@@ -8,7 +8,9 @@ import shlex
 import signal
 import subprocess
 import sys
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
@@ -27,6 +29,7 @@ from _test_protocol import (
     test_environment_markdown,
 )
 from _sensor_artifacts import (
+    SensorArtifactPathSequence,
     capture_sensor_artifacts,
     discover_sensor_topics,
     expand_topic_templates,
@@ -735,26 +738,28 @@ class ImagePathSequence:
     def __init__(self, output_root: Path) -> None:
         self.output_root = output_root
         self._next_indices: Dict[tuple[str, str], int] = {}
+        self._lock = threading.Lock()
 
     def next_path(self, topic: str, camera_name: str, suffix: str = ".png") -> Path:
-        stream_name = image_stream_name(topic)
-        safe_camera_name = sanitize_path_part(camera_name or "unknown_camera")
-        sequence_key = (safe_camera_name, stream_name)
-        stream_dir = ensure_dir(self.output_root / safe_camera_name / stream_name)
-        next_index = self._next_indices.get(sequence_key)
-        if next_index is None:
-            existing_indices = [
-                int(match.group(1))
-                for path in stream_dir.iterdir()
-                if path.is_file() and (match := IMAGE_FILE_PATTERN.match(path.name))
-            ]
-            next_index = max(existing_indices, default=0) + 1
-        target = stream_dir / f"image_{next_index:04d}{suffix}"
-        while target.exists():
-            next_index += 1
+        with self._lock:
+            stream_name = image_stream_name(topic)
+            safe_camera_name = sanitize_path_part(camera_name or "unknown_camera")
+            sequence_key = (safe_camera_name, stream_name)
+            stream_dir = ensure_dir(self.output_root / safe_camera_name / stream_name)
+            next_index = self._next_indices.get(sequence_key)
+            if next_index is None:
+                existing_indices = [
+                    int(match.group(1))
+                    for path in stream_dir.iterdir()
+                    if path.is_file() and (match := IMAGE_FILE_PATTERN.match(path.name))
+                ]
+                next_index = max(existing_indices, default=0) + 1
             target = stream_dir / f"image_{next_index:04d}{suffix}"
-        self._next_indices[sequence_key] = next_index + 1
-        return target
+            while target.exists():
+                next_index += 1
+                target = stream_dir / f"image_{next_index:04d}{suffix}"
+            self._next_indices[sequence_key] = next_index + 1
+            return target
 
 
 class RosImageHarness:
@@ -968,6 +973,7 @@ class ImageCaptureMonitor:
         topics: List[str],
         output_root: Path,
         save_images_count: int,
+        path_sequence: Optional[ImagePathSequence] = None,
     ) -> None:
         self.harness = harness
         self.camera_name = camera_name
@@ -976,13 +982,18 @@ class ImageCaptureMonitor:
         self.state: Dict[str, Dict[str, Any]] = {}
         self._bridge = None
         self._cv2 = None
-        self._image_paths = ImagePathSequence(output_root)
+        self._image_paths = path_sequence or ImagePathSequence(output_root)
+        self._state_lock = threading.Lock()
+        self._state_changed = threading.Condition(self._state_lock)
+        self._writer = ThreadPoolExecutor(max_workers=1, thread_name_prefix="image-writer")
         for topic in topics:
             topic_kind = harness.resolve_image_topic_kind(topic)
             self.state[topic] = {
                 "saved_files": [],
                 "first_at": None,
                 "topic_kind": topic_kind,
+                "pending_saves": 0,
+                "error": "",
             }
             harness.create_subscription(
                 topic,
@@ -1026,31 +1037,73 @@ class ImageCaptureMonitor:
             raise RuntimeError(f"failed to write PNG: {target_path}")
 
     def _on_message(self, topic: str, message: Any) -> None:
-        item = self.state[topic]
-        if item["first_at"] is None:
-            item["first_at"] = time.monotonic()
-        if self.save_images_count <= 0:
-            return
-        if len(item["saved_files"]) >= self.save_images_count:
-            return
-        suffix = ".jpg" if item["topic_kind"] == "compressed" else ".png"
-        target = self._image_paths.next_path(topic, self.camera_name, suffix)
-        self._write_image(topic, message, target)
-        item["saved_files"].append(str(target))
+        with self._state_lock:
+            item = self.state[topic]
+            if item["first_at"] is None:
+                item["first_at"] = time.monotonic()
+            if self.save_images_count <= 0:
+                return
+            if (
+                len(item["saved_files"]) >= self.save_images_count
+                or item["pending_saves"]
+                or item["error"]
+            ):
+                return
+            item["pending_saves"] += 1
+        self._writer.submit(self._save_message, topic, message)
+
+    def _save_message(self, topic: str, message: Any) -> None:
+        try:
+            suffix = (
+                ".jpg"
+                if self.state[topic]["topic_kind"] == "compressed"
+                else ".png"
+            )
+            target = self._image_paths.next_path(topic, self.camera_name, suffix)
+            self._write_image(topic, message, target)
+            with self._state_lock:
+                self.state[topic]["saved_files"].append(str(target))
+        except Exception as exc:  # noqa: BLE001
+            with self._state_lock:
+                self.state[topic]["error"] = str(exc)
+        finally:
+            with self._state_changed:
+                self.state[topic]["pending_saves"] -= 1
+                self._state_changed.notify_all()
+
+    def wait_for_pending_save(self, timeout: float) -> None:
+        with self._state_changed:
+            if any(item["pending_saves"] for item in self.state.values()):
+                self._state_changed.wait(timeout=max(float(timeout), 0.0))
+
+    def first_error(self) -> str:
+        with self._state_lock:
+            for topic, item in self.state.items():
+                if item["error"]:
+                    return f"{topic}: {item['error']}"
+        return ""
 
     def all_done(self) -> bool:
-        for item in self.state.values():
-            if item["first_at"] is None:
-                return False
-            if self.save_images_count > 0 and len(item["saved_files"]) < self.save_images_count:
-                return False
-        return True
+        with self._state_lock:
+            for item in self.state.values():
+                if item["first_at"] is None:
+                    return False
+                if (
+                    self.save_images_count > 0
+                    and len(item["saved_files"]) < self.save_images_count
+                ):
+                    return False
+            return True
 
     def saved_files(self) -> List[str]:
-        files = []
-        for item in self.state.values():
-            files.extend(item["saved_files"])
-        return files
+        with self._state_lock:
+            files = []
+            for item in self.state.values():
+                files.extend(item["saved_files"])
+            return files
+
+    def close(self) -> None:
+        self._writer.shutdown(wait=True, cancel_futures=True)
 
 
 def save_topic_images(
@@ -1062,6 +1115,7 @@ def save_topic_images(
     save_images_count: int,
     timeout: float,
     emit: StatusLogger,
+    path_sequence: Optional[ImagePathSequence] = None,
 ) -> tuple[List[str], List[str]]:
     emit(f"[IMAGE] saving up to {save_images_count} image(s) per topic for {camera_name}")
     node_name = f"launch_param_load_stress_{camera_name}".replace("-", "_")
@@ -1088,13 +1142,20 @@ def save_topic_images(
                 topics=image_topics,
                 output_root=output_root,
                 save_images_count=save_images_count,
+                path_sequence=path_sequence,
             )
-            deadline = time.monotonic() + timeout
-            while time.monotonic() < deadline and not monitor.all_done():
-                harness.spin_once(0.1)
-            saved = monitor.saved_files()
-            emit(f"[IMAGE] saved {len(saved)} image(s) for {camera_name}")
-            return saved, image_topics
+            try:
+                deadline = time.monotonic() + timeout
+                while time.monotonic() < deadline and not monitor.all_done():
+                    harness.spin_once(0.1)
+                    monitor.wait_for_pending_save(0.01)
+                    if monitor.first_error():
+                        raise RuntimeError(monitor.first_error())
+                saved = monitor.saved_files()
+                emit(f"[IMAGE] saved {len(saved)} image(s) for {camera_name}")
+                return saved, image_topics
+            finally:
+                monitor.close()
     except Exception as exc:  # noqa: BLE001
         emit(f"[IMAGE][WARN] image saving failed for {camera_name}: {exc}")
         return [], []
@@ -1368,6 +1429,7 @@ def _check_one_camera(
     save_images_count: int,
     image_topic_templates: List[str],
     images_dir: Optional[Path],
+    image_path_sequence: Optional[ImagePathSequence] = None,
     emit: StatusLogger,
 ) -> Dict[str, Any]:
     cam: Dict[str, Any] = {
@@ -1387,6 +1449,7 @@ def _check_one_camera(
             save_images_count=save_images_count,
             timeout=topic_timeout,
             emit=emit,
+            path_sequence=image_path_sequence,
         )
     cam["param_checks"] = check_params(
         yaml_params=yaml_params,
@@ -1506,6 +1569,8 @@ def run(args) -> int:
     run_started_at = iso_now()
     default_results_dir = Path(__file__).resolve().parent / "results" / run_id
     results_dir = ensure_dir(Path(args.results_dir).resolve() if args.results_dir else default_results_dir)
+    image_paths = ImagePathSequence(results_dir / "images")
+    sensor_paths = SensorArtifactPathSequence(results_dir / "images")
     install_terminal_log(results_dir / "terminal.log")
     events = EventWriter(results_dir / "events.jsonl")
     emit = StatusLogger(events)
@@ -1626,6 +1691,7 @@ def run(args) -> int:
                         save_images_count=save_images_count,
                         image_topic_templates=image_topic_templates,
                         images_dir=images_dir,
+                        image_path_sequence=image_paths,
                         emit=emit,
                     )
                     run_result["cameras"].append(cam)
@@ -1665,6 +1731,7 @@ def run(args) -> int:
                             output_root=results_dir / "images",
                             save_count=save_images_count,
                             timeout=sensor_timeout,
+                            path_sequence=sensor_paths,
                             ensure_running=lambda: [
                                 session.assert_running() for session in sessions
                             ],

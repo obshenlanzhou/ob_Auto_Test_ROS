@@ -9,7 +9,9 @@ import shlex
 import signal
 import subprocess
 import sys
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -27,6 +29,7 @@ from _test_protocol import (
     test_environment_markdown,
 )
 from _sensor_artifacts import (
+    SensorArtifactPathSequence,
     capture_sensor_artifacts,
     discover_sensor_topics,
     expand_topic_templates,
@@ -609,25 +612,27 @@ class ImagePathSequence:
     def __init__(self, output_root: Path) -> None:
         self.output_root = output_root
         self._next_indices: Dict[tuple[str, str], int] = {}
+        self._lock = threading.Lock()
 
     def next_path(self, topic: str, suffix: str) -> Path:
-        camera_name, stream_name = _image_topic_parts(topic)
-        key = (camera_name, stream_name)
-        stream_dir = ensure_dir(self.output_root / camera_name / stream_name)
-        next_index = self._next_indices.get(key)
-        if next_index is None:
-            indices = [
-                int(match.group(1))
-                for path in stream_dir.iterdir()
-                if path.is_file() and (match := IMAGE_FILE_PATTERN.match(path.name))
-            ]
-            next_index = max(indices, default=0) + 1
-        target = stream_dir / f"image_{next_index:04d}{suffix}"
-        while target.exists():
-            next_index += 1
+        with self._lock:
+            camera_name, stream_name = _image_topic_parts(topic)
+            key = (camera_name, stream_name)
+            stream_dir = ensure_dir(self.output_root / camera_name / stream_name)
+            next_index = self._next_indices.get(key)
+            if next_index is None:
+                indices = [
+                    int(match.group(1))
+                    for path in stream_dir.iterdir()
+                    if path.is_file() and (match := IMAGE_FILE_PATTERN.match(path.name))
+                ]
+                next_index = max(indices, default=0) + 1
             target = stream_dir / f"image_{next_index:04d}{suffix}"
-        self._next_indices[key] = next_index + 1
-        return target
+            while target.exists():
+                next_index += 1
+                target = stream_dir / f"image_{next_index:04d}{suffix}"
+            self._next_indices[key] = next_index + 1
+            return target
 
 
 def colorize_depth_image(image: Any, cv2: Any) -> Any:
@@ -665,17 +670,26 @@ class ImageSaver:
         topics: List[str],
         output_root: Path,
         count: int,
+        path_sequence: Optional[ImagePathSequence] = None,
     ) -> None:
         self.harness = harness
         self.count = count
-        self.paths = ImagePathSequence(output_root)
+        self.paths = path_sequence or ImagePathSequence(output_root)
         self.state: Dict[str, Dict[str, Any]] = {}
         self.subscriptions = []
         self._bridge = None
         self._cv2 = None
+        self._state_lock = threading.Lock()
+        self._state_changed = threading.Condition(self._state_lock)
+        self._writer = ThreadPoolExecutor(max_workers=1, thread_name_prefix="image-writer")
         for topic in topics:
             topic_kind = harness.resolve_image_topic_kind(topic)
-            self.state[topic] = {"topic_kind": topic_kind, "files": [], "error": ""}
+            self.state[topic] = {
+                "topic_kind": topic_kind,
+                "files": [],
+                "error": "",
+                "pending_saves": 0,
+            }
             self.subscriptions.append(
                 harness.create_image_subscription(
                     topic,
@@ -716,37 +730,73 @@ class ImageSaver:
             raise RuntimeError(f"failed to write PNG image: {target}")
 
     def _on_message(self, topic: str, message: Any) -> None:
-        item = self.state[topic]
-        if len(item["files"]) >= self.count or item["error"]:
-            return
+        with self._state_lock:
+            item = self.state[topic]
+            if (
+                len(item["files"]) >= self.count
+                or item["pending_saves"]
+                or item["error"]
+            ):
+                return
+            item["pending_saves"] += 1
+        self._writer.submit(self._save_message, topic, message)
+
+    def _save_message(self, topic: str, message: Any) -> None:
         try:
-            suffix = ".jpg" if item["topic_kind"] == "compressed" else ".png"
+            suffix = (
+                ".jpg"
+                if self.state[topic]["topic_kind"] == "compressed"
+                else ".png"
+            )
             target = self.paths.next_path(topic, suffix)
             self._write(topic, message, target)
-            item["files"].append(str(target))
+            with self._state_lock:
+                self.state[topic]["files"].append(str(target))
         except Exception as exc:  # noqa: BLE001
-            item["error"] = str(exc)
+            with self._state_lock:
+                self.state[topic]["error"] = str(exc)
+        finally:
+            with self._state_changed:
+                self.state[topic]["pending_saves"] -= 1
+                self._state_changed.notify_all()
+
+    def wait_for_pending_save(self, timeout: float) -> None:
+        with self._state_changed:
+            if any(item["pending_saves"] for item in self.state.values()):
+                self._state_changed.wait(timeout=max(float(timeout), 0.0))
+
+    def first_error(self) -> str:
+        with self._state_lock:
+            for topic, item in self.state.items():
+                if item["error"]:
+                    return f"{topic}: {item['error']}"
+        return ""
 
     def complete(self) -> bool:
-        return all(len(item["files"]) >= self.count for item in self.state.values())
+        with self._state_lock:
+            return all(
+                len(item["files"]) >= self.count for item in self.state.values()
+            )
 
     def snapshot(self) -> List[Dict[str, Any]]:
-        return [
-            {
-                "topic": topic,
-                "topic_kind": item["topic_kind"],
-                "files": list(item["files"]),
-                "saved_count": len(item["files"]),
-                "expected_count": self.count,
-                "error": item["error"],
-            }
-            for topic, item in self.state.items()
-        ]
+        with self._state_lock:
+            return [
+                {
+                    "topic": topic,
+                    "topic_kind": item["topic_kind"],
+                    "files": list(item["files"]),
+                    "saved_count": len(item["files"]),
+                    "expected_count": self.count,
+                    "error": item["error"],
+                }
+                for topic, item in self.state.items()
+            ]
 
     def close(self) -> None:
         for subscription in list(self.subscriptions):
             self.harness.destroy_subscription(subscription)
         self.subscriptions = []
+        self._writer.shutdown(wait=True, cancel_futures=True)
 
 
 def save_images(
@@ -757,19 +807,20 @@ def save_images(
     output_root: Path,
     count: int,
     timeout: float,
+    path_sequence: Optional[ImagePathSequence] = None,
 ) -> tuple[bool, List[Dict[str, Any]], str]:
     if count <= 0:
         return True, [], "image saving disabled"
-    saver = ImageSaver(harness, topics, output_root, count)
+    saver = ImageSaver(
+        harness, topics, output_root, count, path_sequence=path_sequence
+    )
     deadline = time.monotonic() + timeout
     try:
         while time.monotonic() < deadline:
             session.assert_running()
             harness.spin_once(0.1)
-            error = next(
-                (item["error"] for item in saver.state.values() if item["error"]),
-                "",
-            )
+            saver.wait_for_pending_save(0.01)
+            error = saver.first_error()
             if error:
                 return False, saver.snapshot(), error
             if saver.complete():
@@ -857,6 +908,8 @@ def run(args) -> int:
     run_started_at = iso_now()
     default_results_dir = Path(__file__).resolve().parent / "results" / run_id
     results_dir = ensure_dir(Path(args.results_dir).resolve() if args.results_dir else default_results_dir)
+    image_paths = ImagePathSequence(results_dir / "images")
+    sensor_paths = SensorArtifactPathSequence(results_dir / "images")
     install_terminal_log(results_dir / "terminal.log")
     events = EventWriter(results_dir / "events.jsonl")
     emit = StatusLogger(events)
@@ -1037,6 +1090,7 @@ def run(args) -> int:
                     output_root=results_dir / "images",
                     count=save_image_count,
                     timeout=save_image_timeout,
+                    path_sequence=image_paths,
                 )
                 attempt["images"] = image_snapshot
                 if not image_ok:
@@ -1151,6 +1205,7 @@ def run(args) -> int:
                     output_root=results_dir / "images",
                     save_count=save_image_count,
                     timeout=sensor_timeout,
+                    path_sequence=sensor_paths,
                     ensure_running=session.assert_running,
                 )
                 attempt["sensors"] = sensor_snapshot
