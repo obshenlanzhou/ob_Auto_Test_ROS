@@ -671,10 +671,12 @@ class ImageSaver:
         topics: List[str],
         output_root: Path,
         count: int,
+        skip_frames: int = 0,
         path_sequence: Optional[ImagePathSequence] = None,
     ) -> None:
         self.harness = harness
         self.count = count
+        self.skip_frames = skip_frames
         self.paths = path_sequence or ImagePathSequence(output_root)
         self.state: Dict[str, Dict[str, Any]] = {}
         self.subscriptions = []
@@ -693,6 +695,7 @@ class ImageSaver:
                 "pending_saves": 0,
                 "selected_count": 0,
                 "received_count": 0,
+                "skipped_count": 0,
                 "buffer": deque(maxlen=count),
                 "errors": [],
             }
@@ -739,6 +742,9 @@ class ImageSaver:
         with self._state_lock:
             item = self.state[topic]
             item["received_count"] += 1
+            if item["skipped_count"] < self.skip_frames:
+                item["skipped_count"] += 1
+                return
             if (
                 self._frozen
                 or item["error"]
@@ -836,6 +842,7 @@ class ImageSaver:
                     "saved_count": len(item["files"]),
                     "expected_count": self.count,
                     "received_count": item["received_count"],
+                    "skipped_count": item["skipped_count"],
                     "selected_count": item["selected_count"],
                     "buffered_count": len(item["buffer"]),
                     "error": item["error"],
@@ -858,13 +865,19 @@ def save_images(
     topics: List[str],
     output_root: Path,
     count: int,
+    skip_frames: int = 0,
     timeout: float,
     path_sequence: Optional[ImagePathSequence] = None,
 ) -> tuple[bool, List[Dict[str, Any]], str]:
     if count <= 0:
         return True, [], "image saving disabled"
     saver = ImageSaver(
-        harness, topics, output_root, count, path_sequence=path_sequence
+        harness,
+        topics,
+        output_root,
+        count,
+        skip_frames=skip_frames,
+        path_sequence=path_sequence,
     )
     deadline = time.monotonic() + timeout
     try:
@@ -875,7 +888,8 @@ def save_images(
             return (
                 False,
                 saver.snapshot(),
-                f"did not receive {count} image(s) per topic within {timeout:.1f}s",
+                f"did not receive {count} image(s) per topic after skipping "
+                f"{skip_frames} frame(s) within {timeout:.1f}s",
             )
         saver.submit_first_frames()
         while not saver.saving_finished():
@@ -916,6 +930,7 @@ def build_summary(result: Dict[str, Any]) -> str:
         f"- Successful restarts: {result.get('successful_restarts', 0)}",
         f"- Launch attempts: {result.get('launch_attempts', 0)}",
         f"- Visual artifacts per topic per restart: {result.get('save_image_count', 0)}",
+        f"- Messages skipped per artifact topic per restart: {result.get('skip_image_frames', 0)}",
         f"- Elapsed seconds: {float(result.get('elapsed_seconds', 0.0) or 0.0):.1f}",
         "",
         "## Monitored Streams",
@@ -1015,6 +1030,9 @@ def run(args) -> int:
     save_image_count = int(args.save_image_count)
     if save_image_count < 0:
         raise ValueError("--save-image-count must be >= 0")
+    skip_image_frames = int(args.skip_image_frames)
+    if skip_image_frames < 0:
+        raise ValueError("--skip-image-frames must be >= 0")
     save_image_timeout = parse_duration(args.save_image_timeout, 30.0)
     restart_delay = float(args.restart_delay)
     if run_count is not None and run_count <= 0:
@@ -1048,6 +1066,7 @@ def run(args) -> int:
         "point_cloud_topics": [],
         "imu_topics": [],
         "save_image_count": save_image_count,
+        "skip_image_frames": skip_image_frames,
         "duration_seconds": duration_seconds,
         "run_count": run_count,
         "continue_on_failure": args.continue_on_failure,
@@ -1064,6 +1083,11 @@ def run(args) -> int:
     emit(f"tool version: {TOOL_VERSION}")
     emit(f"results dir: {results_dir}")
     emit("launch command: " + " ".join(shlex.quote(item) for item in command))
+    if save_image_count > 0:
+        emit(
+            f"save {save_image_count} image(s) per topic after skipping the first "
+            f"{skip_image_frames} message(s) per artifact topic"
+        )
     emit(
         f"planned duration: {duration_seconds:.1f}s"
         if duration_seconds is not None
@@ -1149,6 +1173,7 @@ def run(args) -> int:
                     topics=monitored_topics,
                     output_root=results_dir / "images",
                     count=save_image_count,
+                    skip_frames=skip_image_frames,
                     timeout=save_image_timeout,
                     path_sequence=image_paths,
                 )
@@ -1266,6 +1291,7 @@ def run(args) -> int:
                     output_root=results_dir / "images",
                     save_count=save_image_count,
                     timeout=sensor_timeout,
+                    skip_frames=skip_image_frames,
                     path_sequence=sensor_paths,
                     ensure_running=session.assert_running,
                 )
@@ -1469,6 +1495,16 @@ def parse_args(argv=None):
         help=(
             "Artifacts per topic after every restart (image/IMU PNG, point cloud "
             "PLY); 0 keeps validation but disables saving"
+        ),
+    )
+    parser.add_argument(
+        "--skip-image-frames",
+        type=int,
+        default=0,
+        metavar="N",
+        help=(
+            "Skip the first N messages per image, point cloud, and IMU topic "
+            "before capture (default: 0)"
         ),
     )
     parser.add_argument(

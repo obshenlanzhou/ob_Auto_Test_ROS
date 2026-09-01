@@ -65,7 +65,8 @@ python3 ./export_load_stress_test/export_load_stress_test.py \
 | `--continue-on-failure` | disabled | Record a failed cycle and continue with the next one; the final result still fails |
 | `--duration` | empty | Optional maximum wall time; the first configured limit reached stops the run |
 | `--sdk-log-level` | `debug` | Orbbec SDK log level |
-| `--save-image-count` | `1` | Artifacts per topic; image frames are saved immediately without waiting for stability validation (`0` = validation only) |
+| `--save-image-count` | `1` | Artifacts per topic; image capture starts immediately without waiting for stability validation (`0` = validation only) |
+| `--skip-image-frames` | `0` | In each test, skip the first N messages independently on every image, point cloud, and IMU topic before capture |
 | `--image-topic` | auto-discovered | Explicit `Image` or `CompressedImage` topic to monitor and save; repeatable |
 | `--point-cloud-topic` | first-test discovery | Required `PointCloud2` topic; repeatable, supports `{camera}` |
 | `--imu-topic` | first-test discovery | Required `Imu` topic; repeatable, supports `{camera}` |

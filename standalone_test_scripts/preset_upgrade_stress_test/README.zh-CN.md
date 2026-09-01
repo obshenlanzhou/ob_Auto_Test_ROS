@@ -73,7 +73,8 @@ python3 ./preset_upgrade_stress_test/preset_upgrade_stress_test.py \
 | `--run-count` | 空 | 可选的升级最大轮次数 |
 | `--continue-on-failure` | 关闭 | 清理失败的 Preset 测试后继续下一个；最终结果仍为失败 |
 | `--duration` | 空 | 最长运行时间，支持 `300`、`15m`、`2h` |
-| `--save-image-count` | `1` | 每轮每个 topic 的产物数；图像收到即存（`0` = 仅检测） |
+| `--save-image-count` | `1` | 每轮每个 topic 的产物数；图像收到后开始采集（`0` = 仅检测） |
+| `--skip-image-frames` | `0` | 每轮对每个图像、点云和 IMU topic 分别跳过前 N 条消息，再开始采集 |
 | `--image-topic` | 自动发现 | 指定后只监控并保存这些 `Image` 或 `CompressedImage` topic，可重复传入并支持 `{camera}` |
 | `--point-cloud-topic` | 首轮自动发现 | 强制要求的 `PointCloud2` topic，可重复传入并支持 `{camera}` |
 | `--imu-topic` | 首轮自动发现 | 强制要求的 `Imu` topic，可重复传入并支持 `{camera}` |

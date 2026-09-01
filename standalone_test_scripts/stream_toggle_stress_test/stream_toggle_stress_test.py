@@ -1055,6 +1055,8 @@ class StreamMonitor:
         self.lock = threading.Lock()
         self._capture_buffers: Optional[Dict[str, List[Any]]] = None
         self._capture_count = 0
+        self._capture_skip_frames = 0
+        self._capture_skipped: Dict[str, int] = {}
         now = time.monotonic()
         self.state: Dict[str, Dict[str, Any]] = {
             topic: {
@@ -1131,7 +1133,9 @@ class StreamMonitor:
             item["latest_message"] = message
             if self._capture_buffers is not None and topic in self._capture_buffers:
                 capture_buffer = self._capture_buffers[topic]
-                if len(capture_buffer) < self._capture_count:
+                if self._capture_skipped[topic] < self._capture_skip_frames:
+                    self._capture_skipped[topic] += 1
+                elif len(capture_buffer) < self._capture_count:
                     capture_buffer.append(message)
             item["width"] = int(getattr(message, "width", 0) or 0)
             item["height"] = int(getattr(message, "height", 0) or 0)
@@ -1198,7 +1202,9 @@ class StreamMonitor:
             item = self.state[topic]
             return int(item["message_count"]), item["latest_message"]
 
-    def begin_capture(self, topics: Sequence[str], count: int) -> None:
+    def begin_capture(
+        self, topics: Sequence[str], count: int, skip_frames: int = 0
+    ) -> None:
         selected = set(topics)
         unknown = selected.difference(self.topics)
         if unknown:
@@ -1209,7 +1215,9 @@ class StreamMonitor:
             if self._capture_buffers is not None:
                 raise RuntimeError("an image capture is already active")
             self._capture_count = max(int(count), 0)
+            self._capture_skip_frames = max(int(skip_frames), 0)
             self._capture_buffers = {topic: [] for topic in selected}
+            self._capture_skipped = {topic: 0 for topic in selected}
 
     def capture_ready(self) -> bool:
         with self.lock:
@@ -1233,12 +1241,16 @@ class StreamMonitor:
             }
             self._capture_buffers = None
             self._capture_count = 0
+            self._capture_skip_frames = 0
+            self._capture_skipped = {}
             return captured
 
     def cancel_capture(self) -> None:
         with self.lock:
             self._capture_buffers = None
             self._capture_count = 0
+            self._capture_skip_frames = 0
+            self._capture_skipped = {}
 
     def snapshot(self, topics: Optional[Sequence[str]] = None) -> List[Dict[str, Any]]:
         selected = list(topics) if topics is not None else self.topics
@@ -2010,6 +2022,8 @@ class ImageSaveMonitor:
         self.lock = threading.Lock()
         self._capture_active = False
         self._capture_count = 0
+        self._capture_skip_frames = 0
+        self._capture_skipped: Dict[str, int] = {}
         self._capture_buffers: Dict[str, List[Any]] = {}
         self._capture_shared_topics: List[str] = []
         supplemental_targets = {
@@ -2037,7 +2051,9 @@ class ImageSaveMonitor:
             item["latest_message"] = message
             if self._capture_active and topic in self._capture_buffers:
                 capture_buffer = self._capture_buffers[topic]
-                if len(capture_buffer) < self._capture_count:
+                if self._capture_skipped[topic] < self._capture_skip_frames:
+                    self._capture_skipped[topic] += 1
+                elif len(capture_buffer) < self._capture_count:
                     capture_buffer.append(message)
 
     def latest(self, topic: str) -> Tuple[int, Any]:
@@ -2047,7 +2063,9 @@ class ImageSaveMonitor:
             item = self.state[topic]
             return int(item["sequence"]), item["latest_message"]
 
-    def begin_capture(self, topics: Sequence[str], count: int) -> None:
+    def begin_capture(
+        self, topics: Sequence[str], count: int, skip_frames: int = 0
+    ) -> None:
         selected = set(topics)
         known = self.shared_topics | set(self.state)
         unknown = selected.difference(known)
@@ -2062,16 +2080,20 @@ class ImageSaveMonitor:
                 raise RuntimeError("an image capture is already active")
             self._capture_active = True
             self._capture_count = max(int(count), 0)
+            self._capture_skip_frames = max(int(skip_frames), 0)
             self._capture_buffers = {topic: [] for topic in supplemental}
+            self._capture_skipped = {topic: 0 for topic in supplemental}
             self._capture_shared_topics = shared
         if shared and self.shared_monitor is not None:
             try:
-                self.shared_monitor.begin_capture(shared, count)
+                self.shared_monitor.begin_capture(shared, count, skip_frames)
             except Exception:
                 with self.lock:
                     self._capture_active = False
                     self._capture_count = 0
+                    self._capture_skip_frames = 0
                     self._capture_buffers = {}
+                    self._capture_skipped = {}
                     self._capture_shared_topics = []
                 raise
 
@@ -2107,7 +2129,9 @@ class ImageSaveMonitor:
             captured.update(shared_captured)
             self._capture_active = False
             self._capture_count = 0
+            self._capture_skip_frames = 0
             self._capture_buffers = {}
+            self._capture_skipped = {}
             self._capture_shared_topics = []
             return captured
 
@@ -2116,7 +2140,9 @@ class ImageSaveMonitor:
             has_shared = bool(self._capture_shared_topics)
             self._capture_active = False
             self._capture_count = 0
+            self._capture_skip_frames = 0
             self._capture_buffers = {}
+            self._capture_skipped = {}
             self._capture_shared_topics = []
         if has_shared and self.shared_monitor is not None:
             self.shared_monitor.cancel_capture()
@@ -2219,6 +2245,7 @@ def save_target_images(
     targets: Sequence[SaveImageTarget],
     count: int,
     timeout: float,
+    skip_frames: int = 0,
 ) -> List[Dict[str, Any]]:
     if count <= 0 or not targets:
         return []
@@ -2254,7 +2281,9 @@ def save_target_images(
                 )
         pending.clear()
 
-    monitor.begin_capture([target.topic for target in targets], count)
+    monitor.begin_capture(
+        [target.topic for target in targets], count, skip_frames
+    )
     try:
         while time.monotonic() < deadline and not monitor.capture_ready():
             session.assert_running()
@@ -2429,6 +2458,7 @@ def build_summary(result: Dict[str, Any]) -> str:
         f"- Subscription recoveries failed: {statistics['recovery_failures']}",
         f"- Total warnings: {len(result.get('warnings', []))}",
         f"- Saved images: {result.get('saved_image_count', 0)}",
+        f"- Messages skipped per artifact topic per capture: {result.get('skip_image_frames', 0)}",
         f"- Saved point cloud/IMU artifacts: {result.get('saved_sensor_plot_count', 0)}",
         f"- Elapsed seconds: {float(result.get('elapsed_seconds', 0.0) or 0.0):.1f}",
         "",
@@ -2604,6 +2634,8 @@ def validate_args(args) -> Dict[str, Any]:
                 )
     if args.save_image_count < 0:
         raise ValueError("--save-image-count must be >= 0")
+    if args.skip_image_frames < 0:
+        raise ValueError("--skip-image-frames must be >= 0")
     if args.queue_size <= 0:
         raise ValueError("--queue-size must be > 0")
     retry_delay = float(args.service_retry_delay)
@@ -2623,6 +2655,7 @@ def validate_args(args) -> Dict[str, Any]:
         "service_timeout": parse_duration(args.service_timeout, 15.0),
         "service_retry_delay": retry_delay,
         "save_image_timeout": parse_duration(args.save_image_timeout, 30.0),
+        "skip_image_frames": args.skip_image_frames,
         "profile_switch_enabled": profile_switch_enabled,
         "profile_sets": profile_sets,
     }
@@ -2696,6 +2729,8 @@ def run(args) -> int:
         "completed_cycles": 0,
         "completed_operations": 0,
         "saved_image_count": 0,
+        "save_image_count": args.save_image_count,
+        "skip_image_frames": config["skip_image_frames"],
         "saved_sensor_plot_count": 0,
         "warnings": [],
         "cycles": [],
@@ -2728,6 +2763,11 @@ def run(args) -> int:
         emit("test started", event="phase", phase="starting")
         emit(f"results dir: {results_dir}")
         emit("launch command: " + " ".join(shlex.quote(item) for item in command))
+        if args.save_image_count > 0:
+            emit(
+                f"save {args.save_image_count} image(s) per topic after skipping "
+                f"the first {config['skip_image_frames']} message(s) per artifact topic"
+            )
         session.start()
         with RosHarness(
             args.ros_version,
@@ -2869,6 +2909,7 @@ def run(args) -> int:
                     output_root=results_dir / "images",
                     save_count=args.save_image_count,
                     timeout=sensor_timeout,
+                    skip_frames=config["skip_image_frames"],
                     ensure_running=session.assert_running,
                     monitor=sensor_monitor,
                 )
@@ -2894,6 +2935,7 @@ def run(args) -> int:
                         targets=selected_targets,
                         count=args.save_image_count,
                         timeout=config["save_image_timeout"],
+                        skip_frames=config["skip_image_frames"],
                     )
                 except Exception as exc:  # noqa: BLE001
                     saved = list(exc.saved) if isinstance(exc, ImageSaveError) else []
@@ -3677,6 +3719,16 @@ def parse_args(argv: Optional[Sequence[str]] = None):
         help=(
             "Artifacts per topic for each enabled state (image/IMU PNG, point "
             "cloud PLY); 0 keeps validation but disables saving"
+        ),
+    )
+    parser.add_argument(
+        "--skip-image-frames",
+        type=int,
+        default=0,
+        metavar="N",
+        help=(
+            "Skip the first N messages per image, point cloud, and IMU topic "
+            "before capture (default: 0)"
         ),
     )
     parser.add_argument("--save-image-timeout", default="30")

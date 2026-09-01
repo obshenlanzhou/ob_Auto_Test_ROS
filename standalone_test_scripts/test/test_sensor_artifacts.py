@@ -251,6 +251,43 @@ def test_sensor_monitor_validates_when_saving_is_disabled(monkeypatch, tmp_path)
     monitor.close()
 
 
+def test_sensor_monitor_skips_point_cloud_and_imu_messages_per_topic(tmp_path):
+    module = load_helper()
+    harness = FakeHarness()
+    point_cloud_topic = "/camera/depth/points"
+    imu_topic = "/camera/accel/sample"
+    monitor = module.SensorCaptureMonitor(
+        harness=harness,
+        point_cloud_topics=[point_cloud_topic],
+        imu_topics=[imu_topic],
+        topic_cameras={
+            point_cloud_topic: "camera",
+            imu_topic: "camera",
+        },
+        output_root=tmp_path,
+        save_count=0,
+        skip_frames=2,
+        imu_window_seconds=0,
+        imu_min_samples=1,
+    )
+
+    for _ in range(3):
+        harness.callbacks[point_cloud_topic][1](point_cloud_message())
+        harness.callbacks[imu_topic][1](imu_message())
+
+    monitor.wait_for_pending_output(1.0)
+    assert monitor.complete()
+    snapshot = {row["topic"]: row for row in monitor.snapshot()}
+    assert snapshot[point_cloud_topic]["message_count"] == 3
+    assert snapshot[point_cloud_topic]["skipped_count"] == 2
+    assert snapshot[point_cloud_topic]["valid_message_count"] == 1
+    assert snapshot[imu_topic]["message_count"] == 3
+    assert snapshot[imu_topic]["skipped_count"] == 2
+    assert snapshot[imu_topic]["valid_sample_count"] == 1
+    assert snapshot[imu_topic]["completed_windows"] == 1
+    monitor.close()
+
+
 def test_sensor_point_cloud_processing_runs_outside_ros_callback(monkeypatch, tmp_path):
     module = load_helper()
     harness = FakeHarness()
@@ -327,12 +364,14 @@ def test_persistent_sensor_monitor_reuses_subscriptions_across_captures(tmp_path
             output_root=tmp_path,
             save_count=0,
             timeout=1,
+            skip_frames=1,
             monitor=monitor,
         )
         assert ok
         snapshots.append(snapshot)
 
-    assert [snapshot[0]["message_count"] for snapshot in snapshots] == [1, 1]
+    assert [snapshot[0]["message_count"] for snapshot in snapshots] == [2, 2]
+    assert [snapshot[0]["skipped_count"] for snapshot in snapshots] == [1, 1]
     assert harness.create_count == 1
     assert harness.destroy_count == 0
     assert len(harness.callbacks) == 1

@@ -974,11 +974,13 @@ class ImageCaptureMonitor:
         topics: List[str],
         output_root: Path,
         save_images_count: int,
+        skip_frames: int = 0,
         path_sequence: Optional[ImagePathSequence] = None,
     ) -> None:
         self.harness = harness
         self.camera_name = camera_name
         self.save_images_count = save_images_count
+        self.skip_frames = skip_frames
         self.output_root = output_root
         self.state: Dict[str, Dict[str, Any]] = {}
         self._bridge = None
@@ -997,6 +999,7 @@ class ImageCaptureMonitor:
                 "pending_saves": 0,
                 "selected_count": 0,
                 "received_count": 0,
+                "skipped_count": 0,
                 "buffer": deque(maxlen=save_images_count),
                 "error": "",
                 "errors": [],
@@ -1049,6 +1052,9 @@ class ImageCaptureMonitor:
                 item["first_at"] = time.monotonic()
             item["received_count"] += 1
             if self.save_images_count <= 0:
+                return
+            if item["skipped_count"] < self.skip_frames:
+                item["skipped_count"] += 1
                 return
             if (
                 self._frozen
@@ -1161,11 +1167,15 @@ def save_topic_images(
     image_topic_templates: List[str],
     output_root: Path,
     save_images_count: int,
+    skip_frames: int = 0,
     timeout: float,
     emit: StatusLogger,
     path_sequence: Optional[ImagePathSequence] = None,
 ) -> tuple[List[str], List[str], str]:
-    emit(f"[IMAGE] saving up to {save_images_count} image(s) per topic for {camera_name}")
+    emit(
+        f"[IMAGE] saving up to {save_images_count} image(s) per topic for "
+        f"{camera_name} after skipping {skip_frames} frame(s)"
+    )
     node_name = f"launch_param_load_stress_{camera_name}".replace("-", "_")
     image_topics: List[str] = []
     saved: List[str] = []
@@ -1192,6 +1202,7 @@ def save_topic_images(
                 topics=image_topics,
                 output_root=output_root,
                 save_images_count=save_images_count,
+                skip_frames=skip_frames,
                 path_sequence=path_sequence,
             )
             try:
@@ -1200,7 +1211,8 @@ def save_topic_images(
                     harness.spin_once(0.1)
                 if not monitor.buffer_ready():
                     raise TimeoutError(
-                        f"did not receive {save_images_count} image(s) per topic "
+                        f"did not receive {save_images_count} image(s) per topic after "
+                        f"skipping {skip_frames} frame(s) "
                         f"within {timeout:.1f}s"
                     )
                 monitor.submit_first_frames()
@@ -1437,6 +1449,8 @@ def build_summary(result: Dict[str, Any]) -> str:
         f"- Launch file: {result.get('launch_file', '')}",
         f"- SDK log level: {result.get('sdk_log_level', '')}",
         f"- Runs: {runs_passed}/{len(runs)} completed runs passed",
+        f"- Visual artifacts per topic per run: {result.get('save_image_count', 0)}",
+        f"- Messages skipped per artifact topic per run: {result.get('skip_image_frames', 0)}",
         "",
     ]
     lines += ["## Point Cloud Topics", ""]
@@ -1486,6 +1500,7 @@ def _check_one_camera(
     skip_topic_check: bool,
     skip_service_check: bool,
     save_images_count: int,
+    skip_image_frames: int = 0,
     image_topic_templates: List[str],
     images_dir: Optional[Path],
     image_path_sequence: Optional[ImagePathSequence] = None,
@@ -1512,6 +1527,7 @@ def _check_one_camera(
             image_topic_templates=image_topic_templates,
             output_root=images_dir,
             save_images_count=save_images_count,
+            skip_frames=skip_image_frames,
             timeout=topic_timeout,
             emit=emit,
             path_sequence=image_path_sequence,
@@ -1622,6 +1638,7 @@ def run(args) -> int:
         parse_duration(duration_text, 0.0) if duration_text else None
     )
     save_images_count = args.save_image_count
+    skip_image_frames = args.skip_image_frames
     image_topic_templates = [topic.strip() for topic in args.image_topic if topic.strip()]
     camera_names = [camera.name for camera in cameras]
     configured_point_cloud_topics = expand_topic_templates(
@@ -1658,6 +1675,8 @@ def run(args) -> int:
         "imu_topics": configured_imu_topics,
         "notes": [declaration_note],
         "run_count": run_count,
+        "save_image_count": save_images_count,
+        "skip_image_frames": skip_image_frames,
         "continue_on_failure": args.continue_on_failure,
         "duration_limit_seconds": duration_seconds,
         "runs_passed": 0,
@@ -1671,6 +1690,11 @@ def run(args) -> int:
     emit(f"cameras: {', '.join(c.name for c in cameras)}")
     emit(f"run count: {run_count if run_count is not None else 'duration-limited'}")
     emit(f"SDK log level: {args.sdk_log_level}")
+    if save_images_count > 0:
+        emit(
+            f"save {save_images_count} image(s) per topic after skipping the first "
+            f"{skip_image_frames} message(s) per artifact topic"
+        )
     if image_topic_templates:
         emit(f"save image topics: {', '.join(image_topic_templates)}")
     else:
@@ -1757,6 +1781,7 @@ def run(args) -> int:
                         skip_topic_check=args.skip_topic_check,
                         skip_service_check=args.skip_service_check,
                         save_images_count=save_images_count,
+                        skip_image_frames=skip_image_frames,
                         image_topic_templates=image_topic_templates,
                         images_dir=images_dir,
                         image_path_sequence=image_paths,
@@ -1808,6 +1833,7 @@ def run(args) -> int:
                             output_root=results_dir / "images",
                             save_count=save_images_count,
                             timeout=sensor_timeout,
+                            skip_frames=skip_image_frames,
                             path_sequence=sensor_paths,
                             ensure_running=lambda: [
                                 session.assert_running() for session in sessions
@@ -2006,6 +2032,16 @@ def parse_args(argv=None):
         ),
     )
     parser.add_argument(
+        "--skip-image-frames",
+        type=int,
+        default=0,
+        metavar="N",
+        help=(
+            "Skip the first N messages per image, point cloud, and IMU topic "
+            "before capture (default: 0)"
+        ),
+    )
+    parser.add_argument(
         "--version",
         action="version",
         version="%(prog)s {}".format(TOOL_VERSION),
@@ -2022,6 +2058,8 @@ def parse_args(argv=None):
             parser.error("--run-count must be >= 1")
         if args.save_image_count < 0:
             parser.error("--save-image-count must be >= 0")
+        if args.skip_image_frames < 0:
+            parser.error("--skip-image-frames must be >= 0")
     return args
 
 

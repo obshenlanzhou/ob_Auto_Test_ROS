@@ -85,7 +85,8 @@ python3 ./launch_param_load_stress/launch_param_load_stress.py \
 | `--startup-timeout SECS` | `30` | 等待设备初始化完成的最大秒数 |
 | `--topic-timeout SECS` | `20` | 等待每个已启用流 topic 的最大秒数 |
 | `--service-timeout SECS` | `15` | 每次参数/service 查询的最大秒数 |
-| `--save-image-count N` | `1` | 每个图像、点云和 IMU topic 的产物数；图像收到后立即保存首批帧，再执行参数、topic 和 service 检查（`0` = 仅检测） |
+| `--save-image-count N` | `1` | 每个图像、点云和 IMU topic 的产物数；图像采集完成后再执行参数、topic 和 service 检查（`0` = 仅检测） |
+| `--skip-image-frames N` | `0` | 每轮对每个图像、点云和 IMU topic 分别跳过前 N 条消息，再开始采集 |
 | `--image-topic` | 自动发现 | 指定后只保存这些 `Image` 或 `CompressedImage` topic，可重复传入并支持 `{camera}` |
 | `--point-cloud-topic` | 首轮自动发现 | 强制要求的 `PointCloud2` topic，可重复传入并支持 `{camera}` |
 | `--imu-topic` | 首轮自动发现 | 强制要求的 `Imu` topic，可重复传入并支持 `{camera}` |

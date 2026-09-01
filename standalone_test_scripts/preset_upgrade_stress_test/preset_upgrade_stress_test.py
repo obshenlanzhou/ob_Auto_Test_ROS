@@ -660,6 +660,7 @@ class ImageCaptureMonitor:
         topic_cameras: Dict[str, str],
         output_root: Path,
         save_images_count: int,
+        skip_frames: int = 0,
         path_sequence: Optional[ImagePathSequence] = None,
     ) -> None:
         self.harness = harness
@@ -667,6 +668,7 @@ class ImageCaptureMonitor:
         self.topic_cameras = topic_cameras
         self.output_root = output_root
         self.save_images_count = save_images_count
+        self.skip_frames = skip_frames
         self.state: Dict[str, Dict[str, Any]] = {}
         self.subscriptions = []
         self._bridge = None
@@ -690,6 +692,7 @@ class ImageCaptureMonitor:
                 "saved_files": [],
                 "pending_saves": 0,
                 "selected_count": 0,
+                "skipped_count": 0,
                 "buffer": deque(maxlen=save_images_count),
                 "error": "",
                 "errors": [],
@@ -752,6 +755,9 @@ class ImageCaptureMonitor:
             if item["first_message_at"] is None:
                 item["first_message_at"] = now
             if self.save_images_count <= 0:
+                return
+            if item["skipped_count"] < self.skip_frames:
+                item["skipped_count"] += 1
                 return
             if (
                 self._frozen
@@ -866,6 +872,7 @@ class ImageCaptureMonitor:
                         "saved_count": len(item["saved_files"]),
                         "expected_count": self.save_images_count,
                         "selected_count": item["selected_count"],
+                        "skipped_count": item["skipped_count"],
                         "buffered_count": len(item["buffer"]),
                         "files": list(item["saved_files"]),
                         "error": item["error"],
@@ -889,6 +896,7 @@ def wait_for_images(
     topic_cameras: Dict[str, str],
     output_root: Path,
     save_images_count: int,
+    skip_frames: int = 0,
     timeout: float,
     path_sequence: Optional[ImagePathSequence] = None,
 ) -> tuple[bool, List[Dict[str, Any]], str]:
@@ -898,6 +906,7 @@ def wait_for_images(
         topic_cameras=topic_cameras,
         output_root=output_root,
         save_images_count=save_images_count,
+        skip_frames=skip_frames,
         path_sequence=path_sequence,
     )
     deadline = time.monotonic() + timeout
@@ -922,7 +931,8 @@ def wait_for_images(
             return (
                 False,
                 monitor.snapshot(),
-                f"did not receive {save_images_count} image(s) per topic "
+                f"did not receive {save_images_count} image(s) per topic after "
+                f"skipping {skip_frames} frame(s) "
                 f"within {timeout:.1f}s",
             )
         monitor.submit_first_frames()
@@ -999,6 +1009,7 @@ def build_summary(result: Dict[str, Any]) -> str:
         f"- Failed tests: {len(failed_tests)}",
         f"- Elapsed seconds: {float(result.get('elapsed_seconds', 0.0) or 0.0):.1f}",
         f"- Visual artifacts per topic per test: {result.get('save_image_count', 0)}",
+        f"- Messages skipped per artifact topic per test: {result.get('skip_image_frames', 0)}",
         "",
         "## Cameras",
         "",
@@ -1159,6 +1170,9 @@ def run(args) -> int:
     save_images_count = int(args.save_image_count)
     if save_images_count < 0:
         raise ValueError("--save-image-count must be >= 0")
+    skip_image_frames = int(args.skip_image_frames)
+    if skip_image_frames < 0:
+        raise ValueError("--skip-image-frames must be >= 0")
     duration_seconds = (
         parse_duration(duration_text, 0.0) if duration_text else None
     )
@@ -1221,6 +1235,7 @@ def run(args) -> int:
         "stream_timeout_seconds": stream_timeout,
         "preset_log_timeout_seconds": preset_log_timeout,
         "save_image_count": save_images_count,
+        "skip_image_frames": skip_image_frames,
         "save_image_timeout_seconds": stream_timeout,
         "presets": [asdict(spec) | {"path": str(spec.path)} for spec in presets],
         "tests": [],
@@ -1237,7 +1252,10 @@ def run(args) -> int:
         emit("monitor topics: auto-discover all published image streams")
     else:
         emit(f"monitor topics: {', '.join(topics)}")
-    emit(f"save image and sensor artifacts per topic: {save_images_count}")
+    emit(
+        f"save image and sensor artifacts per topic: {save_images_count}; "
+        f"skip first {skip_image_frames} message(s) per artifact topic"
+    )
     start_monotonic = time.monotonic()
     deadline = (
         start_monotonic + duration_seconds
@@ -1463,6 +1481,7 @@ def run(args) -> int:
                         topic_cameras=topic_cameras,
                         output_root=test_image_dir,
                         save_images_count=save_images_count,
+                        skip_frames=skip_image_frames,
                         timeout=stream_timeout,
                         path_sequence=image_paths,
                     )
@@ -1527,6 +1546,7 @@ def run(args) -> int:
                         output_root=test_image_dir,
                         save_count=save_images_count,
                         timeout=sensor_timeout,
+                        skip_frames=skip_image_frames,
                         path_sequence=sensor_paths,
                         ensure_running=lambda: [
                             session.assert_running() for session in sessions
@@ -1687,6 +1707,16 @@ def parse_args(argv=None):
         help=(
             "Artifacts to save per topic (image/IMU PNG, point cloud PLY); 0 "
             "disables saving while keeping validation"
+        ),
+    )
+    parser.add_argument(
+        "--skip-image-frames",
+        type=int,
+        default=0,
+        metavar="N",
+        help=(
+            "Skip the first N messages per image, point cloud, and IMU topic "
+            "before capture (default: 0)"
         ),
     )
     parser.add_argument("--restart-delay", default="2", help="Delay seconds after stopping launch")

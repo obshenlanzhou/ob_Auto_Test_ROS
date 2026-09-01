@@ -130,7 +130,8 @@ A、B 两组必须配置相同的话题，且配置内容必须不同。
 | `--switch-stream-profile` | `0` | 设为 `1` 时在 A/B 流配置间切换 |
 | `--stream-off-seconds` | `4` | 关流保持和验证时间，单位秒 |
 | `--stream-on-preview-seconds` | `4` | 开流后的预览和验证时间，单位秒 |
-| `--save-image-count` | `1` | 每个 topic 的产物数；恢复出流后图像收到即存，不等待稳定验证完成；`0` 仅检测 |
+| `--save-image-count` | `1` | 每个 topic 的产物数；恢复出流后立即开始图像采集，不等待稳定验证完成；`0` 仅检测 |
+| `--skip-image-frames` | `0` | 每次恢复出流后对每个图像、点云和 IMU topic 分别跳过前 N 条消息，再开始采集 |
 | `--run-count` | 空 | 最大完整循环数 |
 | `--continue-on-failure` | 关闭 | 失败后恢复流并继续后续循环；最终结果仍为失败 |
 | `--duration` | 空 | 最长运行时间，支持 `15m`、`2h` |

@@ -764,6 +764,7 @@ class ImageSaver:
         topic_cameras: Dict[str, str],
         output_root: Path,
         count_per_topic: int,
+        skip_frames: int = 0,
         path_sequence: Optional[ImagePathSequence] = None,
     ) -> None:
         self.harness = harness
@@ -771,6 +772,7 @@ class ImageSaver:
         self.topic_cameras = topic_cameras
         self.output_root = output_root
         self.count_per_topic = count_per_topic
+        self.skip_frames = skip_frames
         self.saved: Dict[str, List[str]] = {topic: [] for topic in topics}
         self.metadata: Dict[str, Dict[str, Any]] = {topic: {} for topic in topics}
         self.subscriptions = []
@@ -788,6 +790,7 @@ class ImageSaver:
             self.metadata[topic]["pending_saves"] = 0
             self.metadata[topic]["selected_count"] = 0
             self.metadata[topic]["received_count"] = 0
+            self.metadata[topic]["skipped_count"] = 0
             self.metadata[topic]["buffer"] = deque(maxlen=count_per_topic)
             self.metadata[topic]["error"] = ""
             self.metadata[topic]["errors"] = []
@@ -846,6 +849,9 @@ class ImageSaver:
         with self._state_lock:
             metadata = self.metadata[topic_name]
             metadata["received_count"] += 1
+            if metadata["skipped_count"] < self.skip_frames:
+                metadata["skipped_count"] += 1
+                return
             if (
                 self._frozen
                 or metadata["error"]
@@ -975,6 +981,7 @@ def save_images(
     topic_cameras: Dict[str, str],
     output_root: Path,
     count_per_topic: int,
+    skip_frames: int = 0,
     timeout: float,
     emit: StatusLogger,
     path_sequence: Optional[ImagePathSequence] = None,
@@ -987,6 +994,7 @@ def save_images(
         topic_cameras=topic_cameras,
         output_root=output_root,
         count_per_topic=count_per_topic,
+        skip_frames=skip_frames,
         path_sequence=path_sequence,
     )
     deadline = time.monotonic() + timeout
@@ -999,7 +1007,8 @@ def save_images(
             return (
                 False,
                 saver.snapshot(),
-                f"did not receive {count_per_topic} image(s) per topic "
+                f"did not receive {count_per_topic} image(s) per topic after "
+                f"skipping {skip_frames} frame(s) "
                 f"within {timeout:.1f}s",
             )
         saver.submit_first_frames()
@@ -1239,6 +1248,7 @@ def build_summary(result: Dict[str, Any]) -> str:
         f"- Failed tests: {len(failed_tests)}",
         f"- Elapsed seconds: {float(result.get('elapsed_seconds', 0.0) or 0.0):.1f}",
         f"- Visual artifacts per topic per test: {result.get('save_image_count', 0)}",
+        f"- Messages skipped per artifact topic per test: {result.get('skip_image_frames', 0)}",
         "",
         "## Cameras",
         "",
@@ -1385,6 +1395,9 @@ def run(args) -> int:
     save_image_count = int(args.save_image_count)
     if save_image_count < 0:
         raise ValueError("--save-image-count must be >= 0")
+    skip_image_frames = int(args.skip_image_frames)
+    if skip_image_frames < 0:
+        raise ValueError("--skip-image-frames must be >= 0")
     save_image_timeout = parse_duration(args.save_image_timeout, 30.0)
 
     run_id = datetime.now().strftime("%Y%m%d_%H%M%S_export_load") + f"_v{TOOL_VERSION}"
@@ -1438,6 +1451,7 @@ def run(args) -> int:
         "max_gap_seconds": max_gap_seconds,
         "restart_delay_seconds": restart_delay,
         "save_image_count": save_image_count,
+        "skip_image_frames": skip_image_frames,
         "save_image_timeout_seconds": save_image_timeout,
         "tests": [],
         "elapsed_seconds": 0.0,
@@ -1454,7 +1468,10 @@ def run(args) -> int:
     else:
         emit(f"monitor topics: {', '.join(image_topics)}")
     if save_image_count > 0:
-        emit(f"save image and sensor artifacts: {save_image_count} per topic")
+        emit(
+            f"save image and sensor artifacts: {save_image_count} per topic; "
+            f"skip first {skip_image_frames} message(s) per artifact topic"
+        )
     else:
         emit("save images: disabled")
 
@@ -1567,6 +1584,7 @@ def run(args) -> int:
                     topic_cameras=topic_cameras,
                     output_root=results_dir / "images",
                     count_per_topic=save_image_count,
+                    skip_frames=skip_image_frames,
                     timeout=save_image_timeout,
                     emit=emit,
                     path_sequence=image_paths,
@@ -1654,6 +1672,7 @@ def run(args) -> int:
                     output_root=results_dir / "images",
                     save_count=save_image_count,
                     timeout=sensor_timeout,
+                    skip_frames=skip_image_frames,
                     path_sequence=sensor_paths,
                     ensure_running=lambda: [session.assert_running() for session in sessions],
                 )
@@ -1906,6 +1925,16 @@ def parse_args(argv=None):
         help=(
             "Artifacts to save per topic for each test (image/IMU PNG, point cloud "
             "PLY); use 0 to disable saving while keeping stream validation"
+        ),
+    )
+    parser.add_argument(
+        "--skip-image-frames",
+        type=int,
+        default=0,
+        metavar="N",
+        help=(
+            "Skip the first N messages per image, point cloud, and IMU topic "
+            "before capture (default: 0)"
         ),
     )
     parser.add_argument("--save-image-timeout", default="30", help="Max wait time for image saving")

@@ -63,7 +63,8 @@ python3 ./export_load_stress_test/export_load_stress_test.py \
 | `--continue-on-failure` | 关闭 | 记录失败并继续下一轮；最终结果仍为失败 |
 | `--duration` | 空 | 可选的最长运行时间；任一已配置上限先达到即结束 |
 | `--sdk-log-level` | `debug` | Orbbec SDK 日志级别 |
-| `--save-image-count` | `1` | 每轮每个 topic 的产物数；图像收到即存，不等待稳定验证完成（`0` = 仅检测） |
+| `--save-image-count` | `1` | 每轮每个 topic 的产物数；图像采集不等待稳定验证完成（`0` = 仅检测） |
+| `--skip-image-frames` | `0` | 每轮对每个图像、点云和 IMU topic 分别跳过前 N 条消息，再开始采集 |
 | `--image-topic` | 自动发现 | 指定后只监控并保存这些 `Image` 或 `CompressedImage` topic，可重复传入 |
 | `--point-cloud-topic` | 首轮自动发现 | 强制要求的 `PointCloud2` topic，可重复传入并支持 `{camera}` |
 | `--imu-topic` | 首轮自动发现 | 强制要求的 `Imu` topic，可重复传入并支持 `{camera}` |

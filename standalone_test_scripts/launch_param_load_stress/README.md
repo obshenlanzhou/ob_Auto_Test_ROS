@@ -87,7 +87,8 @@ python3 ./launch_param_load_stress/launch_param_load_stress.py \
 | `--startup-timeout SECS` | `30` | Max wait for device initialization |
 | `--topic-timeout SECS` | `20` | Max wait for each enabled stream topic |
 | `--service-timeout SECS` | `15` | Max wait for each param/service query |
-| `--save-image-count N` | `1` | Artifacts per topic; the first image frames are saved immediately before param/topic/service checks (`0` = validation only) |
+| `--save-image-count N` | `1` | Artifacts per topic; image capture runs before param/topic/service checks (`0` = validation only) |
+| `--skip-image-frames N` | `0` | In each run, skip the first N messages independently on every image, point cloud, and IMU topic before capture |
 | `--image-topic` | auto-discovered | Explicit `Image` or `CompressedImage` topic to save; repeatable, supports `{camera}` |
 | `--point-cloud-topic` | first-run discovery | Required `PointCloud2` topic; repeatable, supports `{camera}` |
 | `--imu-topic` | first-run discovery | Required `Imu` topic; repeatable, supports `{camera}` |

@@ -76,7 +76,8 @@ python3 ./launch_restart_stream_check/launch_restart_stream_check.py \
 | `--image-topic` | 自动发现 | 监控的图像 topic，可重复传入 |
 | `--point-cloud-topic` | 首次启动自动发现 | 每次重启后必检的 `PointCloud2` topic，可重复传入并支持 `{camera}` |
 | `--imu-topic` | 首次启动自动发现 | 每次重启后必检的 `Imu` topic，可重复传入并支持 `{camera}` |
-| `--save-image-count` | `1` | 每次重启后每个 topic 的产物数；图像收到即存，不等待稳定验证完成；`0` 仅检测 |
+| `--save-image-count` | `1` | 每次重启后每个 topic 的产物数；图像采集不等待稳定验证完成；`0` 仅检测 |
+| `--skip-image-frames` | `0` | 每次重启后对每个图像、点云和 IMU topic 分别跳过前 N 条消息，再开始采集 |
 | `--launch-arg` | — | 额外的 launch 参数（如 `enable_ir=true`），可重复传入，格式 `KEY=VALUE` 或 `KEY:=VALUE` |
 | `--sdk-log-level` | `debug` | Orbbec SDK 日志级别 |
 | `--duration` | 空 | 总运行时长，支持秒数、`30m`、`2h` 等格式 |

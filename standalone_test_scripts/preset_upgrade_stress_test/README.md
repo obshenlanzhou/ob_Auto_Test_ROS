@@ -76,7 +76,8 @@ python3 ./preset_upgrade_stress_test/preset_upgrade_stress_test.py \
 | `--run-count` | empty | Optional maximum number of upgrade cycles |
 | `--continue-on-failure` | disabled | Clean up a failed preset test and continue with the next one; the final result still fails |
 | `--duration` | empty | Maximum wall time; supports `300`, `15m`, and `2h` |
-| `--save-image-count` | `1` | Artifacts per topic; image frames are saved immediately on receipt (`0` = validation only) |
+| `--save-image-count` | `1` | Artifacts per topic; image capture starts immediately on receipt (`0` = validation only) |
+| `--skip-image-frames` | `0` | In each preset test, skip the first N messages independently on every image, point cloud, and IMU topic before capture |
 | `--image-topic` | auto-discovered | Explicit `Image` or `CompressedImage` topic to monitor and save; repeatable, supports `{camera}` |
 | `--point-cloud-topic` | first-test discovery | Required `PointCloud2` topic; repeatable, supports `{camera}` |
 | `--imu-topic` | first-test discovery | Required `Imu` topic; repeatable, supports `{camera}` |

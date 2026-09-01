@@ -134,7 +134,8 @@ decode or validate compressed data; it writes `CompressedImage.data` directly to
 | `--switch-stream-profile` | `0` | Set to `1` to alternate A/B stream profiles |
 | `--stream-off-seconds` | `4` | Off-state dwell and verification time in seconds |
 | `--stream-on-preview-seconds` | `4` | Preview and verification time after enabling |
-| `--save-image-count` | `1` | Artifacts per topic; image frames are saved as soon as output resumes, before stability validation completes; `0` keeps validation only |
+| `--save-image-count` | `1` | Artifacts per topic; image capture starts as soon as output resumes, before stability validation completes; `0` keeps validation only |
+| `--skip-image-frames` | `0` | After each stream recovery, skip the first N messages independently on every image, point cloud, and IMU topic before capture |
 | `--run-count` | empty | Maximum completed cycles |
 | `--continue-on-failure` | disabled | Restore streams after a failed operation and continue; the final result still fails |
 | `--duration` | empty | Maximum duration; supports `15m` and `2h` |

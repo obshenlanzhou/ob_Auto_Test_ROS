@@ -85,6 +85,11 @@ LIMITED_STRESS_SCRIPTS = {
     "preset_upgrade": [],
     "stream_toggle": ["--launch-file", "test.launch.py"],
 }
+IMAGE_CAPTURE_SCRIPTS = {
+    name: args
+    for name, args in LIMITED_STRESS_SCRIPTS.items()
+    if name != "firmware_update"
+}
 
 
 def load_protocol(path: Path):
@@ -201,6 +206,34 @@ def test_stress_ui_manifests_expose_continue_on_failure_disabled_by_default(
     assert fields["continue_on_failure"]["option"] == "--continue-on-failure"
     assert fields["continue_on_failure"]["type"] == "flag"
     assert fields["continue_on_failure"]["default"] is False
+
+
+@pytest.mark.parametrize("script_name", IMAGE_CAPTURE_SCRIPTS)
+def test_image_capture_scripts_expose_skip_frames_configuration(script_name):
+    module = load_script(SCRIPTS[script_name])
+    base = [*IMAGE_CAPTURE_SCRIPTS[script_name], "--run-count", "1"]
+
+    defaults = module.parse_args(base)
+    configured = module.parse_args([*base, "--skip-image-frames", "7"])
+
+    assert defaults.skip_image_frames == 0
+    assert configured.skip_image_frames == 7
+
+
+@pytest.mark.parametrize("script_name", IMAGE_CAPTURE_SCRIPTS)
+def test_image_capture_ui_manifests_expose_skip_frames_configuration(script_name):
+    script = SCRIPTS[script_name]
+    manifest = json.loads(
+        (script.parent / "ui_manifest.json").read_text(encoding="utf-8")
+    )
+    field = {item["name"]: item for item in manifest["fields"]}[
+        "skip_image_frames"
+    ]
+
+    assert field["option"] == "--skip-image-frames"
+    assert field["type"] == "integer"
+    assert int(field["default"]) == 0
+    assert field["min"] == 0
 
 
 def test_image_stats_stop_on_failure_by_default_and_can_opt_in_to_continue():
@@ -540,7 +573,7 @@ def test_image_saving_uses_stream_directories_and_continuing_indices(tmp_path):
         assert compressed == output_root / "camera_01" / "color" / "image_0002.jpg"
 
 
-def test_preset_image_callback_buffers_first_frames_then_writes_in_background(
+def test_preset_image_callback_skips_frames_then_writes_in_background(
     monkeypatch, tmp_path
 ):
     module = load_script(SCRIPTS["preset_upgrade"])
@@ -573,6 +606,7 @@ def test_preset_image_callback_buffers_first_frames_then_writes_in_background(
         topic_cameras={topic: "camera"},
         output_root=output_root,
         save_images_count=2,
+        skip_frames=1,
         path_sequence=paths,
     )
     worker_started = module.threading.Event()
@@ -586,7 +620,7 @@ def test_preset_image_callback_buffers_first_frames_then_writes_in_background(
         target_path.write_bytes(b"image")
 
     monkeypatch.setattr(monitor, "_write_image", blocking_write)
-    for frame_index in (1, 2, 3):
+    for frame_index in (1, 2, 3, 4):
         message = type(
             "Image",
             (),
@@ -613,7 +647,8 @@ def test_preset_image_callback_buffers_first_frames_then_writes_in_background(
     assert monitor.complete()
     monitor.close()
 
-    assert written_frames == [1, 2]
+    assert written_frames == [2, 3]
+    assert monitor.snapshot()[0]["skipped_count"] == 1
     assert paths.next_path(topic, "camera").name == "image_0006.png"
 
 
@@ -625,7 +660,7 @@ def test_preset_image_callback_buffers_first_frames_then_writes_in_background(
         ("launch_restart", "_write"),
     ],
 )
-def test_other_image_callbacks_buffer_first_frames_then_write_in_background(
+def test_other_image_callbacks_skip_frames_then_write_in_background(
     monkeypatch, tmp_path, test_id, writer_method
 ):
     module = load_script(SCRIPTS[test_id])
@@ -661,6 +696,7 @@ def test_other_image_callbacks_buffer_first_frames_then_write_in_background(
             topic_cameras={topic: "camera"},
             output_root=output_root,
             count_per_topic=2,
+            skip_frames=1,
             path_sequence=paths,
         )
     elif test_id == "launch_param_load":
@@ -670,6 +706,7 @@ def test_other_image_callbacks_buffer_first_frames_then_write_in_background(
             topics=[topic],
             output_root=output_root,
             save_images_count=2,
+            skip_frames=1,
             path_sequence=paths,
         )
     else:
@@ -678,6 +715,7 @@ def test_other_image_callbacks_buffer_first_frames_then_write_in_background(
             topics=[topic],
             output_root=output_root,
             count=2,
+            skip_frames=1,
             path_sequence=paths,
         )
 
@@ -694,7 +732,7 @@ def test_other_image_callbacks_buffer_first_frames_then_write_in_background(
 
     monkeypatch.setattr(saver, writer_method, blocking_write)
     try:
-        for frame_index in (1, 2, 3):
+        for frame_index in (1, 2, 3, 4):
             harness.callback(SimpleNamespace(frame_index=frame_index))
         assert not worker_started.is_set()
         assert saver.buffer_ready()
@@ -718,7 +756,9 @@ def test_other_image_callbacks_buffer_first_frames_then_write_in_background(
             assert saver.all_done()
         else:
             assert saver.complete()
-        assert written_frames == [1, 2]
+        assert written_frames == [2, 3]
+        state = saver.metadata if test_id == "export_load" else saver.state
+        assert state[topic]["skipped_count"] == 1
     finally:
         release_worker.set()
         saver.close()
@@ -766,8 +806,8 @@ def test_stream_toggle_monitor_captures_first_frames_per_topic():
     harness = Harness()
     monitor = module.StreamMonitor(harness, [fast_topic, slow_topic])
     try:
-        monitor.begin_capture([fast_topic, slow_topic], count=2)
-        for frame_index in (1, 2, 3):
+        monitor.begin_capture([fast_topic, slow_topic], count=2, skip_frames=1)
+        for frame_index in (1, 2, 3, 4):
             harness.callbacks[fast_topic](
                 SimpleNamespace(
                     frame_index=frame_index,
@@ -777,7 +817,7 @@ def test_stream_toggle_monitor_captures_first_frames_per_topic():
                     encoding="mono8",
                 )
             )
-        for frame_index in (10, 11):
+        for frame_index in (10, 11, 12):
             harness.callbacks[slow_topic](
                 SimpleNamespace(
                     frame_index=frame_index,
@@ -789,9 +829,28 @@ def test_stream_toggle_monitor_captures_first_frames_per_topic():
             )
         assert monitor.capture_ready()
         captured = monitor.take_capture()
-        assert [message.frame_index for message in captured[fast_topic]] == [1, 2]
-        assert [message.frame_index for message in captured[slow_topic]] == [10, 11]
-        assert monitor.latest(fast_topic)[1].frame_index == 3
+        assert [message.frame_index for message in captured[fast_topic]] == [2, 3]
+        assert [message.frame_index for message in captured[slow_topic]] == [11, 12]
+        assert monitor.latest(fast_topic)[1].frame_index == 4
+
+        monitor.begin_capture([fast_topic, slow_topic], count=1, skip_frames=1)
+        for topic, frame_indices in (
+            (fast_topic, (20, 21)),
+            (slow_topic, (30, 31)),
+        ):
+            for frame_index in frame_indices:
+                harness.callbacks[topic](
+                    SimpleNamespace(
+                        frame_index=frame_index,
+                        width=1,
+                        height=1,
+                        data=b"image",
+                        encoding="mono8",
+                    )
+                )
+        captured = monitor.take_capture()
+        assert [message.frame_index for message in captured[fast_topic]] == [21]
+        assert [message.frame_index for message in captured[slow_topic]] == [31]
     finally:
         monitor.cancel_capture()
         monitor.close()
@@ -825,8 +884,10 @@ def test_stream_toggle_save_monitor_captures_first_shared_and_supplemental_frame
         shared_monitor=shared,
     )
     try:
-        monitor.begin_capture([raw_topic, compressed_topic], count=2)
-        for frame_index in (1, 2, 3):
+        monitor.begin_capture(
+            [raw_topic, compressed_topic], count=2, skip_frames=1
+        )
+        for frame_index in (1, 2, 3, 4):
             harness.callbacks[raw_topic](
                 SimpleNamespace(
                     frame_index=frame_index,
@@ -841,8 +902,28 @@ def test_stream_toggle_save_monitor_captures_first_shared_and_supplemental_frame
             )
         assert monitor.capture_ready()
         captured = monitor.take_capture()
-        assert [message.frame_index for message in captured[raw_topic]] == [1, 2]
-        assert [message.frame_index for message in captured[compressed_topic]] == [10, 11]
+        assert [message.frame_index for message in captured[raw_topic]] == [2, 3]
+        assert [message.frame_index for message in captured[compressed_topic]] == [11, 12]
+
+        monitor.begin_capture(
+            [raw_topic, compressed_topic], count=1, skip_frames=1
+        )
+        for topic, frame_indices in (
+            (raw_topic, (20, 21)),
+            (compressed_topic, (30, 31)),
+        ):
+            for frame_index in frame_indices:
+                harness.callbacks[topic](
+                    SimpleNamespace(
+                        frame_index=frame_index,
+                        width=1,
+                        height=1,
+                        data=b"image",
+                    )
+                )
+        captured = monitor.take_capture()
+        assert [message.frame_index for message in captured[raw_topic]] == [21]
+        assert [message.frame_index for message in captured[compressed_topic]] == [31]
     finally:
         monitor.close()
         shared.close()
@@ -954,9 +1035,10 @@ def test_stream_toggle_image_save_error_keeps_successes_and_failures():
             return None
 
     class Monitor:
-        def begin_capture(self, topics, count):
+        def begin_capture(self, topics, count, skip_frames=0):
             assert topics == [topic]
             assert count == 2
+            assert skip_frames == 0
 
         def capture_ready(self):
             return True
@@ -1011,7 +1093,7 @@ def test_stream_toggle_waits_for_submitted_image_task_before_returning():
             return None
 
     class Monitor:
-        def begin_capture(self, _topics, _count):
+        def begin_capture(self, _topics, _count, _skip_frames=0):
             return None
 
         def capture_ready(self):

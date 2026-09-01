@@ -466,6 +466,7 @@ class SensorCaptureMonitor:
         topic_cameras: Dict[str, str],
         output_root: Path,
         save_count: int,
+        skip_frames: int = 0,
         imu_window_seconds: float = 2.0,
         imu_min_samples: int = 10,
         max_points: int = 50000,
@@ -477,6 +478,7 @@ class SensorCaptureMonitor:
         self.imu_topics = list(imu_topics)
         self.topic_cameras = topic_cameras
         self.save_count = max(int(save_count), 0)
+        self.skip_frames = max(int(skip_frames), 0)
         self.required_outputs = max(self.save_count, 1)
         self.imu_window_seconds = float(imu_window_seconds)
         self.imu_min_samples = int(imu_min_samples)
@@ -519,6 +521,7 @@ class SensorCaptureMonitor:
             state[topic] = {
                 "kind": "point_cloud",
                 "message_count": 0,
+                "skipped_count": 0,
                 "valid_count": 0,
                 "saved_point_count": 0,
                 "files": [],
@@ -530,6 +533,7 @@ class SensorCaptureMonitor:
                 "kind": "imu",
                 "mode": imu_mode(topic),
                 "message_count": 0,
+                "skipped_count": 0,
                 "valid_sample_count": 0,
                 "completed_windows": 0,
                 "current_window": [],
@@ -539,10 +543,12 @@ class SensorCaptureMonitor:
             }
         return state
 
-    def begin_capture(self) -> None:
+    def begin_capture(self, skip_frames: Optional[int] = None) -> None:
         with self._state_changed:
             while any(item["pending_outputs"] for item in self.state.values()):
                 self._state_changed.wait()
+            if skip_frames is not None:
+                self.skip_frames = max(int(skip_frames), 0)
             self.state = self._new_state()
             self.active = True
 
@@ -556,6 +562,9 @@ class SensorCaptureMonitor:
                 return
             item = self.state[topic]
             item["message_count"] += 1
+            if item["skipped_count"] < self.skip_frames:
+                item["skipped_count"] += 1
+                return
             if (
                 item["valid_count"] >= self.required_outputs
                 or item["pending_outputs"]
@@ -598,7 +607,11 @@ class SensorCaptureMonitor:
         with self._state_lock:
             if not self.active:
                 return
-            self.state[topic]["message_count"] += 1
+            item = self.state[topic]
+            item["message_count"] += 1
+            if item["skipped_count"] < self.skip_frames:
+                item["skipped_count"] += 1
+                return
         try:
             sample = extract_imu_sample(message, topic, time.monotonic())
         except Exception as exc:  # noqa: BLE001
@@ -688,6 +701,7 @@ class SensorCaptureMonitor:
                 "camera": self.topic_cameras.get(topic, ""),
                 "kind": item["kind"],
                 "message_count": item["message_count"],
+                "skipped_count": item["skipped_count"],
                 "files": list(item["files"]),
                 "saved_count": len(item["files"]),
                 "expected_count": self.save_count,
@@ -736,6 +750,7 @@ def capture_sensor_artifacts(
     output_root: Path,
     save_count: int,
     timeout: float,
+    skip_frames: int = 0,
     ensure_running: Optional[Callable[[], None]] = None,
     monitor: Optional[SensorCaptureMonitor] = None,
     path_sequence: Optional[SensorArtifactPathSequence] = None,
@@ -751,13 +766,14 @@ def capture_sensor_artifacts(
             topic_cameras=topic_cameras,
             output_root=output_root,
             save_count=save_count,
+            skip_frames=skip_frames,
             active=False,
             path_sequence=path_sequence,
         )
     configured_topics = set(point_cloud_topics) | set(imu_topics)
     if set(monitor.state) != configured_topics:
         raise ValueError("sensor monitor topics do not match capture topics")
-    monitor.begin_capture()
+    monitor.begin_capture(skip_frames=skip_frames)
     deadline = time.monotonic() + max(float(timeout), 0.0)
     try:
         while time.monotonic() < deadline:
