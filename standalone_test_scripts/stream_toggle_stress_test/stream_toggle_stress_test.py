@@ -67,10 +67,6 @@ def handle_sigint(signum, frame) -> None:
     raise KeyboardInterrupt
 
 
-def should_attempt_cleanup_restore(exc: BaseException) -> bool:
-    return not INTERRUPTED and not isinstance(exc, (KeyboardInterrupt, SystemExit))
-
-
 def parse_duration(value: Any, default: float) -> float:
     if value is None or str(value).strip() == "":
         return default
@@ -591,6 +587,13 @@ class RosHarness:
         self._rosservice = None
         self._sensor_qos = None
         self._executor = None
+        self._executor_thread: Optional[threading.Thread] = None
+        self._executor_error: Optional[BaseException] = None
+        self._executor_stop_requested = False
+        self._executor_type = None
+        self._subscription_callback_group_type = None
+        self._control_callback_group = None
+        self._camera_callback_groups: Dict[str, Any] = {}
         self._set_bool_clients: Dict[str, Any] = {}
         self._set_stream_profile_clients: Dict[str, Any] = {}
         self.rmw_implementation = ""
@@ -601,8 +604,14 @@ class RosHarness:
         if self.ros_version == "2":
             try:
                 import rclpy
-                from rclpy.executors import SingleThreadedExecutor
-                from rclpy.qos import qos_profile_sensor_data
+                from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
+                from rclpy.executors import MultiThreadedExecutor
+                from rclpy.qos import (
+                    DurabilityPolicy,
+                    HistoryPolicy,
+                    QoSProfile,
+                    ReliabilityPolicy,
+                )
                 from sensor_msgs.msg import CompressedImage, Image, Imu, PointCloud2
                 from std_srvs.srv import SetBool
             except Exception as exc:  # noqa: BLE001
@@ -622,19 +631,25 @@ class RosHarness:
             if callable(get_rmw_identifier):
                 self.rmw_implementation = str(get_rmw_identifier())
             self.node = rclpy.create_node(self.node_name)
-            # Keep one executor attached for the full harness lifetime. Using the
-            # process-global executor through rclpy.spin_once(node) while mutating
-            # subscriptions and service clients can leave its wait set stale after
-            # repeated stream toggles. A dedicated single-threaded executor also
-            # guarantees that callbacks finish before recovery destroys a subscription.
-            self._executor = SingleThreadedExecutor()
-            self._executor.add_node(self.node)
+            # Keep ROS2 callbacks draining continuously in one long-lived MTE. Topics
+            # from the same camera share a mutually-exclusive callback group, while
+            # different camera groups and the service-control group may run in parallel.
+            self._executor_type = MultiThreadedExecutor
+            self._subscription_callback_group_type = MutuallyExclusiveCallbackGroup
+            self._control_callback_group = MutuallyExclusiveCallbackGroup()
+            self._start_executor()
             self._image_type = Image
             self._compressed_image_type = CompressedImage
             self._point_cloud_type = PointCloud2
             self._imu_type = Imu
             self._set_bool_type = SetBool
-            self._sensor_qos = qos_profile_sensor_data
+            # Liveness checks need the newest sample, not a backlog of large images.
+            self._sensor_qos = QoSProfile(
+                history=HistoryPolicy.KEEP_LAST,
+                depth=1,
+                reliability=ReliabilityPolicy.BEST_EFFORT,
+                durability=DurabilityPolicy.VOLATILE,
+            )
             if self.enable_profile_switch:
                 try:
                     from orbbec_camera_msgs.msg import StreamProfile
@@ -713,8 +728,13 @@ class RosHarness:
             self._compressed_image_type if topic_kind == "compressed" else self._image_type
         )
         if self.ros_version == "2":
+            callback_group = self._callback_group_for_topic(topic)
             subscription = self.node.create_subscription(
-                message_type, topic, callback, self._sensor_qos
+                message_type,
+                topic,
+                callback,
+                self._sensor_qos,
+                callback_group=callback_group,
             )
         else:
             subscription = self._rospy.Subscriber(
@@ -726,8 +746,13 @@ class RosHarness:
     def create_sensor_subscription(self, topic: str, kind: str, callback):
         message_type = self._point_cloud_type if kind == "point_cloud" else self._imu_type
         if self.ros_version == "2":
+            callback_group = self._callback_group_for_topic(topic)
             subscription = self.node.create_subscription(
-                message_type, topic, callback, self._sensor_qos
+                message_type,
+                topic,
+                callback,
+                self._sensor_qos,
+                callback_group=callback_group,
             )
         else:
             subscription = self._rospy.Subscriber(
@@ -737,38 +762,115 @@ class RosHarness:
         return subscription
 
     def destroy_subscription(self, subscription) -> None:
+        if subscription not in self.subscriptions:
+            return
         if self.ros_version == "2":
             self.node.destroy_subscription(subscription)
         else:
             subscription.unregister()
-        if subscription in self.subscriptions:
-            self.subscriptions.remove(subscription)
+        self.subscriptions.remove(subscription)
+
+    def _camera_namespace_for_topic(self, topic: str) -> str:
+        normalized = normalize_topic(topic)
+        for namespace in sorted(
+            self._camera_callback_groups, key=len, reverse=True
+        ):
+            if normalized == namespace or normalized.startswith(namespace + "/"):
+                return namespace
+        raw_topic = (
+            normalized[: -len("/compressed")]
+            if normalized.endswith("/compressed")
+            else normalized
+        )
+        try:
+            return stream_target_from_topic(raw_topic).camera_namespace
+        except ValueError:
+            parts = [part for part in normalized.split("/") if part]
+            return f"/{parts[0]}" if parts else "/"
+
+    def _callback_group_for_topic(self, topic: str):
+        namespace = self._camera_namespace_for_topic(topic)
+        callback_group = self._camera_callback_groups.get(namespace)
+        if callback_group is None:
+            callback_group = self._subscription_callback_group_type()
+            self._camera_callback_groups[namespace] = callback_group
+        return callback_group
 
     def spin_once(self, timeout_sec: float) -> None:
         if self.ros_version == "2":
-            if self._executor is None:
-                raise RuntimeError("ROS2 executor is not initialized")
-            self._executor.spin_once(timeout_sec=timeout_sec)
+            if self._executor_error is not None:
+                raise RuntimeError(
+                    f"ROS2 executor stopped unexpectedly: {self._executor_error}"
+                ) from self._executor_error
+            # The background executor owns all ROS2 spinning. Call sites retain this
+            # method as an interruptible polling wait shared with the ROS1 path.
+            time.sleep(timeout_sec)
         else:
             time.sleep(timeout_sec)
 
-    def rebuild_executor(self) -> None:
-        if self.ros_version != "2" or self._executor is None:
-            return
-        old_executor = self._executor
+    def _spin_executor(self, executor) -> None:
         try:
-            old_executor.remove_node(self.node)
-        except Exception:
-            pass
-        old_executor.shutdown(timeout_sec=5.0)
-        self._executor = type(old_executor)()
+            executor.spin()
+        except BaseException as exc:  # noqa: BLE001
+            if not self._executor_stop_requested:
+                self._executor_error = exc
+
+    def _start_executor(self) -> None:
+        if self.ros_version != "2" or self._executor_type is None:
+            return
+        self._executor_stop_requested = False
+        self._executor_error = None
+        # Let rclpy choose its standard worker count for the active ROS distro.
+        self._executor = self._executor_type()
         self._executor.add_node(self.node)
+        self._executor_thread = threading.Thread(
+            target=self._spin_executor,
+            args=(self._executor,),
+            name=f"{self.node_name}_executor",
+            daemon=True,
+        )
+        self._executor_thread.start()
+
+    def _stop_executor(self) -> None:
+        executor = self._executor
+        thread = self._executor_thread
+        if executor is None:
+            return
+        self._executor_stop_requested = True
+        try:
+            executor.shutdown(timeout_sec=5.0)
+        finally:
+            if thread is not None:
+                thread.join(timeout=5.0)
+            try:
+                if self.node is not None:
+                    executor.remove_node(self.node)
+            except Exception:
+                pass
+            self._executor = None
+            self._executor_thread = None
+
+    def pause_executor(self) -> bool:
+        if self.ros_version == "2":
+            self._stop_executor()
+            return True
+        return False
+
+    def rebuild_executor(self) -> None:
+        if self.ros_version != "2":
+            return
+        self._stop_executor()
+        self._start_executor()
 
     def call_set_bool(self, service_name: str, enabled: bool, timeout: float) -> Dict[str, Any]:
         if self.ros_version == "2":
             client = self._set_bool_clients.get(service_name)
             if client is None:
-                client = self.node.create_client(self._set_bool_type, service_name)
+                client = self.node.create_client(
+                    self._set_bool_type,
+                    service_name,
+                    callback_group=self._control_callback_group,
+                )
                 self._set_bool_clients[service_name] = client
             started = time.monotonic()
             if not client.wait_for_service(timeout_sec=timeout):
@@ -835,7 +937,9 @@ class RosHarness:
             client = self._set_stream_profile_clients.get(service_name)
             if client is None:
                 client = self.node.create_client(
-                    self._set_stream_profile_type, service_name
+                    self._set_stream_profile_type,
+                    service_name,
+                    callback_group=self._control_callback_group,
                 )
                 self._set_stream_profile_clients[service_name] = client
             started = time.monotonic()
@@ -880,11 +984,14 @@ class RosHarness:
         }
 
     def __exit__(self, exc_type, exc, tb) -> None:
+        if self.ros_version == "2":
+            self._stop_executor()
         for subscription in list(self.subscriptions):
             try:
                 self.destroy_subscription(subscription)
             except Exception:
                 pass
+        self._camera_callback_groups.clear()
         if self.ros_version == "2":
             for client in [
                 *self._set_bool_clients.values(),
@@ -896,17 +1003,6 @@ class RosHarness:
                     pass
             self._set_bool_clients.clear()
             self._set_stream_profile_clients.clear()
-            if self._executor is not None:
-                try:
-                    if self.node is not None:
-                        self._executor.remove_node(self.node)
-                except Exception:
-                    pass
-                try:
-                    self._executor.shutdown(timeout_sec=5.0)
-                except Exception:
-                    pass
-                self._executor = None
             try:
                 if self.node is not None:
                     self.node.destroy_node()
@@ -1048,6 +1144,20 @@ def _valid_image(message: Any) -> bool:
     )
 
 
+def _header_stamp_seconds(message: Any) -> Optional[float]:
+    header = getattr(message, "header", None)
+    stamp = getattr(header, "stamp", None)
+    if stamp is None:
+        return None
+    try:
+        seconds = float(getattr(stamp, "sec", 0) or 0)
+        nanoseconds = float(getattr(stamp, "nanosec", 0) or 0)
+    except (TypeError, ValueError):
+        return None
+    value = seconds + nanoseconds / 1_000_000_000.0
+    return value if value > 0.0 else None
+
+
 class StreamMonitor:
     def __init__(self, harness: RosHarness, topics: Sequence[str]) -> None:
         self.harness = harness
@@ -1071,7 +1181,15 @@ class StreamMonitor:
                 "window_first_message_at": None,
                 "window_last_message_at": None,
                 "window_max_gap_seconds": 0.0,
+                "window_first_header_stamp": None,
+                "window_last_header_stamp": None,
+                "window_header_max_gap_seconds": 0.0,
+                "window_header_message_count": 0,
                 "window_message_count": 0,
+                "stable_window_reset_count": 0,
+                "last_exceeded_gap_seconds": None,
+                "last_source_age_seconds": None,
+                "window_max_source_age_seconds": 0.0,
             }
             for topic in self.topics
         }
@@ -1095,18 +1213,24 @@ class StreamMonitor:
                 "cannot recreate subscriptions for unknown topics: "
                 + ", ".join(sorted(unknown))
             )
-        for topic in self.topics:
-            if topic not in selected:
-                continue
-            old_subscription = self._subscriptions_by_topic[topic]
-            self.harness.destroy_subscription(old_subscription)
-            self._subscriptions_by_topic[topic] = self._create_subscription(topic)
+        pause_executor = getattr(self.harness, "pause_executor", None)
         rebuild_executor = getattr(self.harness, "rebuild_executor", None)
-        if callable(rebuild_executor):
-            rebuild_executor()
-            recovery_scope = "subscriptions-and-executor"
-        else:
-            recovery_scope = "subscriptions"
+        executor_paused = False
+        if callable(pause_executor) and callable(rebuild_executor):
+            executor_paused = bool(pause_executor())
+        try:
+            for topic in self.topics:
+                if topic not in selected:
+                    continue
+                old_subscription = self._subscriptions_by_topic[topic]
+                self.harness.destroy_subscription(old_subscription)
+                self._subscriptions_by_topic[topic] = self._create_subscription(topic)
+        finally:
+            if executor_paused:
+                rebuild_executor()
+        recovery_scope = (
+            "subscriptions-and-executor" if executor_paused else "subscriptions"
+        )
         self.subscriptions = [
             self._subscriptions_by_topic[topic] for topic in self.topics
         ]
@@ -1117,6 +1241,8 @@ class StreamMonitor:
         if not _valid_image(message):
             return
         now = time.monotonic()
+        wall_now = time.time()
+        header_stamp = _header_stamp_seconds(message)
         with self.lock:
             item = self.state[topic]
             previous = item["window_last_message_at"]
@@ -1126,6 +1252,25 @@ class StreamMonitor:
                 )
             if item["window_first_message_at"] is None:
                 item["window_first_message_at"] = now
+            previous_header_stamp = item["window_last_header_stamp"]
+            if header_stamp is not None:
+                if item["window_first_header_stamp"] is None:
+                    item["window_first_header_stamp"] = header_stamp
+                if (
+                    previous_header_stamp is not None
+                    and header_stamp >= previous_header_stamp
+                ):
+                    item["window_header_max_gap_seconds"] = max(
+                        item["window_header_max_gap_seconds"],
+                        header_stamp - previous_header_stamp,
+                    )
+                item["window_last_header_stamp"] = header_stamp
+                item["window_header_message_count"] += 1
+                source_age = max(0.0, wall_now - header_stamp)
+                item["last_source_age_seconds"] = source_age
+                item["window_max_source_age_seconds"] = max(
+                    item["window_max_source_age_seconds"], source_age
+                )
             item["window_last_message_at"] = now
             item["window_message_count"] += 1
             item["message_count"] += 1
@@ -1150,7 +1295,15 @@ class StreamMonitor:
                 item["window_first_message_at"] = None
                 item["window_last_message_at"] = None
                 item["window_max_gap_seconds"] = 0.0
+                item["window_first_header_stamp"] = None
+                item["window_last_header_stamp"] = None
+                item["window_header_max_gap_seconds"] = 0.0
+                item["window_header_message_count"] = 0
                 item["window_message_count"] = 0
+                item["stable_window_reset_count"] = 0
+                item["last_exceeded_gap_seconds"] = None
+                item["last_source_age_seconds"] = None
+                item["window_max_source_age_seconds"] = 0.0
 
     def topic_is_quiet(self, topic: str, quiet_seconds: float) -> bool:
         now = time.monotonic()
@@ -1181,13 +1334,30 @@ class StreamMonitor:
                     # only the interrupted candidate window so later steady frames can
                     # still satisfy the check before that timeout expires.
                     item["window_started_at"] = now
+                    item["stable_window_reset_count"] += 1
+                    item["last_exceeded_gap_seconds"] = max(
+                        now - last if stale else 0.0,
+                        item["window_max_gap_seconds"],
+                    )
                     item["window_max_gap_seconds"] = 0.0
+                    last_header_stamp = item["window_last_header_stamp"]
+                    item["window_header_max_gap_seconds"] = 0.0
+                    item["window_max_source_age_seconds"] = (
+                        float(item["last_source_age_seconds"] or 0.0)
+                    )
                     if stale:
                         item["window_first_message_at"] = None
                         item["window_last_message_at"] = None
+                        item["window_first_header_stamp"] = None
+                        item["window_last_header_stamp"] = None
+                        item["window_header_message_count"] = 0
                         item["window_message_count"] = 0
                     else:
                         item["window_first_message_at"] = last
+                        item["window_first_header_stamp"] = last_header_stamp
+                        item["window_header_message_count"] = (
+                            1 if last_header_stamp is not None else 0
+                        )
                         item["window_message_count"] = 1
                     recovering = True
                     continue
@@ -1261,6 +1431,20 @@ class StreamMonitor:
                 item = self.state[topic]
                 first = item["window_first_message_at"]
                 last = item["window_last_message_at"]
+                duration = (
+                    last - first
+                    if first is not None and last is not None and last > first
+                    else 0.0
+                )
+                first_header_stamp = item["window_first_header_stamp"]
+                last_header_stamp = item["window_last_header_stamp"]
+                header_duration = (
+                    last_header_stamp - first_header_stamp
+                    if first_header_stamp is not None
+                    and last_header_stamp is not None
+                    and last_header_stamp > first_header_stamp
+                    else 0.0
+                )
                 rows.append(
                     {
                         "topic": topic,
@@ -1277,6 +1461,36 @@ class StreamMonitor:
                             else 0.0
                         ),
                         "window_max_gap_seconds": item["window_max_gap_seconds"],
+                        "window_receive_max_gap_seconds": item[
+                            "window_max_gap_seconds"
+                        ],
+                        "window_header_max_gap_seconds": item[
+                            "window_header_max_gap_seconds"
+                        ],
+                        "window_receive_fps": (
+                            (item["window_message_count"] - 1) / duration
+                            if duration > 0.0 and item["window_message_count"] > 1
+                            else 0.0
+                        ),
+                        "window_header_fps": (
+                            (item["window_header_message_count"] - 1)
+                            / header_duration
+                            if header_duration > 0.0
+                            and item["window_header_message_count"] > 1
+                            else 0.0
+                        ),
+                        "stable_window_reset_count": item[
+                            "stable_window_reset_count"
+                        ],
+                        "last_exceeded_gap_seconds": item[
+                            "last_exceeded_gap_seconds"
+                        ],
+                        "last_source_age_seconds": item[
+                            "last_source_age_seconds"
+                        ],
+                        "window_max_source_age_seconds": item[
+                            "window_max_source_age_seconds"
+                        ],
                         "width": item["width"],
                         "height": item["height"],
                         "encoding": item["encoding"],
@@ -1872,109 +2086,6 @@ def call_toggle_with_retry(
     )
 
 
-def best_effort_restore(
-    *,
-    session: LaunchSession,
-    harness: RosHarness,
-    monitor: StreamMonitor,
-    target: StreamTarget,
-    service_timeout: float,
-    confirmation_timeout: float,
-    emit: StatusLogger,
-) -> Dict[str, Any]:
-    outcome: Dict[str, Any] = {"attempted": True, "success": False, "message": ""}
-    try:
-        session.assert_running()
-        response = harness.call_set_bool(target.service, True, service_timeout)
-        if not response.get("success"):
-            raise RuntimeError(response.get("message") or "restore returned success=false")
-        baseline_sequence, _ = monitor.latest(target.topic)
-        deadline = time.monotonic() + confirmation_timeout
-        while time.monotonic() < deadline:
-            session.assert_running()
-            harness.spin_once(0.1)
-            current_sequence, _ = monitor.latest(target.topic)
-            if current_sequence > baseline_sequence:
-                outcome.update(success=True, message="target stream restored and confirmed")
-                return outcome
-        raise RuntimeError("target stream did not resume during cleanup confirmation")
-    except Exception as exc:  # noqa: BLE001
-        outcome["message"] = str(exc)
-        emit(f"cleanup restore failed for {target.topic}: {exc}")
-        return outcome
-
-
-def best_effort_restore_groups(
-    *,
-    session: LaunchSession,
-    harness: RosHarness,
-    monitor: StreamMonitor,
-    groups: Sequence[StreamGroupTarget],
-    service_timeout: float,
-    confirmation_timeout: float,
-    emit: StatusLogger,
-) -> Dict[str, Any]:
-    baselines = {topic: monitor.latest(topic)[0] for topic in monitor.topics}
-    outcomes = []
-    service_success = True
-    for group in groups:
-        try:
-            session.assert_running()
-            response = harness.call_set_bool(group.service, True, service_timeout)
-            success = bool(response.get("success"))
-            message = str(response.get("message", ""))
-            if not success:
-                service_success = False
-            outcomes.append(
-                {
-                    "camera_namespace": group.camera_namespace,
-                    "service": group.service,
-                    "success": success,
-                    "message": message,
-                }
-            )
-        except Exception as exc:  # noqa: BLE001
-            service_success = False
-            outcomes.append(
-                {
-                    "camera_namespace": group.camera_namespace,
-                    "service": group.service,
-                    "success": False,
-                    "message": str(exc),
-                }
-            )
-    resumed_topics = set()
-    deadline = time.monotonic() + confirmation_timeout
-    try:
-        while service_success and time.monotonic() < deadline:
-            session.assert_running()
-            harness.spin_once(0.1)
-            for topic, baseline in baselines.items():
-                if monitor.latest(topic)[0] > baseline:
-                    resumed_topics.add(topic)
-            if len(resumed_topics) == len(baselines):
-                return {
-                    "attempted": True,
-                    "success": True,
-                    "services": outcomes,
-                    "resumed_topics": sorted(resumed_topics),
-                    "message": "all stream groups restored and confirmed",
-                }
-    except Exception as exc:  # noqa: BLE001
-        outcomes.append({"success": False, "message": str(exc)})
-    message = "one or more all-stream services failed"
-    if service_success:
-        message = "not all target streams resumed during cleanup confirmation"
-    emit(f"all-stream cleanup restore failed: {message}")
-    return {
-        "attempted": True,
-        "success": False,
-        "services": outcomes,
-        "resumed_topics": sorted(resumed_topics),
-        "message": message,
-    }
-
-
 def sanitize_path_part(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "_", value.strip("/")) or "unknown"
 
@@ -2442,6 +2553,10 @@ def build_summary(result: Dict[str, Any]) -> str:
         f"- Status: {result.get('status', '')}",
         f"- Tool version: {result.get('tool_version', '')}",
         f"- ROS 2 middleware: {result.get('rmw_implementation', '') or 'n/a'}",
+        f"- Target camera count: {result.get('camera_count', 0)}",
+        f"- ROS 2 executor: {result.get('ros2_executor', '') or 'n/a'}",
+        f"- ROS 2 subscription depth: "
+        f"{result.get('ros2_subscription_depth') or 'n/a'}",
         f"- Toggle mode: {result.get('toggle_mode', 'individual')}",
         f"- Stream profile switching: "
         f"{'enabled' if result.get('profile_switch_enabled') else 'disabled'}",
@@ -2726,6 +2841,13 @@ def run(args) -> int:
         "duration_limit_seconds": config["duration"],
         "run_count": args.run_count,
         "continue_on_failure": args.continue_on_failure,
+        "camera_count": 0,
+        "ros2_executor": (
+            "MultiThreadedExecutor (rclpy default workers)"
+            if args.ros_version == "2"
+            else None
+        ),
+        "ros2_subscription_depth": 1 if args.ros_version == "2" else None,
         "completed_cycles": 0,
         "completed_operations": 0,
         "saved_image_count": 0,
@@ -2747,8 +2869,6 @@ def run(args) -> int:
     )
     image_writer: Optional[ImageWriter] = None
     image_save_monitor: Optional[ImageSaveMonitor] = None
-    target_may_be_disabled = False
-    groups_may_be_disabled = False
     monitor: Optional[StreamMonitor] = None
     test_started_monotonic = time.monotonic()
     deadline = (
@@ -2787,6 +2907,9 @@ def run(args) -> int:
             )
             result["targets"] = [asdict(target) for target in targets]
             result["skipped_image_topics"] = skipped
+            camera_count = len({target.camera_namespace for target in targets})
+            result["camera_count"] = camera_count
+            emit(f"target cameras: {camera_count}")
             save_targets_by_topic: Dict[str, List[SaveImageTarget]] = {
                 target.topic: [] for target in targets
             }
@@ -3108,7 +3231,6 @@ def run(args) -> int:
                         "sensors": [],
                     }
                     cycle["operations"].append(operation)
-                    groups_may_be_disabled = True
                     emit(
                         f"cycle {cycle_index}: disable all streams",
                         event="progress",
@@ -3210,7 +3332,6 @@ def run(args) -> int:
                                 active_profile_specs,
                                 operation["enabled_state"]["topics"],
                             )
-                        groups_may_be_disabled = False
                         operation["sensors"] = capture_on_state_sensors()
                         operation["status"] = "passed"
                         result["completed_operations"] += len(targets)
@@ -3239,17 +3360,6 @@ def run(args) -> int:
                             )
                         if isinstance(exc, StreamVerificationError):
                             operation["verification_failure"] = exc.details
-                        if groups_may_be_disabled and should_attempt_cleanup_restore(exc):
-                            operation["cleanup_restore"] = best_effort_restore_groups(
-                                session=session,
-                                harness=harness,
-                                monitor=monitor,
-                                groups=groups,
-                                service_timeout=config["service_timeout"],
-                                confirmation_timeout=config["stream_timeout"],
-                                emit=emit,
-                            )
-                            groups_may_be_disabled = False
                         if isinstance(exc, (KeyboardInterrupt, SystemExit)) or INTERRUPTED:
                             raise
                         cycle["status"] = "failed"
@@ -3306,7 +3416,6 @@ def run(args) -> int:
                         "sensors": [],
                     }
                     cycle["operations"].append(operation)
-                    target_may_be_disabled = True
                     emit(
                         f"cycle {cycle_index}, stream {target_index}/{len(targets)}: "
                         f"disable {target.topic}",
@@ -3404,7 +3513,6 @@ def run(args) -> int:
                                 active_profile_specs,
                                 operation["enabled_state"]["topics"],
                             )
-                        target_may_be_disabled = False
                         operation["sensors"] = capture_on_state_sensors()
                         operation["status"] = "passed"
                         result["completed_operations"] += 1
@@ -3431,17 +3539,6 @@ def run(args) -> int:
                             }
                         if isinstance(exc, StreamVerificationError):
                             operation["verification_failure"] = exc.details
-                        if target_may_be_disabled and should_attempt_cleanup_restore(exc):
-                            operation["cleanup_restore"] = best_effort_restore(
-                                session=session,
-                                harness=harness,
-                                monitor=monitor,
-                                target=target,
-                                service_timeout=config["service_timeout"],
-                                confirmation_timeout=config["stream_timeout"],
-                                emit=emit,
-                            )
-                            target_may_be_disabled = False
                         if isinstance(exc, (KeyboardInterrupt, SystemExit)) or INTERRUPTED:
                             raise
                         first_cycle_failure = cycle["status"] != "failed"
@@ -3732,7 +3829,12 @@ def parse_args(argv: Optional[Sequence[str]] = None):
         ),
     )
     parser.add_argument("--save-image-timeout", default="30")
-    parser.add_argument("--queue-size", type=int, default=10)
+    parser.add_argument(
+        "--queue-size",
+        type=int,
+        default=10,
+        help="ROS1 subscriber queue size; ROS2 liveness subscriptions always use depth=1",
+    )
     parser.add_argument("--results-dir", default="")
     parser.add_argument("--version", action="version", version=f"%(prog)s {TOOL_VERSION}")
     return parser.parse_args(argv)

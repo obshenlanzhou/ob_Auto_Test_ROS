@@ -28,7 +28,7 @@
     {"name": "stream_off_seconds", "option": "--stream-off-seconds", "type": "duration", "label": "关流时间", "label_en": "Stream Off Time", "group": "configuration", "section": "basic", "default": "4", "note": "保持并验证关流状态，单位秒，可配置任意正数。"},
     {"name": "duration", "option": "--duration", "type": "duration", "label": "最长运行时间", "label_en": "Duration", "group": "limits", "section": "basic", "default": "", "placeholder": "300", "note": "与最大完整循环数至少填写一项，可同时填写。"},
     {"name": "run_count", "option": "--run-count", "type": "integer", "label": "最大完整循环数", "label_en": "Run Count", "group": "limits", "section": "basic", "default": "", "min": 1, "placeholder": "10", "note": "与最长运行时间至少填写一项，可同时填写。"},
-    {"name": "continue_on_failure", "option": "--continue-on-failure", "type": "flag", "label": "失败后继续", "label_en": "Continue on Failure", "group": "limits", "section": "basic", "default": false, "note": "关闭时首个失败即停止；开启后恢复流并继续后续循环，最终结果仍为失败。"},
+    {"name": "continue_on_failure", "option": "--continue-on-failure", "type": "flag", "label": "失败后继续", "label_en": "Continue on Failure", "group": "limits", "section": "basic", "default": false, "note": "关闭时首个失败即停止；开启后不执行清理恢复并继续后续循环，最终结果仍为失败。"},
     {"name": "save_image_count", "option": "--save-image-count", "type": "integer", "label": "每路每循环存图数", "label_en": "Artifacts per Stream", "group": "configuration", "section": "basic", "default": 1, "min": 0, "note": "恢复出流后图像收到即存，不等待稳定验证完成；同时控制点云预览和 IMU 曲线数量；0 仅检测。"},
     {"name": "skip_image_frames", "option": "--skip-image-frames", "type": "integer", "label": "采集前跳过消息数", "label_en": "Messages to Skip", "group": "configuration", "section": "basic", "default": 0, "min": 0, "note": "每次恢复出流后每个图像、点云和 IMU topic 分别跳过前 N 条消息，再开始采集。"},
     {"name": "launch_package", "option": "--launch-package", "type": "text", "label": "Launch 包", "label_en": "Launch Package", "group": "advanced", "section": "advanced", "default": "orbbec_camera"},
@@ -41,6 +41,6 @@
     {"name": "service_timeout", "option": "--service-timeout", "type": "duration", "label": "服务调用超时", "label_en": "Service Timeout", "group": "advanced", "section": "advanced", "default": "15"},
     {"name": "service_retry_delay", "option": "--service-retry-delay", "type": "number", "label": "服务重试间隔", "label_en": "Service Retry Delay", "group": "advanced", "section": "advanced", "default": "1", "min": 0},
     {"name": "save_image_timeout", "option": "--save-image-timeout", "type": "duration", "label": "存图超时", "label_en": "Image Save Timeout", "group": "advanced", "section": "advanced", "default": "30"},
-    {"name": "queue_size", "option": "--queue-size", "type": "integer", "label": "订阅队列大小", "label_en": "Queue Size", "group": "advanced", "section": "advanced", "default": 10, "min": 1}
+    {"name": "queue_size", "option": "--queue-size", "type": "integer", "label": "ROS1 订阅队列大小", "label_en": "ROS1 Queue Size", "group": "advanced", "section": "advanced", "default": 10, "min": 1, "note": "ROS2 图像和传感器存活检测固定使用 depth=1，只保留最新样本；MultiThreadedExecutor 使用 rclpy 默认工作线程策略。"}
   ]
 }
