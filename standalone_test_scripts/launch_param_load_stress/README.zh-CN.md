@@ -97,6 +97,7 @@ python3 ./launch_param_load_stress/launch_param_load_stress.py \
 
 默认自动发现每个相机命名空间下所有已发布的 `sensor_msgs/Image` 图像流。
 传入一个或多个 `--image-topic` 后，将只保存显式指定的 topic。
+多相机时，既可以使用 `{camera}` 模板，也可以分别传入`/camera_01/color/image_raw` 这类完整 topic。
 raw 彩色/IR `Image` 以像素值无损的 PNG 保存（固定无损压缩级别 1），raw 深度仅保存彩色渲染 PNG；`CompressedImage`
 不解码、不校验，直接将消息 `data` 原始字节保存为 `.jpg`。自动发现不包含压缩话题。
 

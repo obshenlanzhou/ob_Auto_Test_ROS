@@ -184,10 +184,6 @@ class ImagePathSequence:
             return target
 
 
-def expand_camera_template(value: str, camera_name: str) -> str:
-    return value.replace("{camera}", camera_name).replace("${camera}", camera_name)
-
-
 def launch_value(value: Any) -> str:
     if isinstance(value, bool):
         return "true" if value else "false"
@@ -577,6 +573,26 @@ def camera_for_topic(topic: str, camera_names: List[str]) -> Optional[str]:
         if normalized_topic.startswith(camera_prefix + "/"):
             return camera_name
     return None
+
+
+def resolve_image_topics(
+    topic_templates: List[str], camera_names: List[str]
+) -> tuple[List[str], Dict[str, str]]:
+    """Expand image topic templates once and map each unique topic to its camera."""
+    topics = expand_topic_templates(topic_templates, camera_names)
+    topic_cameras: Dict[str, str] = {}
+    for topic in topics:
+        camera_name = camera_for_topic(topic, camera_names)
+        if camera_name is None:
+            if len(camera_names) == 1:
+                camera_name = camera_names[0]
+            else:
+                raise ValueError(
+                    f"--image-topic '{topic}' is not under any configured camera "
+                    "namespace; use /{camera}/... or an explicit /CAMERA_NAME/... topic"
+                )
+        topic_cameras[topic] = camera_name
+    return topics, topic_cameras
 
 
 def discover_image_topics(
@@ -1188,19 +1204,10 @@ def run(args) -> int:
     base_launch_args = build_base_launch_args(args)
     image_topic_templates = [topic.strip() for topic in args.image_topic if topic.strip()]
     auto_discover_image_topics = not image_topic_templates
-    topics = [
-        expand_camera_template(topic_template.strip(), camera.name)
-        for camera in cameras
-        for topic_template in image_topic_templates
-        if topic_template.strip()
-    ]
-    topic_cameras = {
-        expand_camera_template(topic_template.strip(), camera.name): camera.name
-        for camera in cameras
-        for topic_template in image_topic_templates
-        if topic_template.strip()
-    }
     camera_names = [camera.name for camera in cameras]
+    topics, topic_cameras = resolve_image_topics(
+        image_topic_templates, camera_names
+    )
     configured_point_cloud_topics = expand_topic_templates(
         args.point_cloud_topic, camera_names
     )

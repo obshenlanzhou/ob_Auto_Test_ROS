@@ -599,6 +599,26 @@ def camera_for_topic(topic: str, camera_names: List[str]) -> Optional[str]:
     return None
 
 
+def resolve_image_topics(
+    topic_templates: List[str], camera_names: List[str]
+) -> tuple[List[str], Dict[str, str]]:
+    """Expand image topic templates once and map each unique topic to its camera."""
+    topics = expand_topic_templates(topic_templates, camera_names)
+    topic_cameras: Dict[str, str] = {}
+    for topic in topics:
+        camera_name = camera_for_topic(topic, camera_names)
+        if camera_name is None:
+            if len(camera_names) == 1:
+                camera_name = camera_names[0]
+            else:
+                raise ValueError(
+                    f"--image-topic '{topic}' is not under any configured camera "
+                    "namespace; use /{camera}/... or an explicit /CAMERA_NAME/... topic"
+                )
+        topic_cameras[topic] = camera_name
+    return topics, topic_cameras
+
+
 def discover_image_topics(
     *,
     harness: RosHarness,
@@ -1413,17 +1433,10 @@ def run(args) -> int:
 
     image_topic_templates = [topic.strip() for topic in args.image_topic if topic.strip()]
     auto_discover_image_topics = not image_topic_templates
-    image_topics = [
-        expand_camera_template(topic_template, camera.name)
-        for camera in cameras
-        for topic_template in image_topic_templates
-    ]
-    topic_cameras = {
-        expand_camera_template(topic_template, camera.name): camera.name
-        for camera in cameras
-        for topic_template in image_topic_templates
-    }
     camera_names = [camera.name for camera in cameras]
+    image_topics, topic_cameras = resolve_image_topics(
+        image_topic_templates, camera_names
+    )
     configured_point_cloud_topics = expand_topic_templates(
         args.point_cloud_topic, camera_names
     )

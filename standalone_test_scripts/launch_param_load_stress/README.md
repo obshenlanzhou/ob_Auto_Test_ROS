@@ -101,6 +101,7 @@ reached stops the test.
 By default, image saving discovers every published `sensor_msgs/Image` stream
 under each configured camera namespace. Supplying one or more `--image-topic`
 values restricts saving to exactly those topics.
+For multiple cameras, each value may be a `{camera}` template or a fully qualified topic such as `/camera_01/color/image_raw`.
 Raw color/IR `Image` messages are saved as pixel-lossless PNG files at fixed lossless
 compression level 1. Raw depth images are saved only as colorized PNGs.
 `CompressedImage` messages are not decoded or validated; their `data` bytes are written directly

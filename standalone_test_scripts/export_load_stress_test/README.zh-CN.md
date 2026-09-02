@@ -81,6 +81,8 @@ python3 ./export_load_stress_test/export_load_stress_test.py \
 --image-topic /{camera}/ir/image_raw
 ```
 
+多相机时，既可以使用 `{camera}` 模板，也可以分别传入`/camera_01/color/image_raw` 这类完整 topic。
+
 raw 彩色/IR `sensor_msgs/Image` 以像素值无损的 PNG 保存（固定无损压缩级别 1），raw 深度仅保存彩色渲染 PNG；
 `sensor_msgs/CompressedImage` 不解码、不校验，直接将消息 `data` 原始字节保存为 `.jpg`。
 自动发现只选择 `Image`；压缩话题必须通过 `--image-topic` 显式指定。

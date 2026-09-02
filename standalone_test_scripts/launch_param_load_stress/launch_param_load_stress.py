@@ -937,6 +937,41 @@ def discover_image_topics(
     )
 
 
+def camera_for_topic(topic: str, camera_names: List[str]) -> Optional[str]:
+    normalized_topic = "/" + topic.strip("/")
+    for camera_name in sorted(camera_names, key=len, reverse=True):
+        camera_prefix = "/" + camera_name.strip("/")
+        if normalized_topic.startswith(camera_prefix + "/"):
+            return camera_name
+    return None
+
+
+def resolve_image_topics(
+    topic_templates: List[str], camera_names: List[str]
+) -> tuple[List[str], Dict[str, str]]:
+    """Expand image topic templates once and map each unique topic to its camera."""
+    topics = expand_topic_templates(topic_templates, camera_names)
+    topic_cameras: Dict[str, str] = {}
+    for topic in topics:
+        camera_name = camera_for_topic(topic, camera_names)
+        if camera_name is None:
+            if len(camera_names) == 1:
+                camera_name = camera_names[0]
+            else:
+                raise ValueError(
+                    f"--image-topic '{topic}' is not under any configured camera "
+                    "namespace; use /{camera}/... or an explicit /CAMERA_NAME/... topic"
+                )
+        topic_cameras[topic] = camera_name
+    return topics, topic_cameras
+
+
+def image_topics_for_camera(
+    topics: List[str], topic_cameras: Dict[str, str], camera_name: str
+) -> List[str]:
+    return [topic for topic in topics if topic_cameras.get(topic) == camera_name]
+
+
 def colorize_depth_image(image: Any, cv2: Any) -> Any:
     import numpy as np
 
@@ -1171,6 +1206,7 @@ def save_topic_images(
     timeout: float,
     emit: StatusLogger,
     path_sequence: Optional[ImagePathSequence] = None,
+    auto_discover_image_topics: Optional[bool] = None,
 ) -> tuple[List[str], List[str], str]:
     emit(
         f"[IMAGE] saving up to {save_images_count} image(s) per topic for "
@@ -1181,7 +1217,12 @@ def save_topic_images(
     saved: List[str] = []
     try:
         with RosImageHarness(ros_version, node_name) as harness:
-            if image_topic_templates:
+            auto_discover = (
+                not image_topic_templates
+                if auto_discover_image_topics is None
+                else auto_discover_image_topics
+            )
+            if not auto_discover:
                 image_topics = [
                     topic_template.replace("{camera}", camera_name).replace(
                         "${camera}", camera_name
@@ -1504,6 +1545,7 @@ def _check_one_camera(
     image_topic_templates: List[str],
     images_dir: Optional[Path],
     image_path_sequence: Optional[ImagePathSequence] = None,
+    auto_discover_image_topics: Optional[bool] = None,
     emit: StatusLogger,
 ) -> Dict[str, Any]:
     cam: Dict[str, Any] = {
@@ -1531,6 +1573,7 @@ def _check_one_camera(
             timeout=topic_timeout,
             emit=emit,
             path_sequence=image_path_sequence,
+            auto_discover_image_topics=auto_discover_image_topics,
         )
         cam["image_save_status"] = (
             "failed" if cam["image_save_error"] else "passed"
@@ -1641,6 +1684,10 @@ def run(args) -> int:
     skip_image_frames = args.skip_image_frames
     image_topic_templates = [topic.strip() for topic in args.image_topic if topic.strip()]
     camera_names = [camera.name for camera in cameras]
+    auto_discover_image_topics = not image_topic_templates
+    configured_image_topics, image_topic_cameras = resolve_image_topics(
+        image_topic_templates, camera_names
+    )
     configured_point_cloud_topics = expand_topic_templates(
         args.point_cloud_topic, camera_names
     )
@@ -1782,9 +1829,14 @@ def run(args) -> int:
                         skip_service_check=args.skip_service_check,
                         save_images_count=save_images_count,
                         skip_image_frames=skip_image_frames,
-                        image_topic_templates=image_topic_templates,
+                        image_topic_templates=image_topics_for_camera(
+                            configured_image_topics,
+                            image_topic_cameras,
+                            camera.name,
+                        ),
                         images_dir=images_dir,
                         image_path_sequence=image_paths,
+                        auto_discover_image_topics=auto_discover_image_topics,
                         emit=emit,
                     )
                     run_result["cameras"].append(cam)

@@ -85,6 +85,8 @@ monitoring and saving to an explicit set:
 --image-topic /{camera}/ir/image_raw
 ```
 
+For multiple cameras, each value may be a `{camera}` template or a fully qualified topic such as `/camera_01/color/image_raw`.
+
 Raw color/IR `sensor_msgs/Image` messages are saved as pixel-lossless PNG files at fixed
 lossless compression level 1. Raw depth images are saved only as colorized PNGs.
 `sensor_msgs/CompressedImage` messages are not decoded or validated; their `data` bytes

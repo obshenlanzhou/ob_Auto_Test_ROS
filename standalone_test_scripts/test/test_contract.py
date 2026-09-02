@@ -1367,6 +1367,78 @@ def test_default_image_discovery_finds_all_raw_streams_per_camera():
     ) == expected_topics[:3]
 
 
+@pytest.mark.parametrize(
+    "test_id", ("preset_upgrade", "export_load", "launch_param_load")
+)
+def test_explicit_image_topics_are_not_reexpanded_for_each_camera(test_id):
+    module = load_script(SCRIPTS[test_id])
+    explicit_topics = [
+        f"/camera_{camera_index:02d}/{stream}/image_raw"
+        for camera_index in (1, 2)
+        for stream in ("left_ir", "right_ir", "color", "depth")
+    ]
+
+    topics, topic_cameras = module.resolve_image_topics(
+        explicit_topics, ["camera_01", "camera_02"]
+    )
+
+    assert topics == sorted(explicit_topics)
+    assert len(topics) == 8
+    assert topic_cameras["/camera_01/color/image_raw"] == "camera_01"
+    assert topic_cameras["/camera_02/color/image_raw"] == "camera_02"
+
+
+@pytest.mark.parametrize(
+    "test_id", ("preset_upgrade", "export_load", "launch_param_load")
+)
+def test_image_topic_templates_expand_once_per_camera(test_id):
+    module = load_script(SCRIPTS[test_id])
+
+    topics, topic_cameras = module.resolve_image_topics(
+        ["/{camera}/color/image_raw", "/{camera}/depth/image_raw"],
+        ["camera_01", "camera_02"],
+    )
+
+    assert topics == [
+        "/camera_01/color/image_raw",
+        "/camera_01/depth/image_raw",
+        "/camera_02/color/image_raw",
+        "/camera_02/depth/image_raw",
+    ]
+    assert topic_cameras == {
+        "/camera_01/color/image_raw": "camera_01",
+        "/camera_01/depth/image_raw": "camera_01",
+        "/camera_02/color/image_raw": "camera_02",
+        "/camera_02/depth/image_raw": "camera_02",
+    }
+
+
+def test_launch_param_filters_resolved_image_topics_per_camera():
+    module = load_script(SCRIPTS["launch_param_load"])
+    topics, topic_cameras = module.resolve_image_topics(
+        [
+            "/camera_01/color/image_raw",
+            "/camera_01/depth/image_raw",
+            "/camera_02/color/image_raw",
+            "/camera_02/depth/image_raw",
+        ],
+        ["camera_01", "camera_02"],
+    )
+
+    assert module.image_topics_for_camera(
+        topics, topic_cameras, "camera_01"
+    ) == [
+        "/camera_01/color/image_raw",
+        "/camera_01/depth/image_raw",
+    ]
+    assert module.image_topics_for_camera(
+        topics, topic_cameras, "camera_02"
+    ) == [
+        "/camera_02/color/image_raw",
+        "/camera_02/depth/image_raw",
+    ]
+
+
 def test_explicit_compressed_topics_resolve_to_compressed_message_type():
     topic_types = {
         "/camera/color/image_raw": ["sensor_msgs/msg/Image"],
