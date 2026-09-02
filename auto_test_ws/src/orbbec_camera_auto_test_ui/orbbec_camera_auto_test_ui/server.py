@@ -5,6 +5,7 @@ import json
 import mimetypes
 import signal
 import shutil
+import subprocess
 import sys
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -276,6 +277,60 @@ def delete_run(run_id: str) -> tuple[Dict[str, Any], HTTPStatus]:
     return {"deleted": run_id, "results_dir": str(run_dir)}, HTTPStatus.OK
 
 
+def _open_directory(path: Path) -> bool:
+    opener = shutil.which("xdg-open")
+    if not opener:
+        return False
+    subprocess.Popen(
+        [opener, str(path)],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    return True
+
+
+def package_run_results(run_id: str) -> tuple[Dict[str, Any], HTTPStatus]:
+    run_dir = (UI_RESULTS_ROOT / run_id).resolve()
+    root = UI_RESULTS_ROOT.resolve()
+    if run_dir == root or root not in [run_dir, *run_dir.parents] or not run_dir.is_dir():
+        raise FileNotFoundError(run_id)
+    if MANAGER.is_active_run(run_id):
+        return {"error": "cannot package a running test"}, HTTPStatus.CONFLICT
+
+    ui_status = read_json(run_dir / "ui_status.json", {})
+    ui_request = read_json(run_dir / "ui_request.json", {})
+    runner_type = ui_status.get("runner_type") or ui_request.get("runner_type")
+    if runner_type != "standalone":
+        return {"error": "only standalone stress results can be packaged"}, HTTPStatus.BAD_REQUEST
+
+    script = STANDALONE_ROOT / "package_stress_results.py"
+    archive = run_dir / f"{run_dir.name}.tar.gz"
+    completed = subprocess.run(
+        [sys.executable, str(script), str(run_dir), "--output", str(archive)],
+        capture_output=True,
+        text=True,
+        timeout=300,
+        check=False,
+    )
+    if completed.returncode != 0:
+        message = completed.stderr.strip() or completed.stdout.strip() or "packaging failed"
+        return {"error": message}, HTTPStatus.INTERNAL_SERVER_ERROR
+
+    response: Dict[str, Any] = {
+        "archive": str(archive),
+        "directory": str(run_dir),
+        "opened": False,
+    }
+    try:
+        response["opened"] = _open_directory(run_dir)
+        if not response["opened"]:
+            response["warning"] = "xdg-open is unavailable; open the directory manually"
+    except OSError as exc:
+        response["warning"] = f"archive created, but the directory could not be opened: {exc}"
+    return response, HTTPStatus.OK
+
+
 class UiHandler(BaseHTTPRequestHandler):
     server_version = "OrbbecAutoTestUI/0.1"
 
@@ -383,6 +438,12 @@ class UiHandler(BaseHTTPRequestHandler):
                 self._send_json(query_camera_devices(payload))
             elif parsed.path == "/api/stop":
                 self._send_json(MANAGER.stop())
+            elif parsed.path.startswith("/api/runs/") and parsed.path.endswith("/package"):
+                encoded_run_id = parsed.path.removeprefix("/api/runs/").removesuffix(
+                    "/package"
+                )
+                response, status = package_run_results(unquote(encoded_run_id))
+                self._send_json(response, status=status)
             else:
                 self._send_json({"error": "not found"}, status=HTTPStatus.NOT_FOUND)
         except json.JSONDecodeError as exc:

@@ -1954,6 +1954,29 @@ async function stopRun() {
   }
 }
 
+async function packageRun(runId, button) {
+  const originalText = button.textContent;
+  button.disabled = true;
+  button.textContent = "打包中…";
+  try {
+    const payload = await api(`/api/runs/${encodeURIComponent(runId)}/package`, {
+      method: "POST",
+      body: "{}",
+    });
+    button.textContent = "已打包";
+    appendLogs([`[UI] 结果已打包: ${payload.archive}`]);
+    if (payload.warning) appendLogs([`[UI] ${payload.warning}`]);
+  } catch (error) {
+    button.textContent = "打包失败";
+    appendLogs([`[UI] package failed: ${error.message}`]);
+  } finally {
+    window.setTimeout(() => {
+      button.textContent = originalText;
+      button.disabled = false;
+    }, 1500);
+  }
+}
+
 async function deleteRun(runId) {
   if (!window.confirm(`删除历史记录 ${runId}？`)) {
     return;
@@ -2090,6 +2113,15 @@ function runItem(run) {
   viewButton.textContent = "查看";
   viewButton.addEventListener("click", () => loadRunDetail(run.run_id));
 
+  const packageButton = document.createElement("button");
+  packageButton.type = "button";
+  packageButton.className = "ghost";
+  packageButton.textContent = "打包";
+  packageButton.title = "打包最后五轮结果并打开实际目录";
+  packageButton.disabled = !TERMINAL_RUN_STATUSES.has(run.status);
+  if (packageButton.disabled) packageButton.title = "测试结束后才能打包";
+  packageButton.addEventListener("click", () => packageRun(run.run_id, packageButton));
+
   const deleteButton = document.createElement("button");
   deleteButton.type = "button";
   deleteButton.className = "danger";
@@ -2100,7 +2132,9 @@ function runItem(run) {
   }
   deleteButton.addEventListener("click", () => deleteRun(run.run_id));
 
-  actions.append(viewButton, deleteButton);
+  actions.append(viewButton);
+  if (run.runner_type === "standalone") actions.append(packageButton);
+  actions.append(deleteButton);
   item.append(checkbox, title, actions, subtitle);
   return item;
 }

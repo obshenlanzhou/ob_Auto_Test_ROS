@@ -109,6 +109,62 @@ def test_standalone_ui_exposes_tool_version():
     assert "test.version" in app_js
 
 
+def test_ui_packages_standalone_result_and_opens_run_directory(tmp_path, monkeypatch):
+    run_id = "20260902_120000_standalone_firmware_update_stress_test_v2.0.0"
+    run_dir = tmp_path / run_id
+    run_dir.mkdir()
+    (run_dir / "ui_status.json").write_text(
+        json.dumps(
+            {
+                "runner_type": "standalone",
+                "test_id": "firmware_update_stress_test",
+                "status": "passed",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (run_dir / "result.json").write_text(
+        json.dumps(
+            {
+                "test_id": "firmware_update_stress_test",
+                "status": "passed",
+                "details": {"status": "passed", "tests": []},
+            }
+        ),
+        encoding="utf-8",
+    )
+    opened = []
+    monkeypatch.setattr(ui_server, "UI_RESULTS_ROOT", tmp_path)
+    monkeypatch.setattr(ui_server.MANAGER, "is_active_run", lambda _run_id: False)
+    monkeypatch.setattr(
+        ui_server,
+        "_open_directory",
+        lambda path: opened.append(path) or True,
+    )
+
+    payload, status = ui_server.package_run_results(run_id)
+
+    assert status == 200
+    assert Path(payload["archive"]).is_file()
+    assert payload["directory"] == str(run_dir)
+    assert payload["opened"] is True
+    assert opened == [run_dir]
+
+
+def test_standalone_history_has_package_button():
+    script = (
+        PACKAGE_ROOT
+        / "orbbec_camera_auto_test_ui"
+        / "static"
+        / "app.js"
+    ).read_text(encoding="utf-8")
+
+    assert "async function packageRun(runId, button)" in script
+    assert 'packageButton.textContent = "打包"' in script
+    assert 'run.runner_type === "standalone"' in script
+    assert "/package`" in script
+
+
 def test_standalone_ui_run_directory_includes_tool_version():
     run_id = _standalone_base_run_id("stream_toggle_stress_test", "2.0.0")
     assert re.fullmatch(

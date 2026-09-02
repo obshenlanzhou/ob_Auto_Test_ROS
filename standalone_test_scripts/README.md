@@ -55,6 +55,24 @@ standalone_test_scripts/
 Most stress-test script directories own their generated `results/` directory.
 `image_receive_stats_test` writes to the configured output directory instead.
 
+## Package Compact Stress Results
+
+After a stress run finishes, package one standalone result directory into a compact
+`.tar.gz` archive:
+
+```bash
+python3 ./package_stress_results.py \
+  ./stream_toggle_stress_test/results/20260824_150213_stream_toggle_v1.9.7
+```
+
+The default output is `<result-directory>.tar.gz` next to the source directory.
+Use `--output /path/to/archive.tar.gz` to select another destination:
+
+```bash
+python3 ./package_stress_results.py /path/to/result \
+  --output /path/to/camera_stress_result.tar.gz
+```
+
 ## Environment
 
 Most scripts that launch the camera driver can source ROS and camera driver

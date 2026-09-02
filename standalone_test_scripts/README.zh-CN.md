@@ -53,6 +53,22 @@ standalone_test_scripts/
 
 多数压测脚本目录下的 `results/` 是测试运行时生成的结果目录，用于保存日志和结果文件。`image_receive_stats_test` 按启动参数写入指定输出目录。
 
+## 精简打包压测结果
+
+压测结束后，可以将一个独立压测结果目录打包为精简的 `.tar.gz`：
+
+```bash
+python3 ./package_stress_results.py \
+  ./stream_toggle_stress_test/results/20260824_150213_stream_toggle_v1.9.7
+```
+
+默认在结果目录同级生成 `<结果目录名>.tar.gz`。指定输出路径：
+
+```bash
+python3 ./package_stress_results.py /path/to/result \
+  --output /path/to/camera_stress_result.tar.gz
+```
+
 ## 环境
 
 多数会启动相机驱动的脚本支持通过命令行参数加载 ROS 和相机驱动环境：
