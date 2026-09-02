@@ -2067,7 +2067,8 @@ button.ghost {
   margin-bottom: 13px;
 }
 
-.sub-panel-header > span {
+.sub-panel-header > span,
+.report-header-actions > span {
   max-width: 60%;
   overflow: hidden;
   color: var(--subtle);
@@ -2076,6 +2077,19 @@ button.ghost {
   letter-spacing: 0.11em;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.report-header-actions {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.report-header-actions > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .run-bulk-actions,
@@ -2622,6 +2636,7 @@ button.ghost {
   .run-result-actions { width: 100%; padding-left: 48px; }
   .run-result-actions button { width: 100%; }
   .sub-panel-header { align-items: flex-start; flex-direction: column; }
+  .report-header-actions { width: 100%; justify-content: space-between; }
   .run-bulk-actions { width: 100%; justify-content: space-between; }
   .run-actions { grid-row: 3; grid-column: 2 / -1; }
 }

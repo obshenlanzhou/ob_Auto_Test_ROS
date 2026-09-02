@@ -290,6 +290,21 @@ def _open_directory(path: Path) -> bool:
     return True
 
 
+def open_run_directory(run_id: str) -> tuple[Dict[str, Any], HTTPStatus]:
+    run_dir = (UI_RESULTS_ROOT / run_id).resolve()
+    root = UI_RESULTS_ROOT.resolve()
+    if run_dir == root or root not in [run_dir, *run_dir.parents] or not run_dir.is_dir():
+        raise FileNotFoundError(run_id)
+
+    try:
+        opened = _open_directory(run_dir)
+    except OSError as exc:
+        return {"error": f"directory could not be opened: {exc}"}, HTTPStatus.INTERNAL_SERVER_ERROR
+    if not opened:
+        return {"error": "xdg-open is unavailable"}, HTTPStatus.SERVICE_UNAVAILABLE
+    return {"directory": str(run_dir), "opened": True}, HTTPStatus.OK
+
+
 def package_run_results(run_id: str) -> tuple[Dict[str, Any], HTTPStatus]:
     run_dir = (UI_RESULTS_ROOT / run_id).resolve()
     root = UI_RESULTS_ROOT.resolve()
@@ -438,6 +453,14 @@ class UiHandler(BaseHTTPRequestHandler):
                 self._send_json(query_camera_devices(payload))
             elif parsed.path == "/api/stop":
                 self._send_json(MANAGER.stop())
+            elif parsed.path.startswith("/api/runs/") and parsed.path.endswith(
+                "/open-directory"
+            ):
+                encoded_run_id = parsed.path.removeprefix("/api/runs/").removesuffix(
+                    "/open-directory"
+                )
+                response, status = open_run_directory(unquote(encoded_run_id))
+                self._send_json(response, status=status)
             elif parsed.path.startswith("/api/runs/") and parsed.path.endswith("/package"):
                 encoded_run_id = parsed.path.removeprefix("/api/runs/").removesuffix(
                     "/package"

@@ -151,6 +151,25 @@ def test_ui_packages_standalone_result_and_opens_run_directory(tmp_path, monkeyp
     assert opened == [run_dir]
 
 
+def test_ui_opens_selected_report_directory(tmp_path, monkeypatch):
+    run_id = "20260902_120000_functional"
+    run_dir = tmp_path / run_id
+    run_dir.mkdir()
+    opened = []
+    monkeypatch.setattr(ui_server, "UI_RESULTS_ROOT", tmp_path)
+    monkeypatch.setattr(
+        ui_server,
+        "_open_directory",
+        lambda path: opened.append(path) or True,
+    )
+
+    payload, status = ui_server.open_run_directory(run_id)
+
+    assert status == 200
+    assert payload == {"directory": str(run_dir), "opened": True}
+    assert opened == [run_dir]
+
+
 def test_standalone_history_has_package_button():
     script = (
         PACKAGE_ROOT
@@ -163,6 +182,25 @@ def test_standalone_history_has_package_button():
     assert 'packageButton.textContent = "打包"' in script
     assert 'run.runner_type === "standalone"' in script
     assert "/package`" in script
+
+
+def test_report_preview_has_open_directory_button():
+    template = (
+        PACKAGE_ROOT
+        / "orbbec_camera_auto_test_ui"
+        / "templates"
+        / "index.html"
+    ).read_text(encoding="utf-8")
+    script = (
+        PACKAGE_ROOT
+        / "orbbec_camera_auto_test_ui"
+        / "static"
+        / "app.js"
+    ).read_text(encoding="utf-8")
+
+    assert 'id="openReportDirectory"' in template
+    assert "async function openRunDirectory(runId, button)" in script
+    assert "/open-directory`" in script
 
 
 def test_standalone_ui_run_directory_includes_tool_version():

@@ -1977,6 +1977,21 @@ async function packageRun(runId, button) {
   }
 }
 
+async function openRunDirectory(runId, button) {
+  button.disabled = true;
+  try {
+    const payload = await api(`/api/runs/${encodeURIComponent(runId)}/open-directory`, {
+      method: "POST",
+      body: "{}",
+    });
+    appendLogs([`[UI] 已打开结果目录: ${payload.directory}`]);
+  } catch (error) {
+    appendLogs([`[UI] open directory failed: ${error.message}`]);
+  } finally {
+    button.disabled = state.selectedRunId !== runId;
+  }
+}
+
 async function deleteRun(runId) {
   if (!window.confirm(`删除历史记录 ${runId}？`)) {
     return;
@@ -1988,6 +2003,7 @@ async function deleteRun(runId) {
       state.selectedRunId = null;
       $("reportTitle").textContent = "";
       $("reportView").textContent = "选择一条历史记录查看结果。";
+      $("openReportDirectory").disabled = true;
     }
     await loadRuns();
   } catch (error) {
@@ -2054,6 +2070,7 @@ async function deleteSelectedRuns() {
       state.selectedRunId = null;
       $("reportTitle").textContent = "";
       $("reportView").textContent = "选择一条历史记录查看结果。";
+      $("openReportDirectory").disabled = true;
     }
     await loadRuns();
     if (failed.length) {
@@ -2415,6 +2432,7 @@ async function loadRunDetail(runId) {
     item.classList.toggle("selected", item.dataset.runId === runId);
   }
   $("reportTitle").textContent = runId;
+  $("openReportDirectory").disabled = false;
   const view = $("reportView");
   view.innerHTML = "";
 
@@ -2476,6 +2494,11 @@ async function init() {
   $("refreshDevices").addEventListener("click", refreshDevices);
   $("refreshLaunches").addEventListener("click", loadLaunchFiles);
   $("refreshRuns").addEventListener("click", loadRuns);
+  $("openReportDirectory").addEventListener("click", () => {
+    if (state.selectedRunId) {
+      openRunDirectory(state.selectedRunId, $("openReportDirectory"));
+    }
+  });
   $("selectAllRuns").addEventListener("change", (event) => {
     setAllRunsSelected(event.target.checked);
   });

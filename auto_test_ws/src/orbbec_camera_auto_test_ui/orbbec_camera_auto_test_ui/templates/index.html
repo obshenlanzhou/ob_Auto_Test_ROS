@@ -387,7 +387,13 @@
             <div id="runsList" class="runs-list"></div>
           </section>
           <section class="panel report-panel">
-            <div class="sub-panel-header"><h3>报告预览</h3><span id="reportTitle">RESULT / SUMMARY</span></div>
+            <div class="sub-panel-header">
+              <h3>报告预览</h3>
+              <div class="report-header-actions">
+                <span id="reportTitle">RESULT / SUMMARY</span>
+                <button type="button" class="ghost text-button" id="openReportDirectory" disabled>打开目录</button>
+              </div>
+            </div>
             <div id="reportView" class="report-view"><div class="empty-state"><span>◎</span><strong>尚未选择报告</strong><p>从左侧历史任务中选择一条记录</p></div></div>
           </section>
         </div>
