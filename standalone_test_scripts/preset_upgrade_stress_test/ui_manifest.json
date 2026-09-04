@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "id": "preset_upgrade_stress_test",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "title": "Preset 升级压测",
   "description": "交替升级两份深度 Preset，并验证相机 Launch 与图像流。",
   "script": "preset_upgrade_stress_test.py",

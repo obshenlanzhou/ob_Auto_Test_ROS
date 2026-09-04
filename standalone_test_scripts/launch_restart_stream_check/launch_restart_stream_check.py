@@ -44,7 +44,7 @@ DEFAULT_CAMERA_LAUNCH = {
 }
 ENV_READY_VAR = "LAUNCH_RESTART_STREAM_CHECK_ENV_READY"
 INTERRUPTED = False
-TOOL_VERSION = "2.0.0"
+TOOL_VERSION = "2.1.0"
 TEST_ID = "launch_restart_stream_check"
 DEFAULT_STRESS_LAUNCH_ARGS = {
     "enable_heartbeat": "true",

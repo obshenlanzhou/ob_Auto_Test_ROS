@@ -102,7 +102,7 @@ must resolve to one target value.
 Each run creates:
 
 ```text
-firmware_update_stress_test/results/YYYYMMDD_HHMMSS_firmware_update_v2.0.0/
+firmware_update_stress_test/results/YYYYMMDD_HHMMSS_firmware_update_v2.1.0/
 ├── summary.md                  # Final result and per-test pass/fail status
 ├── result.json                 # Full machine-readable result
 ├── events.jsonl                # Structured lifecycle and progress events

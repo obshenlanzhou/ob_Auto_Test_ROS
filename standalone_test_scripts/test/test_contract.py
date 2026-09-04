@@ -250,8 +250,8 @@ def test_image_stats_stop_on_failure_by_default_and_can_opt_in_to_continue():
 @pytest.mark.parametrize(
     ("ros_version", "expected_suffix"),
     [
-        ("ros1", "_image_receive_stats_v2.0.0"),
-        ("ros2", "_image_receive_stats_ros2_v2.0.0"),
+        ("ros1", "_image_receive_stats_v2.1.0"),
+        ("ros2", "_image_receive_stats_ros2_v2.1.0"),
     ],
 )
 def test_image_stats_default_result_directory_includes_tool_version(
