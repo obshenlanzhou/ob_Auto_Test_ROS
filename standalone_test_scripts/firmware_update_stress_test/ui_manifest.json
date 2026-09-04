@@ -7,6 +7,7 @@
   "script": "firmware_update_stress_test.py",
   "risk": "high",
   "stop_policy": "safe-point",
+  "package_results": true,
   "confirmation": "固件升级会写入相机设备。请确认固件与目标设备匹配，并保持供电和连接稳定。",
   "required_any": [
     {"fields": ["duration", "run_count"], "message": "压测时间和压测次数至少填写一项"}

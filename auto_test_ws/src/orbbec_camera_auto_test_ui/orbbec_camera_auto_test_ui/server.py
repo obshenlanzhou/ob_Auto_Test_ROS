@@ -28,7 +28,12 @@ from .run_manager import (
     save_config,
     setup_defaults,
 )
-from .standalone import default_values, load_manifests, public_manifest
+from .standalone import (
+    default_values,
+    load_manifests,
+    packageable_test_ids,
+    public_manifest,
+)
 
 
 MANAGER = RunManager()
@@ -206,19 +211,26 @@ def _aggregate_status(run_dir: Path, ui_status: Dict[str, Any]) -> str:
 
 def list_runs() -> Dict[str, Any]:
     ensure_dir(UI_RESULTS_ROOT)
+    packageable_ids = packageable_test_ids(STANDALONE_ROOT)
     runs = []
     for run_dir in sorted(UI_RESULTS_ROOT.iterdir(), reverse=True):
         if not run_dir.is_dir():
             continue
         ui_status = read_json(run_dir / "ui_status.json", {})
         request = read_json(run_dir / "ui_request.json", {})
+        runner_type = ui_status.get("runner_type") or request.get(
+            "runner_type", "framework"
+        )
+        test_id = ui_status.get("test_id") or request.get("test_id", "")
         runs.append(
             {
                 "run_id": run_dir.name,
                 "mode": ui_status.get("mode") or request.get("mode", ""),
-                "runner_type": ui_status.get("runner_type")
-                or request.get("runner_type", "framework"),
-                "test_id": ui_status.get("test_id") or request.get("test_id", ""),
+                "runner_type": runner_type,
+                "test_id": test_id,
+                "package_supported": (
+                    runner_type == "standalone" and test_id in packageable_ids
+                ),
                 "status": _aggregate_status(run_dir, ui_status),
                 "started_at": ui_status.get("started_at", ""),
                 "ended_at": ui_status.get("ended_at", ""),
@@ -318,6 +330,11 @@ def package_run_results(run_id: str) -> tuple[Dict[str, Any], HTTPStatus]:
     runner_type = ui_status.get("runner_type") or ui_request.get("runner_type")
     if runner_type != "standalone":
         return {"error": "only standalone stress results can be packaged"}, HTTPStatus.BAD_REQUEST
+    test_id = ui_status.get("test_id") or ui_request.get("test_id")
+    if test_id not in packageable_test_ids(STANDALONE_ROOT):
+        return {
+            "error": f"result packaging is not supported for test: {test_id or '<missing>'}"
+        }, HTTPStatus.BAD_REQUEST
 
     script = STANDALONE_ROOT / "package_stress_results.py"
     archive = run_dir / f"{run_dir.name}.tar.gz"

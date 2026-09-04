@@ -7,6 +7,7 @@
   "script": "preset_upgrade_stress_test.py",
   "risk": "high",
   "stop_policy": "safe-point",
+  "package_results": true,
   "confirmation": "Preset 升级会写入相机设备。请确认文件与相机型号匹配；停止命令会等待当前升级完成。",
   "required_any": [
     {"fields": ["duration", "run_count"], "message": "压测时间和压测次数至少填写一项"}
