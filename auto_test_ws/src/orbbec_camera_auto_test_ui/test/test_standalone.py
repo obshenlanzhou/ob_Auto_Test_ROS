@@ -22,6 +22,7 @@ from orbbec_camera_auto_test_ui.standalone import (  # noqa: E402
     build_command,
     load_manifests,
     manifest_catalog,
+    packageable_test_ids,
     validate_request,
     validate_result_contract,
 )
@@ -68,6 +69,14 @@ def test_all_seven_standalone_manifests_load():
                 "advanced",
             }
             assert field["label_en"]
+    assert packageable_test_ids(STANDALONE_ROOT) == {
+        "export_load_stress_test",
+        "firmware_update_stress_test",
+        "launch_param_load_stress",
+        "launch_restart_stream_check",
+        "preset_upgrade_stress_test",
+        "stream_toggle_stress_test",
+    }
 
 
 def test_manifest_versions_match_script_versions():
@@ -151,6 +160,54 @@ def test_ui_packages_standalone_result_and_opens_run_directory(tmp_path, monkeyp
     assert opened == [run_dir]
 
 
+def test_ui_rejects_packaging_for_image_receive_stats(tmp_path, monkeypatch):
+    run_id = "20260902_120000_standalone_image_receive_stats_test_v2.1.0"
+    run_dir = tmp_path / run_id
+    run_dir.mkdir()
+    (run_dir / "ui_status.json").write_text(
+        json.dumps(
+            {
+                "runner_type": "standalone",
+                "test_id": "image_receive_stats_test",
+                "status": "passed",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(ui_server, "UI_RESULTS_ROOT", tmp_path)
+    monkeypatch.setattr(ui_server.MANAGER, "is_active_run", lambda _run_id: False)
+
+    payload, status = ui_server.package_run_results(run_id)
+
+    assert status == 400
+    assert "not supported" in payload["error"]
+
+
+def test_run_history_marks_only_stress_results_as_packageable(tmp_path, monkeypatch):
+    for run_id, test_id in (
+        ("stress", "firmware_update_stress_test"),
+        ("stats", "image_receive_stats_test"),
+    ):
+        run_dir = tmp_path / run_id
+        run_dir.mkdir()
+        (run_dir / "ui_status.json").write_text(
+            json.dumps(
+                {
+                    "runner_type": "standalone",
+                    "test_id": test_id,
+                    "status": "passed",
+                }
+            ),
+            encoding="utf-8",
+        )
+    monkeypatch.setattr(ui_server, "UI_RESULTS_ROOT", tmp_path)
+
+    runs = {item["run_id"]: item for item in ui_server.list_runs()["runs"]}
+
+    assert runs["stress"]["package_supported"] is True
+    assert runs["stats"]["package_supported"] is False
+
+
 def test_ui_opens_selected_report_directory(tmp_path, monkeypatch):
     run_id = "20260902_120000_functional"
     run_dir = tmp_path / run_id
@@ -180,7 +237,7 @@ def test_standalone_history_has_package_button():
 
     assert "async function packageRun(runId, button)" in script
     assert 'packageButton.textContent = "打包"' in script
-    assert 'run.runner_type === "standalone"' in script
+    assert "if (run.package_supported) actions.append(packageButton)" in script
     assert "/package`" in script
 
 

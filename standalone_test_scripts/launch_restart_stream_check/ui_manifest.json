@@ -7,6 +7,7 @@
   "script": "launch_restart_stream_check.py",
   "risk": "normal",
   "stop_policy": "immediate",
+  "package_results": true,
   "required_any": [
     {"fields": ["duration", "run_count"], "message": "压测时间和压测次数至少填写一项"}
   ],

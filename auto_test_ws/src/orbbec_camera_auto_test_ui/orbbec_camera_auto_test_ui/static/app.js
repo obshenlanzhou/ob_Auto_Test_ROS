@@ -2150,7 +2150,7 @@ function runItem(run) {
   deleteButton.addEventListener("click", () => deleteRun(run.run_id));
 
   actions.append(viewButton);
-  if (run.runner_type === "standalone") actions.append(packageButton);
+  if (run.package_supported) actions.append(packageButton);
   actions.append(deleteButton);
   item.append(checkbox, title, actions, subtitle);
   return item;

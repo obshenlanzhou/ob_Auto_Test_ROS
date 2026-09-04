@@ -7,6 +7,7 @@
   "script": "image_topic_receive_stats.py",
   "risk": "normal",
   "stop_policy": "immediate",
+  "package_results": false,
   "fields": [
     {"name": "ros_version", "option": "--ros-version", "type": "select", "label": "ROS 版本", "label_en": "ROS Version", "group": "environment", "section": "basic", "default": "2", "choices": [{"value": "2", "label": "ROS 2"}, {"value": "1", "label": "ROS 1"}]},
     {"name": "ros_setup", "option": "--ros-setup", "type": "path", "label": "ROS 环境脚本", "label_en": "ROS Setup", "group": "environment", "section": "basic", "default": "/opt/ros/humble/setup.bash"},

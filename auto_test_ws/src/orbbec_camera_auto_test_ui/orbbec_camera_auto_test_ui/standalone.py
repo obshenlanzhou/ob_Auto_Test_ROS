@@ -98,6 +98,8 @@ def _validate_manifest(manifest: Dict[str, Any], manifest_path: Path) -> Dict[st
         raise ManifestError(f"{manifest_path}: risk must be normal or high")
     if manifest.get("stop_policy") not in {"immediate", "safe-point"}:
         raise ManifestError(f"{manifest_path}: invalid stop_policy")
+    if not isinstance(manifest.get("package_results"), bool):
+        raise ManifestError(f"{manifest_path}: package_results must be a boolean")
 
     seen_names = set()
     seen_options = set()
@@ -176,6 +178,14 @@ def load_manifests(standalone_root: Path) -> List[Dict[str, Any]]:
 
 def manifest_catalog(standalone_root: Path) -> Dict[str, Dict[str, Any]]:
     return {item["id"]: item for item in load_manifests(standalone_root)}
+
+
+def packageable_test_ids(standalone_root: Path) -> set[str]:
+    return {
+        item["id"]
+        for item in load_manifests(standalone_root)
+        if item["package_results"]
+    }
 
 
 def public_manifest(manifest: Dict[str, Any]) -> Dict[str, Any]:

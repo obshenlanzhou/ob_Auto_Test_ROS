@@ -25,6 +25,17 @@ def load_module():
 MODULE = load_module()
 
 
+def test_package_specs_match_ui_manifest_capabilities():
+    declared = {
+        manifest["id"]
+        for path in ROOT.glob("*/ui_manifest.json")
+        for manifest in [json.loads(path.read_text(encoding="utf-8"))]
+        if manifest.get("package_results") is True
+    }
+
+    assert declared == set(MODULE.TEST_SPECS)
+
+
 def write_file(path: Path, text: str = "data") -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
