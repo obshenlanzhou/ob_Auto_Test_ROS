@@ -87,7 +87,7 @@ def _last_five_rounds(details: Dict[str, Any], spec: TestSpec) -> list[Dict[str,
 
 
 def _strings(value: Any) -> Iterable[str]:
-    if isinstance(value, str):
+    if isinstance(value, str) and value.strip():
         yield value
     elif isinstance(value, dict):
         for child in value.values():
@@ -145,7 +145,9 @@ def _collect_files(root: Path, details: Dict[str, Any], spec: TestSpec) -> Set[P
                 _add_path(root, root / template.format(round_id), files)
         for value in _strings(item):
             candidate = Path(value).expanduser()
-            _add_path(root, candidate if candidate.is_absolute() else root / candidate, files)
+            candidate = candidate if candidate.is_absolute() else root / candidate
+            if candidate.is_file():
+                _add_path(root, candidate, files)
     return files
 
 

@@ -66,6 +66,7 @@ def test_packages_only_last_five_rounds(tmp_path, test_id):
                 spec.round_id_key: round_id,
                 "status": "failed" if round_id == 2 else "passed",
                 "images": [{"path": str(image)}],
+                "error": "",
             }
         )
         for template in spec.round_dirs:
@@ -81,6 +82,36 @@ def test_packages_only_last_five_rounds(tmp_path, test_id):
     assert f"{root.name}/images/round_7.png" in names
     if spec.shared_dirs:
         assert f"{root.name}/logs/shared.log" in names
+
+
+def test_round_string_cannot_include_the_whole_result_directory(tmp_path):
+    root = tmp_path / "run"
+    spec = MODULE.TEST_SPECS["launch_restart_stream_check"]
+    rounds = []
+    for round_id in range(1, 8):
+        image = write_file(root / "images" / f"image_{round_id:04d}.png")
+        write_file(root / "logs" / f"test_{round_id:04d}" / "camera.log")
+        rounds.append(
+            {
+                spec.round_id_key: round_id,
+                "status": "passed",
+                "files": [str(image)],
+                "error": "",
+                "directory": str(root),
+            }
+        )
+    write_file(root / "old-package.tar.gz")
+    write_result(root, "launch_restart_stream_check", rounds)
+
+    names = archive_names(MODULE.package_results(root, tmp_path / "package.tar.gz"))
+
+    assert f"{root.name}/images/image_0001.png" not in names
+    assert f"{root.name}/images/image_0002.png" not in names
+    assert f"{root.name}/logs/test_0001/camera.log" not in names
+    assert f"{root.name}/logs/test_0002/camera.log" not in names
+    assert f"{root.name}/old-package.tar.gz" not in names
+    assert f"{root.name}/images/image_0003.png" in names
+    assert f"{root.name}/images/image_0007.png" in names
 
 
 def test_packages_ui_files_and_overwrites_output(tmp_path):
