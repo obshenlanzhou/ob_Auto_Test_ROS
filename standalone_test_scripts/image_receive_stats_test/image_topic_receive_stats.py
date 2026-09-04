@@ -669,6 +669,50 @@ class TopicCsvLogger:
                 self.csv_fh.close()
 
 
+def build_markdown_summary(
+    environment, status, topic_count, warning_count, elapsed_seconds, failures
+):
+    failure_count = sum(int(item.get("count", 0) or 0) for item in failures)
+    lines = [
+        "# Image Receive Statistics",
+        "",
+        *test_environment_markdown(environment),
+        "## Result",
+        "",
+        "- Status: {}".format(status),
+        "- Topics: {}".format(topic_count),
+        "- Warnings: {}".format(warning_count),
+        "- Failures: {}".format(failure_count),
+        "- Elapsed seconds: {:.1f}".format(elapsed_seconds),
+        "",
+        "## Failures",
+        "",
+    ]
+    if failures:
+        lines.extend(
+            [
+                "| Count | First Seen | Last Seen | Reason |",
+                "| ---: | --- | --- | --- |",
+            ]
+        )
+        for failure in failures:
+            cells = [
+                failure.get("count", 0),
+                failure.get("first_at", ""),
+                failure.get("last_at", ""),
+                failure.get("message", ""),
+            ]
+            escaped = [
+                str(cell).replace("\n", "<br>").replace("|", "\\|")
+                for cell in cells
+            ]
+            lines.append("| " + " | ".join(escaped) + " |")
+    else:
+        lines.append("- None")
+    lines.extend(["", "See `summary.csv` for per-topic metrics.", ""])
+    return "\n".join(lines)
+
+
 class ReceiveStatsCore:
     def __init__(
         self,
@@ -707,6 +751,8 @@ class ReceiveStatsCore:
         self.started_at = iso_now()
         self.started_monotonic = time.monotonic()
         self.status = "passed"
+        self.failures = []
+        self.failure_lock = threading.Lock()
         self.loggers = {}
         self.warning_log_writer = None
         self.summary_file = os.path.join(self.output_dir, "summary.csv")
@@ -746,7 +792,28 @@ class ReceiveStatsCore:
 
     def record_failure(self, message):
         self.status = "failed"
-        self.events.emit("failure", message, status="failed")
+        failure_message = str(message)
+        occurred_at = iso_now()
+        with self.failure_lock:
+            for failure in self.failures:
+                if failure["message"] == failure_message:
+                    failure["count"] += 1
+                    failure["last_at"] = occurred_at
+                    break
+            else:
+                self.failures.append(
+                    {
+                        "message": failure_message,
+                        "count": 1,
+                        "first_at": occurred_at,
+                        "last_at": occurred_at,
+                    }
+                )
+        self.events.emit("failure", failure_message, status="failed")
+
+    def failure_snapshot(self):
+        with self.failure_lock:
+            return [dict(failure) for failure in self.failures]
 
     def write_metadata(self):
         data = {
@@ -910,6 +977,10 @@ class ReceiveStatsCore:
                 for row in summary_rows
             )
             elapsed_seconds = time.monotonic() - self.started_monotonic
+            failures = self.failure_snapshot()
+            failure_count = sum(
+                int(failure.get("count", 0) or 0) for failure in failures
+            )
             details = {
                 "status": self.status,
                 "tool_version": TOOL_VERSION,
@@ -918,6 +989,7 @@ class ReceiveStatsCore:
                 "continue_on_failure": self.continue_on_failure,
                 "elapsed_seconds": elapsed_seconds,
                 "topic_summaries": summary_rows,
+                "failures": failures,
                 "warnings": (
                     [{"code": "receive-warning", "count": warning_count}]
                     if warning_count
@@ -927,23 +999,17 @@ class ReceiveStatsCore:
             summary = {
                 "topic_count": len(self.topics),
                 "warning_count": warning_count,
+                "failure_count": failure_count,
             }
-            summary_lines = [
-                "# Image Receive Statistics",
-                "",
-                *test_environment_markdown(self.environment),
-                "## Result",
-                "",
-                "- Status: {}".format(self.status),
-                "- Topics: {}".format(len(self.topics)),
-                "- Warnings: {}".format(warning_count),
-                "- Elapsed seconds: {:.1f}".format(elapsed_seconds),
-                "",
-                "See `summary.csv` for per-topic metrics.",
-                "",
-            ]
             Path(self.output_dir, "summary.md").write_text(
-                "\n".join(summary_lines),
+                build_markdown_summary(
+                    self.environment,
+                    self.status,
+                    len(self.topics),
+                    warning_count,
+                    elapsed_seconds,
+                    failures,
+                ),
                 encoding="utf-8",
             )
             self.events.emit(

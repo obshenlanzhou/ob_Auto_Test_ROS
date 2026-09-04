@@ -1008,7 +1008,7 @@ def build_summary(result: Dict[str, Any]) -> str:
         if result.get("status") == "interrupted" and status == "running":
             status = "interrupted"
         status_counts[status] = status_counts.get(status, 0) + 1
-        if status != "passed":
+        if status == "failed":
             failed_tests.append(test)
     planned_tests = result.get("planned_tests", "duration mode")
     lines = [

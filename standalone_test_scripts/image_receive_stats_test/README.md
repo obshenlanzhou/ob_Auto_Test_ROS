@@ -83,5 +83,6 @@ events.jsonl
 <topic_name>.csv
 ```
 
-The common result files and the statistics summary are always generated.
+The common result files and the statistics summary are always generated. `summary.md`
+and `result.json` include callback failure counts, timestamps, and reasons.
 Per-topic CSV files are generated when per-frame CSV saving is enabled.

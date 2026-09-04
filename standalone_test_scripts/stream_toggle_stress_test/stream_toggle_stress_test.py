@@ -2604,9 +2604,11 @@ def build_summary(result: Dict[str, Any]) -> str:
         for cycle in result.get("cycles", [])
         if isinstance(cycle, dict) and cycle.get("status") == "failed"
     ]
+    lines.extend(["", "## Failed Cycles", ""])
     if failed_cycles:
-        lines.extend(["", "## Failed Cycles", ""])
         lines.extend(f"- {failed_cycle_summary(cycle)}" for cycle in failed_cycles)
+    else:
+        lines.append("- None")
     if result.get("warnings"):
         lines.extend(["", "## Warnings", ""])
         for warning in result["warnings"]:

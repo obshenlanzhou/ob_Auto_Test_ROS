@@ -8,6 +8,7 @@ import re
 import shlex
 import subprocess
 import sys
+import threading
 from concurrent.futures import Future
 from pathlib import Path
 from types import SimpleNamespace
@@ -1460,3 +1461,196 @@ def test_explicit_compressed_topics_resolve_to_compressed_message_type():
         assert harness.resolve_image_topic_kind(
             "/camera/color/image_raw/compressed"
         ) == "compressed"
+
+
+def test_launch_restart_summary_lists_only_failed_attempts():
+    module = load_script(SCRIPTS["launch_restart"])
+    result = {
+        "status": "failed",
+        "tool_version": "2.1.0",
+        "successful_restarts": 1,
+        "launch_attempts": 3,
+        "attempts": [
+            {
+                "attempt": 1,
+                "status": "passed",
+                "started_at": "2026-09-01T10:00:00",
+                "message": "streams stable",
+                "launch_log": "/tmp/results/logs/test_0001/camera.launch.log",
+            },
+            {
+                "attempt": 2,
+                "status": "failed",
+                "started_at": "2026-09-01T10:01:00",
+                "message": "point cloud | timeout",
+                "launch_log": "/tmp/results/logs/test_0002/camera.launch.log",
+            },
+            {
+                "attempt": 3,
+                "status": "interrupted",
+                "started_at": "2026-09-01T10:02:00",
+                "message": "interrupted",
+                "launch_log": "/tmp/results/logs/test_0003/camera.launch.log",
+            },
+        ],
+    }
+
+    summary = module.build_summary(result)
+
+    assert "- Failed restarts: 1" in summary
+    assert "## Failed Attempts" in summary
+    assert (
+        "| 2 | 2026-09-01T10:01:00 | point cloud \\| timeout | "
+        "logs/test_0002/camera.launch.log |"
+    ) in summary
+    assert "streams stable" not in summary
+    assert "interrupted" not in summary
+
+
+def test_launch_restart_summary_reports_no_failed_attempts():
+    module = load_script(SCRIPTS["launch_restart"])
+
+    summary = module.build_summary(
+        {
+            "status": "passed",
+            "tool_version": "2.1.0",
+            "successful_restarts": 1,
+            "launch_attempts": 1,
+            "attempts": [{"attempt": 1, "status": "passed"}],
+        }
+    )
+
+    assert "- Failed restarts: 0" in summary
+    assert "## Failed Attempts\n\n- None" in summary
+
+
+@pytest.mark.parametrize(
+    "script_name", ("firmware_update", "export_load", "preset_upgrade")
+)
+def test_stress_summaries_count_only_failed_statuses(script_name):
+    module = load_script(SCRIPTS[script_name])
+    tests = [
+        {
+            "test_index": 1,
+            "status": "passed",
+            "message": "passed detail",
+            "firmware_path": "/tmp/fw.bin",
+            "config_json": "/tmp/config.json",
+            "preset_path": "/tmp/preset.bin",
+        },
+        {
+            "test_index": 2,
+            "status": "failed",
+            "message": "failed detail",
+            "firmware_path": "/tmp/fw.bin",
+            "config_json": "/tmp/config.json",
+            "preset_path": "/tmp/preset.bin",
+        },
+        {
+            "test_index": 3,
+            "status": "interrupted",
+            "message": "interrupted detail",
+            "firmware_path": "/tmp/fw.bin",
+            "config_json": "/tmp/config.json",
+            "preset_path": "/tmp/preset.bin",
+        },
+    ]
+
+    summary = module.build_summary(
+        {
+            "status": "failed",
+            "tests": tests,
+            "passed_tests": 1,
+            "planned_tests": 3,
+        }
+    )
+
+    assert "failed detail" in summary
+    assert "interrupted detail" not in summary
+    assert "passed detail" not in summary
+    assert "failed: 1" in summary
+
+
+def test_launch_param_summary_lists_only_failed_runs_with_reasons():
+    module = load_script(SCRIPTS["launch_param_load"])
+    result = {
+        "status": "failed",
+        "runs_passed": 1,
+        "run_count": 3,
+        "runs": [
+            {"run": 1, "status": "passed", "cameras": []},
+            {
+                "run": 2,
+                "status": "failed",
+                "cameras": [
+                    {
+                        "camera": "camera_01",
+                        "param_checks": [
+                            {
+                                "name": "enable_depth",
+                                "status": "failed",
+                                "message": "expected true, got false",
+                            }
+                        ],
+                        "topic_checks": [],
+                        "service_checks": [],
+                    }
+                ],
+            },
+            {"run": 3, "status": "interrupted", "cameras": []},
+        ],
+    }
+
+    summary = module.build_summary(result)
+
+    assert "- Failed runs: 1" in summary
+    assert "## Failed Runs" in summary
+    assert (
+        "| 2 | camera_01/enable_depth: expected true, got false | "
+        "test_0002/*.launch.log |"
+    ) in summary
+    assert "## Run 1/" not in summary
+    assert "## Run 3/" not in summary
+
+
+def test_stream_toggle_summary_has_empty_failed_cycles_section():
+    module = load_script(SCRIPTS["stream_toggle"])
+
+    summary = module.build_summary({"status": "passed", "cycles": []})
+
+    assert "## Failed Cycles\n\n- None" in summary
+
+
+def test_image_receive_summary_includes_aggregated_failure_reasons():
+    module = load_script(SCRIPTS["image_receive_stats"])
+    failures = [
+        {
+            "message": "callback | failed",
+            "count": 2,
+            "first_at": "2026-09-01T10:00:00",
+            "last_at": "2026-09-01T10:00:01",
+        }
+    ]
+
+    summary = module.build_markdown_summary(
+        {}, "failed", 2, 0, 1.5, failures
+    )
+
+    assert "- Failures: 2" in summary
+    assert "## Failures" in summary
+    assert "callback \\| failed" in summary
+
+
+def test_image_receive_failures_are_deduplicated_and_counted():
+    module = load_script(SCRIPTS["image_receive_stats"])
+    core = object.__new__(module.ReceiveStatsCore)
+    core.status = "passed"
+    core.failures = []
+    core.failure_lock = threading.Lock()
+    core.events = SimpleNamespace(emit=lambda *args, **kwargs: None)
+
+    core.record_failure("callback failed")
+    core.record_failure("callback failed")
+
+    assert core.status == "failed"
+    assert core.failure_snapshot()[0]["count"] == 2

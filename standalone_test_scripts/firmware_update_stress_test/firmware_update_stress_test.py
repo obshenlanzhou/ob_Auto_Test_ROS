@@ -245,7 +245,7 @@ def write_json(path: Path, payload: Any) -> None:
 
 def build_summary(result: Dict[str, Any]) -> str:
     tests = result.get("tests", [])
-    failed_tests = [test for test in tests if test.get("status") != "passed"]
+    failed_tests = [test for test in tests if test.get("status") == "failed"]
     status_counts: Dict[str, int] = {}
     for test in tests:
         status = str(test.get("status") or "unknown")
@@ -258,6 +258,7 @@ def build_summary(result: Dict[str, Any]) -> str:
         f"- Tool version: `{result.get('tool_version', '')}`",
         f"- ROS version: `{result.get('ros_version')}`",
         f"- Passed tests: `{result.get('passed_tests', 0)}`",
+        f"- Failed tests: `{len(failed_tests)}`",
         f"- Total tests recorded: `{len(tests)}`",
         f"- Elapsed seconds: `{result.get('elapsed_seconds', 0.0):.1f}`",
         f"- Results dir: `{result.get('results_dir', '')}`",

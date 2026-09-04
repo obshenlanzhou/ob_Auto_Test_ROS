@@ -156,7 +156,7 @@ launch_param_load_stress/results/YYYYMMDD_HHMMSS_launch_param_load_stress_v2.0.0
 │   ├── camera_01/point_cloud_depth/point_cloud_0001.ply
 │   ├── camera_01/imu_gyro_accel/image_0001.png
 │   └── camera_02/ir_left/image_0001.png
-├── summary.md             # Per-run pass/fail summary
+├── summary.md             # Final result plus failed runs and reasons
 ├── events.jsonl           # Structured lifecycle and progress events
 └── result.json            # Machine-readable result for all runs
 ```

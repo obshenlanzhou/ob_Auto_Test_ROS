@@ -143,7 +143,7 @@ launch_param_load_stress/results/YYYYMMDD_HHMMSS_launch_param_load_stress_v2.0.0
 │   ├── camera_01/point_cloud_depth/point_cloud_0001.ply
 │   ├── camera_01/imu_gyro_accel/image_0001.png
 │   └── camera_02/ir_left/image_0001.png
-├── summary.md             # 每轮通过/失败汇总
+├── summary.md             # 最终结果以及失败轮次和原因
 ├── events.jsonl           # 结构化生命周期和进度事件
 └── result.json            # 所有轮次的机器可读结果
 ```

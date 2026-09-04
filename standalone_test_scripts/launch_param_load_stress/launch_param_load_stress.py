@@ -1431,47 +1431,37 @@ def status_has_failure(rows: Iterable[Dict[str, Any]]) -> bool:
     return any(row.get("status") == "failed" for row in rows)
 
 
-def format_table(rows: List[Dict[str, Any]], columns: List[str]) -> List[str]:
-    if not rows:
-        return ["No checks."]
-    output = [
-        "| " + " | ".join(columns) + " |",
-        "| " + " | ".join("---" for _ in columns) + " |",
-    ]
-    for row in rows:
-        output.append("| " + " | ".join(str(row.get(column, "")) for column in columns) + " |")
-    return output
+def failed_run_reason(run: Dict[str, Any]) -> str:
+    if run.get("error"):
+        return str(run["error"])
 
-
-def _summary_camera_section(cam: Dict[str, Any]) -> List[str]:
-    lines = [f"### Camera: {cam.get('camera', '')}"]
-    if cam.get("error"):
-        lines += ["", f"**Error:** {cam['error']}"]
-        return lines
-    lines += [
-        "",
-        "#### Parameter Checks",
-        "",
-        *format_table(cam.get("param_checks", []), ["name", "expected", "actual", "status", "message"]),
-        "",
-        "#### Topic Checks",
-        "",
-        *format_table(cam.get("topic_checks", []), ["name", "topic", "expected_enabled", "status", "message"]),
-        "",
-        "#### Service Checks",
-        "",
-        *format_table(cam.get("service_checks", []), ["name", "service", "expected", "actual", "status", "message"]),
-    ]
-    return lines
+    reasons: List[str] = []
+    for camera in run.get("cameras", []):
+        camera_name = str(camera.get("camera", "") or "camera")
+        if camera.get("error"):
+            reasons.append(f"{camera_name}: {camera['error']}")
+            continue
+        for check_group in ("param_checks", "topic_checks", "service_checks"):
+            for check in camera.get(check_group, []):
+                if check.get("status") != "failed":
+                    continue
+                check_name = str(
+                    check.get("name")
+                    or check.get("topic")
+                    or check.get("service")
+                    or check_group
+                )
+                message = str(check.get("message") or "check failed")
+                reasons.append(f"{camera_name}/{check_name}: {message}")
+    return "; ".join(reasons) or "run failed"
 
 
 def build_summary(result: Dict[str, Any]) -> str:
     command = result.get("command", [])
     command_text = " ".join(shlex.quote(str(item)) for item in command) if command else ""
-    run_count = result.get("run_count")
-    run_limit_label = run_count if run_count is not None else "duration"
     runs_passed = result.get("runs_passed", 0)
     runs = result.get("runs", [])
+    failed_runs = [run for run in runs if run.get("status") == "failed"]
     lines = [
         "# Launch Param Load Stress",
         "",
@@ -1490,6 +1480,7 @@ def build_summary(result: Dict[str, Any]) -> str:
         f"- Launch file: {result.get('launch_file', '')}",
         f"- SDK log level: {result.get('sdk_log_level', '')}",
         f"- Runs: {runs_passed}/{len(runs)} completed runs passed",
+        f"- Failed runs: {len(failed_runs)}",
         f"- Visual artifacts per topic per run: {result.get('save_image_count', 0)}",
         f"- Messages skipped per artifact topic per run: {result.get('skip_image_frames', 0)}",
         "",
@@ -1504,27 +1495,23 @@ def build_summary(result: Dict[str, Any]) -> str:
         lines += ["## Notes", ""]
         lines += [f"- {note}" for note in notes]
         lines.append("")
-    for run in result.get("runs", []):
-        run_idx = run.get("run", "?")
-        run_status = run.get("status", "")
-        lines.append(f"## Run {run_idx}/{run_limit_label} — {run_status}")
-        if run.get("error"):
-            lines += ["", f"**Error:** {run['error']}", ""]
-            continue
-        lines.append("")
-        for cam in run.get("cameras", []):
-            lines += _summary_camera_section(cam)
-            lines.append("")
-        if run.get("sensors"):
-            lines += [
-                "### Point Cloud and IMU Checks",
-                "",
-                *format_table(
-                    run["sensors"],
-                    ["topic", "kind", "message_count", "saved_count", "error"],
-                ),
-                "",
-            ]
+    lines += ["## Failed Runs", ""]
+    if failed_runs:
+        lines += [
+            "| Run | Reason | Launch Logs |",
+            "| ---: | --- | --- |",
+        ]
+        for run in failed_runs:
+            run_idx = run.get("run", "?")
+            reason = failed_run_reason(run).replace("\n", "<br>").replace("|", "\\|")
+            log_path = (
+                f"test_{int(run_idx):04d}/*.launch.log"
+                if str(run_idx).isdigit()
+                else ""
+            )
+            lines.append(f"| {run_idx} | {reason} | {log_path} |")
+    else:
+        lines.append("- None")
     return "\n".join(lines) + "\n"
 
 

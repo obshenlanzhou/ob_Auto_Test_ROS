@@ -1250,7 +1250,7 @@ def build_summary(result: Dict[str, Any]) -> str:
     for test in tests:
         status = str(test.get("status", "unknown") or "unknown")
         status_counts[status] = status_counts.get(status, 0) + 1
-        if status != "passed":
+        if status == "failed":
             failed_tests.append(test)
 
     planned_runs = result.get("run_count")

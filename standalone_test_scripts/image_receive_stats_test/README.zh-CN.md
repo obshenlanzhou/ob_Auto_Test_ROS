@@ -79,4 +79,5 @@ events.jsonl
 <topic_name>.csv
 ```
 
-通用结果文件和统计汇总始终生成。启用逐帧 CSV 时，每个话题还会生成一个对应的 CSV 文件。
+通用结果文件和统计汇总始终生成。`summary.md` 和 `result.json` 会记录回调失败次数、
+时间和原因。启用逐帧 CSV 时，每个话题还会生成一个对应的 CSV 文件。

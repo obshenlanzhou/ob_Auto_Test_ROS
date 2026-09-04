@@ -913,6 +913,11 @@ def build_summary(result: Dict[str, Any]) -> str:
     command = result.get("command", [])
     command_text = " ".join(shlex.quote(str(item)) for item in command) if command else ""
     topics = result.get("image_topics", [])
+    failed_attempts = [
+        attempt
+        for attempt in result.get("attempts", [])
+        if attempt.get("status") == "failed"
+    ]
     lines = [
         "# Launch Restart Stream Check",
         "",
@@ -928,14 +933,49 @@ def build_summary(result: Dict[str, Any]) -> str:
         f"- Status: {result.get('status', '')}",
         f"- Tool version: {result.get('tool_version', '')}",
         f"- Successful restarts: {result.get('successful_restarts', 0)}",
+        f"- Failed restarts: {len(failed_attempts)}",
         f"- Launch attempts: {result.get('launch_attempts', 0)}",
         f"- Visual artifacts per topic per restart: {result.get('save_image_count', 0)}",
         f"- Messages skipped per artifact topic per restart: {result.get('skip_image_frames', 0)}",
         f"- Elapsed seconds: {float(result.get('elapsed_seconds', 0.0) or 0.0):.1f}",
         "",
-        "## Monitored Streams",
+        "## Failed Attempts",
         "",
     ]
+    if failed_attempts:
+        lines.extend(
+            [
+                "| Attempt | Started At | Reason | Launch Log |",
+                "| ---: | --- | --- | --- |",
+            ]
+        )
+        for attempt in failed_attempts:
+            attempt_number = attempt.get("attempt", "")
+            launch_log = str(attempt.get("launch_log", "") or "")
+            if launch_log and str(attempt_number).isdigit():
+                launch_log = (
+                    f"logs/test_{int(attempt_number):04d}/{Path(launch_log).name}"
+                )
+            cells = [
+                attempt_number,
+                attempt.get("started_at", ""),
+                attempt.get("message", ""),
+                launch_log,
+            ]
+            escaped_cells = [
+                str(cell).replace("\n", "<br>").replace("|", "\\|")
+                for cell in cells
+            ]
+            lines.append("| " + " | ".join(escaped_cells) + " |")
+    else:
+        lines.append("- None")
+    lines.extend(
+        [
+            "",
+            "## Monitored Streams",
+            "",
+        ]
+    )
     if topics:
         lines.extend(f"- {topic}" for topic in topics)
     else:
