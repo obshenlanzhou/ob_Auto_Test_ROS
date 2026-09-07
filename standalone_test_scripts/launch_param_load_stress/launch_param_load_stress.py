@@ -1431,6 +1431,10 @@ def status_has_failure(rows: Iterable[Dict[str, Any]]) -> bool:
     return any(row.get("status") == "failed" for row in rows)
 
 
+def run_log_directory(results_dir: Path, run_index: int) -> Path:
+    return results_dir / "logs" / f"test_{run_index:04d}"
+
+
 def failed_run_reason(run: Dict[str, Any]) -> str:
     if run.get("error"):
         return str(run["error"])
@@ -1505,7 +1509,7 @@ def build_summary(result: Dict[str, Any]) -> str:
             run_idx = run.get("run", "?")
             reason = failed_run_reason(run).replace("\n", "<br>").replace("|", "\\|")
             log_path = (
-                f"test_{int(run_idx):04d}/*.launch.log"
+                f"logs/test_{int(run_idx):04d}/*.launch.log"
                 if str(run_idx).isdigit()
                 else ""
             )
@@ -1756,7 +1760,7 @@ def run(args) -> int:
                 phase="running",
             )
             test_name = f"test_{run_index:04d}"
-            run_dir = ensure_dir(results_dir / test_name)
+            run_dir = ensure_dir(run_log_directory(results_dir, run_index))
             run_result: Dict[str, Any] = {
                 "run": run_index,
                 "status": "failed",

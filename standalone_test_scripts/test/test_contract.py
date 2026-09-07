@@ -1607,10 +1607,16 @@ def test_launch_param_summary_lists_only_failed_runs_with_reasons():
     assert "## Failed Runs" in summary
     assert (
         "| 2 | camera_01/enable_depth: expected true, got false | "
-        "test_0002/*.launch.log |"
+        "logs/test_0002/*.launch.log |"
     ) in summary
     assert "## Run 1/" not in summary
     assert "## Run 3/" not in summary
+
+
+def test_launch_param_run_logs_use_common_logs_directory(tmp_path):
+    module = load_script(SCRIPTS["launch_param_load"])
+
+    assert module.run_log_directory(tmp_path, 2) == tmp_path / "logs" / "test_0002"
 
 
 def test_stream_toggle_summary_has_empty_failed_cycles_section():
