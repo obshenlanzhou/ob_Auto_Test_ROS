@@ -47,6 +47,7 @@ REQUIRED_RESULT_KEYS = {
     "error",
 }
 _DURATION_RE = re.compile(r"^\d+(?:\.\d+)?[smh]?$", re.IGNORECASE)
+DEFAULT_NETWORK_DEVICE_PORT = "8090"
 
 
 class ManifestError(ValueError):
@@ -222,12 +223,30 @@ def normalize_values(manifest: Dict[str, Any], raw_values: Any) -> Dict[str, Any
         if field_type == "list":
             values[name] = _list_values(raw)
         elif field_type == "camera-list":
-            values[name] = raw if isinstance(raw, list) else []
+            values[name] = _normalize_camera_values(raw)
         elif field_type in {"flag", "boolean"}:
             values[name] = _bool_value(raw)
         else:
             values[name] = _safe_text(raw)
     return values
+
+
+def _normalize_camera_values(value: Any) -> List[Any]:
+    if not isinstance(value, list):
+        return []
+    cameras = []
+    for camera in value:
+        if not isinstance(camera, dict):
+            cameras.append(camera)
+            continue
+        normalized = dict(camera)
+        if (
+            _safe_text(normalized.get("device-ip"))
+            and not _safe_text(normalized.get("device-port"))
+        ):
+            normalized["device-port"] = DEFAULT_NETWORK_DEVICE_PORT
+        cameras.append(normalized)
+    return cameras
 
 
 def _camera_specs(value: Any) -> List[str]:

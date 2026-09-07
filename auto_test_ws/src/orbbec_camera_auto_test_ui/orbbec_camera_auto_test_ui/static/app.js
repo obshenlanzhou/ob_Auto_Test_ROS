@@ -380,12 +380,13 @@ const CAMERA_FIELD_LABELS = {
   "device-port": ["设备端口", "Device Port"],
   "config-file-path": ["参数配置 YAML", "Config YAML"],
 };
+const DEFAULT_NETWORK_DEVICE_PORT = "8090";
 const CAMERA_FIELD_PLACEHOLDERS = {
   name: "camera_01",
   "serial-number": "CV2R1610002F",
   "usb-port": "2-1",
   "device-ip": "192.168.1.10",
-  "device-port": "8090",
+  "device-port": DEFAULT_NETWORK_DEVICE_PORT,
   "config-file-path": "/path/to/camera_config.yaml",
 };
 const CAMERA_FIELDS_BY_KIND = {
@@ -472,7 +473,8 @@ function addCameraRow(container, kind, camera = {}, field = {}, onRemove = () =>
     const input = document.createElement("input");
     input.type = "text";
     input.dataset.cameraField = name;
-    input.value = camera[name] || "";
+    input.value = camera[name]
+      || (kind === "network" && name === "device-port" ? DEFAULT_NETWORK_DEVICE_PORT : "");
     input.placeholder = CAMERA_FIELD_PLACEHOLDERS[name] || "";
     if (name === "config-file-path") {
       input.classList.add("path-input");

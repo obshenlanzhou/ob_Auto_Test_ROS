@@ -316,6 +316,51 @@ def test_camera_fields_build_launch_style_specs(tmp_path):
     assert args[-2:] == ["--results-dir", str(tmp_path)]
 
 
+def test_network_camera_defaults_device_port(tmp_path):
+    manifest = manifest_catalog(STANDALONE_ROOT)["launch_restart_stream_check"]
+    args, values = build_command(
+        manifest,
+        {
+            "run_count": "1",
+            "cameras": [
+                {
+                    "name": "camera_01",
+                    "device-ip": "192.168.1.10",
+                    "device-port": "",
+                }
+            ],
+        },
+        tmp_path,
+    )
+
+    camera_index = args.index("--camera")
+    assert args[camera_index + 1] == (
+        "name=camera_01,device-ip=192.168.1.10,device-port=8090"
+    )
+    assert values["cameras"][0]["device-port"] == "8090"
+
+
+def test_network_camera_preserves_explicit_device_port(tmp_path):
+    manifest = manifest_catalog(STANDALONE_ROOT)["launch_restart_stream_check"]
+    args, values = build_command(
+        manifest,
+        {
+            "run_count": "1",
+            "cameras": [
+                {
+                    "device-ip": "192.168.1.10",
+                    "device-port": "9000",
+                }
+            ],
+        },
+        tmp_path,
+    )
+
+    camera_index = args.index("--camera")
+    assert args[camera_index + 1] == "device-ip=192.168.1.10,device-port=9000"
+    assert values["cameras"][0]["device-port"] == "9000"
+
+
 def test_ros_specific_image_fields_are_conditional(tmp_path):
     manifest = manifest_catalog(STANDALONE_ROOT)["image_receive_stats_test"]
     base = {"image_topics": ["/camera/color/image_raw"]}
@@ -860,6 +905,8 @@ def test_camera_editor_separates_usb_and_network_fields():
 
     assert 'usb: ["name", "serial-number", "usb-port"]' in script
     assert 'network: ["name", "device-ip", "device-port"]' in script
+    assert 'const DEFAULT_NETWORK_DEVICE_PORT = "8090"' in script
+    assert 'kind === "network" && name === "device-port"' in script
     assert 'if (field.config_file_required) cameraFields.push("config-file-path")' in script
     assert 'rowHeader.className = "camera-row-header"' in script
     assert 'headingTitle.textContent = kind === "usb" ? "USB 相机" : "网络相机"' in script
