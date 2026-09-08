@@ -1524,6 +1524,80 @@ def test_launch_restart_summary_reports_no_failed_attempts():
     assert "## Failed Attempts\n\n- None" in summary
 
 
+def test_launch_restart_emits_failed_attempt_event_for_ui_counter():
+    module = load_script(SCRIPTS["launch_restart"])
+    emitted = []
+
+    module.emit_failed_attempt(
+        lambda message, **fields: emitted.append((message, fields)),
+        "attempt 2: failed; continuing with the next cycle",
+        attempt_index=2,
+        run_count=10,
+    )
+
+    assert emitted == [
+        (
+            "attempt 2: failed; continuing with the next cycle",
+            {
+                "event": "failure",
+                "status": "failed",
+                "current": 2,
+                "total": 10,
+                "attempt": 2,
+                "phase": "failed-cycle",
+            },
+        )
+    ]
+
+
+@pytest.mark.parametrize(
+    "script_name",
+    ("export_load", "firmware_update", "launch_param_load", "preset_upgrade"),
+)
+def test_stress_cycle_outcomes_emit_exactly_one_ui_counter_event(script_name):
+    module = load_script(SCRIPTS[script_name])
+    emitted = []
+    logger = lambda message, **fields: emitted.append((message, fields))
+
+    module.emit_cycle_outcome(
+        logger,
+        "cycle passed",
+        current=2,
+        total=10,
+        status="passed",
+    )
+    module.emit_cycle_outcome(
+        logger,
+        "cycle failed",
+        current=3,
+        total=10,
+        status="failed",
+    )
+
+    assert emitted == [
+        (
+            "cycle passed",
+            {
+                "event": "progress",
+                "status": "passed",
+                "current": 2,
+                "total": 10,
+                "phase": "completed-cycle",
+            },
+        ),
+        (
+            "cycle failed",
+            {
+                "event": "failure",
+                "status": "failed",
+                "current": 3,
+                "total": 10,
+                "phase": "failed-cycle",
+            },
+        ),
+    ]
+
+
 @pytest.mark.parametrize(
     "script_name", ("firmware_update", "export_load", "preset_upgrade")
 )

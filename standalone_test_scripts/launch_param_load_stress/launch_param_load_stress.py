@@ -136,6 +136,27 @@ class StatusLogger:
             self.events.emit(event, message, **fields)
 
 
+def emit_cycle_outcome(
+    emit: Any,
+    message: str,
+    *,
+    current: int,
+    total: Optional[int],
+    status: str,
+) -> None:
+    """Emit one terminal event for a completed or failed test cycle."""
+    if status not in {"passed", "failed"}:
+        raise ValueError(f"unsupported cycle outcome: {status}")
+    emit(
+        message,
+        event="progress" if status == "passed" else "failure",
+        status=status,
+        current=current,
+        total=total,
+        phase="completed-cycle" if status == "passed" else "failed-cycle",
+    )
+
+
 def build_verification_map_text() -> str:
     lines = [VERIFICATION_DESCRIPTION.rstrip()]
     for key, topic in sorted(STREAM_TOPIC_MAP.items()):
@@ -1954,11 +1975,21 @@ def run(args) -> int:
             result["runs"].append(run_result)
             if run_result["status"] == "passed":
                 result["runs_passed"] += 1
-            emit(
+            outcome_message = (
                 f"run {run_index}/"
                 f"{run_count if run_count is not None else 'duration'}: "
                 f"{run_result['status']}"
             )
+            if run_result["status"] in {"passed", "failed"}:
+                emit_cycle_outcome(
+                    emit,
+                    outcome_message,
+                    current=run_index,
+                    total=run_count,
+                    status=run_result["status"],
+                )
+            else:
+                emit(outcome_message)
             if INTERRUPTED:
                 break
             if run_result["status"] == "failed" and not args.continue_on_failure:

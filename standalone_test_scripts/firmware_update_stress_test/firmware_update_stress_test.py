@@ -101,6 +101,27 @@ class StatusLogger:
             self.events.emit(event, message, **fields)
 
 
+def emit_cycle_outcome(
+    emit: Any,
+    message: str,
+    *,
+    current: int,
+    total: Optional[int],
+    status: str,
+) -> None:
+    """Emit one terminal event for a completed or failed test cycle."""
+    if status not in {"passed", "failed"}:
+        raise ValueError(f"unsupported cycle outcome: {status}")
+    emit(
+        message,
+        event="progress" if status == "passed" else "failure",
+        status=status,
+        current=current,
+        total=total,
+        phase="completed-cycle" if status == "passed" else "failed-cycle",
+    )
+
+
 def capture_sourced_env(ros_setup: str, driver_setup: str, ros_version: str) -> Dict[str, str]:
     env = dict(os.environ)
     env["ROS_VERSION"] = ros_version
@@ -514,6 +535,13 @@ def run(args) -> int:
                 emit(
                     f"[FAIL] target={test_record['target']}: {failure_message}"
                 )
+                emit_cycle_outcome(
+                    emit,
+                    f"{test_name} ({progress_label}): failed",
+                    current=test_index,
+                    total=run_count,
+                    status="failed",
+                )
                 if not args.continue_on_failure:
                     emit(
                         "stopping after failed update "
@@ -533,13 +561,13 @@ def run(args) -> int:
             )
             test_record["ended_at"] = datetime.now().isoformat(timespec="seconds")
             result["passed_tests"] += 1
-            emit(
+            emit_cycle_outcome(
+                emit,
                 f"{test_name} ({progress_label}): passed, "
                 f"updated {success_log['updated']}/{success_log['total']}",
-                event="progress",
                 current=test_index,
                 total=run_count,
-                phase="completed-cycle",
+                status="passed",
             )
 
             if INTERRUPTED:
@@ -579,6 +607,13 @@ def run(args) -> int:
                 result["tests"][-1]["failure_details"] = [
                     {"target": target, "topic": "firmware update", "reason": str(exc)}
                 ]
+                emit_cycle_outcome(
+                    emit,
+                    f"test_{test_index:04d}: failed",
+                    current=test_index,
+                    total=run_count,
+                    status="failed",
+                )
     finally:
         result["elapsed_seconds"] = time.monotonic() - start_monotonic
         for test in result.get("tests", []):

@@ -138,6 +138,25 @@ class StatusLogger:
             self.events.emit(event, message, **fields)
 
 
+def emit_failed_attempt(
+    emit: Any,
+    message: str,
+    *,
+    attempt_index: int,
+    run_count: Optional[int],
+) -> None:
+    """Emit the terminal event used by the UI to count a failed attempt."""
+    emit(
+        message,
+        event="failure",
+        status="failed",
+        current=attempt_index,
+        total=run_count,
+        attempt=attempt_index,
+        phase="failed-cycle",
+    )
+
+
 def capture_sourced_env(ros_setup: str, driver_setup: str, ros_version: str) -> Dict[str, str]:
     env = dict(os.environ)
     env["ROS_VERSION"] = ros_version
@@ -1338,11 +1357,18 @@ def run(args) -> int:
                         f"attempt {attempt_index}: {message}"
                     )
                     attempt["ended_at"] = datetime.now().isoformat(timespec="seconds")
+                    emit_failed_attempt(
+                        emit,
+                        f"attempt {attempt_index}: failed"
+                        + (
+                            "; stopping launch and continuing with the next cycle"
+                            if args.continue_on_failure
+                            else ""
+                        ),
+                        attempt_index=attempt_index,
+                        run_count=run_count,
+                    )
                     if args.continue_on_failure:
-                        emit(
-                            f"attempt {attempt_index}: failed; stopping launch and "
-                            "continuing with the next cycle"
-                        )
                         session.stop()
                         active_session = None
                         current_attempt = None
@@ -1425,11 +1451,18 @@ def run(args) -> int:
                     attempt["ended_at"] = datetime.now().isoformat(timespec="seconds")
                     result["status"] = "failed"
                     result.setdefault("errors", []).append(sensor_message)
+                    emit_failed_attempt(
+                        emit,
+                        f"attempt {attempt_index}: {sensor_message}"
+                        + (
+                            "; continuing with the next cycle"
+                            if args.continue_on_failure
+                            else ""
+                        ),
+                        attempt_index=attempt_index,
+                        run_count=run_count,
+                    )
                     if args.continue_on_failure:
-                        emit(
-                            f"attempt {attempt_index}: {sensor_message}; continuing "
-                            "with the next cycle"
-                        )
                         session.stop()
                         active_session = None
                         current_attempt = None

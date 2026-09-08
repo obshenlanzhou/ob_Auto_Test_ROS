@@ -222,6 +222,27 @@ class StatusLogger:
             self.events.emit(event, message, **fields)
 
 
+def emit_cycle_outcome(
+    emit: Any,
+    message: str,
+    *,
+    current: int,
+    total: Optional[int],
+    status: str,
+) -> None:
+    """Emit one terminal event for a completed or failed test cycle."""
+    if status not in {"passed", "failed"}:
+        raise ValueError(f"unsupported cycle outcome: {status}")
+    emit(
+        message,
+        event="progress" if status == "passed" else "failure",
+        status=status,
+        current=current,
+        total=total,
+        phase="completed-cycle" if status == "passed" else "failed-cycle",
+    )
+
+
 def capture_sourced_env(ros_setup: str, driver_setup: str, ros_version: str) -> Dict[str, str]:
     env = dict(os.environ)
     env["ROS_VERSION"] = ros_version
@@ -1716,12 +1737,19 @@ def run(args) -> int:
                     result["status"] = "failed"
                     result.setdefault("errors", []).append(f"{test_name}: {message}")
                     emit_failure_details(emit, failure_details)
+                    emit_cycle_outcome(
+                        emit,
+                        f"{test_name}: streams not stable",
+                        current=test_index,
+                        total=run_count,
+                        status="failed",
+                    )
+                    current_test = None
                     if args.continue_on_failure:
                         emit(f"{test_name}: streams not stable; continuing after cleanup")
                         for session in reversed(sessions):
                             session.stop()
                         active_sessions = []
-                        current_test = None
                         continue
                     result["manual_confirmation_required"] = True
                     result["manual_confirmation_message"] = (
@@ -1779,6 +1807,14 @@ def run(args) -> int:
                         f"{test_name}: {sensor_message}"
                     )
                     emit_failure_details(emit, failure_details)
+                    emit_cycle_outcome(
+                        emit,
+                        f"{test_name}: sensor artifact capture failed",
+                        current=test_index,
+                        total=run_count,
+                        status="failed",
+                    )
+                    current_test = None
                     if args.continue_on_failure:
                         emit(
                             f"{test_name}: sensor artifact capture failed; "
@@ -1787,7 +1823,6 @@ def run(args) -> int:
                         for session in reversed(sessions):
                             session.stop()
                         active_sessions = []
-                        current_test = None
                         continue
                     raise RuntimeError(sensor_message)
                 emit(f"{test_name}: {sensor_message}")
@@ -1834,6 +1869,14 @@ def run(args) -> int:
                         f"{test_name}: export compare failed for {failed_names}"
                     )
                     emit_failure_details(emit, failure_details)
+                    emit_cycle_outcome(
+                        emit,
+                        f"{test_name}: export compare failed for {failed_names}",
+                        current=test_index,
+                        total=run_count,
+                        status="failed",
+                    )
+                    current_test = None
                     if args.continue_on_failure:
                         emit(
                             f"{test_name}: export compare failed for {failed_names}; "
@@ -1842,7 +1885,6 @@ def run(args) -> int:
                         for session in reversed(sessions):
                             session.stop()
                         active_sessions = []
-                        current_test = None
                         continue
                     result["manual_confirmation_required"] = True
                     result["manual_confirmation_message"] = (
@@ -1864,6 +1906,13 @@ def run(args) -> int:
                 test_payload["message"] = "all cameras exported matching parameters"
                 test_payload["ended_at"] = datetime.now().isoformat(timespec="seconds")
                 result["passed_tests"] += 1
+                emit_cycle_outcome(
+                    emit,
+                    f"{test_name}: passed",
+                    current=test_index,
+                    total=run_count,
+                    status="passed",
+                )
                 current_test = None
                 if (run_count is None or test_index < run_count) and (
                     deadline is None or time.monotonic() < deadline
@@ -1893,6 +1942,14 @@ def run(args) -> int:
             if current_test is not None:
                 current_test["status"] = "failed"
                 current_test["message"] = str(exc)
+                emit_cycle_outcome(
+                    emit,
+                    f"test_{test_index:04d}: failed",
+                    current=test_index,
+                    total=run_count,
+                    status="failed",
+                )
+                current_test = None
     finally:
         if active_sessions and not keep_launch_running:
             emit("stop active launches")

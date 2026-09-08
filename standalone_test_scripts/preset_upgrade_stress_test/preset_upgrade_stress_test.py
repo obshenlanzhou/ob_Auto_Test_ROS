@@ -256,6 +256,27 @@ class StatusLogger:
             self.events.emit(event, message, **fields)
 
 
+def emit_cycle_outcome(
+    emit: Any,
+    message: str,
+    *,
+    current: int,
+    total: Optional[int],
+    status: str,
+) -> None:
+    """Emit one terminal event for a completed or failed preset test."""
+    if status not in {"passed", "failed"}:
+        raise ValueError(f"unsupported cycle outcome: {status}")
+    emit(
+        message,
+        event="progress" if status == "passed" else "failure",
+        status=status,
+        current=current,
+        total=total,
+        phase="completed-cycle" if status == "passed" else "failed-cycle",
+    )
+
+
 def capture_sourced_env(ros_setup: str, driver_setup: str, ros_version: str) -> Dict[str, str]:
     env = dict(os.environ)
     env["ROS_VERSION"] = ros_version
@@ -1307,13 +1328,14 @@ def run(args) -> int:
     )
     active_sessions: List[LaunchSession] = []
     test_index = 0
+    round_index = 0
+    current_test: Optional[Dict[str, Any]] = None
     test_image_dir = results_dir / "images"
     image_paths = ImagePathSequence(test_image_dir)
     sensor_paths = SensorArtifactPathSequence(test_image_dir)
 
     try:
         with RosImageHarness(args.ros_version, "preset_upgrade_stress_test", args.queue_size) as harness:
-            round_index = 0
             while True:
                 if INTERRUPTED:
                     result["status"] = "interrupted"
@@ -1351,6 +1373,7 @@ def run(args) -> int:
                         "sensors": [],
                     }
                     result["tests"].append(test_record)
+                    current_test = test_record
                     test_failed = False
 
                     for camera in cameras:
@@ -1400,7 +1423,14 @@ def run(args) -> int:
                                 )
                                 result["status"] = "failed"
                                 result.setdefault("errors", []).append(message)
-                                emit(f"{test_name}: {message}; continuing with next preset")
+                                emit_cycle_outcome(
+                                    emit,
+                                    f"{test_name}: {message}; continuing with next preset",
+                                    current=round_index,
+                                    total=run_count,
+                                    status="failed",
+                                )
+                                current_test = None
                                 test_failed = True
                                 break
                             raise RuntimeError(
@@ -1491,10 +1521,15 @@ def run(args) -> int:
                                 )
                                 result["status"] = "failed"
                                 result.setdefault("errors", []).append(failure_message)
-                                emit(
+                                emit_cycle_outcome(
+                                    emit,
                                     f"{test_name}: {failure_message}; continuing with "
-                                    "next preset after cleanup"
+                                    "next preset after cleanup",
+                                    current=round_index,
+                                    total=run_count,
+                                    status="failed",
                                 )
+                                current_test = None
                                 test_failed = True
                                 break
                             raise RuntimeError(f"{session.camera_name}: {message}")
@@ -1608,10 +1643,15 @@ def run(args) -> int:
                             )
                             result["status"] = "failed"
                             result.setdefault("errors", []).append(sensor_message)
-                            emit(
+                            emit_cycle_outcome(
+                                emit,
                                 f"{test_name}: {sensor_message}; continuing with next "
-                                "preset after cleanup"
+                                "preset after cleanup",
+                                current=round_index,
+                                total=run_count,
+                                status="failed",
                             )
+                            current_test = None
                             for session in reversed(sessions):
                                 session.stop()
                             active_sessions = []
@@ -1625,13 +1665,14 @@ def run(args) -> int:
                     test_record["status"] = "passed"
                     test_record["ended_at"] = datetime.now().isoformat(timespec="seconds")
                     result["passed_tests"] += 1
-                    emit(
+                    emit_cycle_outcome(
+                        emit,
                         f"{test_name}: passed, preset={preset.name}",
-                        event="progress",
                         current=round_index,
                         total=run_count,
-                        phase="completed-cycle",
+                        status="passed",
                     )
+                    current_test = None
                     if INTERRUPTED:
                         result["status"] = "interrupted"
                         emit(
@@ -1644,23 +1685,31 @@ def run(args) -> int:
                         time.sleep(restart_delay)
     except KeyboardInterrupt:
         result["status"] = "interrupted"
-        if result["tests"] and result["tests"][-1].get("status") == "running":
-            result["tests"][-1]["status"] = "interrupted"
-            result["tests"][-1]["message"] = "interrupted by user"
+        if current_test is not None and current_test.get("status") == "running":
+            current_test["status"] = "interrupted"
+            current_test["message"] = "interrupted by user"
         emit("test interrupted by user")
     except Exception as exc:  # noqa: BLE001
         if INTERRUPTED:
             result["status"] = "interrupted"
-            if result["tests"] and result["tests"][-1].get("status") == "running":
-                result["tests"][-1]["status"] = "interrupted"
-                result["tests"][-1]["message"] = "interrupted by user"
+            if current_test is not None and current_test.get("status") == "running":
+                current_test["status"] = "interrupted"
+                current_test["message"] = "interrupted by user"
             emit("test interrupted by user")
         else:
             result["status"] = "failed"
             result["error"] = str(exc)
-            if result["tests"]:
-                result["tests"][-1]["status"] = "failed"
-                result["tests"][-1]["message"] = str(exc)
+            if current_test is not None:
+                current_test["status"] = "failed"
+                current_test["message"] = str(exc)
+                emit_cycle_outcome(
+                    emit,
+                    f"test_{test_index:04d}: failed",
+                    current=round_index,
+                    total=run_count,
+                    status="failed",
+                )
+                current_test = None
             emit(f"test failed: {exc}")
     finally:
         if active_sessions:
