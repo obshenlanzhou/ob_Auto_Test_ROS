@@ -982,6 +982,29 @@ def test_standalone_ui_prefers_failed_cycle_over_retry_warning():
     assert 'recovery_failures: "恢复失败"' in script
 
 
+def test_standalone_completion_card_normalizes_outcome_counters():
+    script = (
+        PACKAGE_ROOT
+        / "orbbec_camera_auto_test_ui"
+        / "static"
+        / "app.js"
+    ).read_text(encoding="utf-8")
+
+    assert "function standaloneResultHighlights(" in script
+    assert 'successful_restarts", "passed_runs", "passed_tests", "passed_cycles"' in script
+    assert '"failed_restarts", "failed_runs", "failed_tests", "failed_cycles"' in script
+    assert '"completed_runs", "completed_tests", "completed_cycles", "launch_attempts"' in script
+    assert '["成功次数", successes]' in script
+    assert '["失败次数", failures]' in script
+    assert '["完成次数", completed]' in script
+    assert (
+        "const completed = (Number(successes) || 0) + (Number(failures) || 0);"
+        in script
+    )
+    assert '["警告次数", warningCount]' in script
+    assert 'if (!progress.supported)' in script
+
+
 def test_standalone_paths_use_full_width_and_bilingual_labels():
     script = (
         PACKAGE_ROOT

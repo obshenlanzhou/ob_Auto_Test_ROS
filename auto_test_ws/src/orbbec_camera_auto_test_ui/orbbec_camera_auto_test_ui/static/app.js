@@ -50,9 +50,22 @@ const RESULT_SUMMARY_LABELS = {
   completed_cycles: "完成轮次",
   recovery_successes: "恢复成功",
   recovery_failures: "恢复失败",
+  failed_runs: "失败轮次",
+  failed_tests: "失败测试",
+  failed_restarts: "失败重启",
+  failure_count: "失败次数",
   topic_count: "Topic 数量",
   warning_count: "警告数量",
 };
+const STANDALONE_SUMMARY_ALIASES = {
+  successes: ["successes", "successful_restarts", "passed_runs", "passed_tests", "passed_cycles"],
+  failures: ["failures", "failed_restarts", "failed_runs", "failed_tests", "failed_cycles"],
+  completed: ["rounds", "completed_runs", "completed_tests", "completed_cycles", "launch_attempts"],
+  warnings: ["warning_count"],
+};
+const STANDALONE_NORMALIZED_SUMMARY_KEYS = new Set(
+  Object.values(STANDALONE_SUMMARY_ALIASES).flat()
+);
 const DEFAULT_SETUPS = {
   "2": {
     ros: "/opt/ros/humble/setup.bash",
@@ -1395,6 +1408,46 @@ function resultSummaryLabel(key) {
   return RESULT_SUMMARY_LABELS[key] || String(key).replaceAll("_", " ");
 }
 
+function firstSummaryValue(summary, keys) {
+  for (const key of keys) {
+    const value = summary[key];
+    if (value !== null && value !== undefined && value !== "") return value;
+  }
+  return null;
+}
+
+function standaloneResultHighlights(result = {}, snapshot = {}, warnings = []) {
+  const summary = result.summary && typeof result.summary === "object"
+    ? result.summary
+    : {};
+  const progress = snapshot.standalone?.progress || {};
+  if (!progress.supported) {
+    return Object.entries(summary).map(([key, value]) => [resultSummaryLabel(key), value]);
+  }
+
+  const summarySuccesses = firstSummaryValue(summary, STANDALONE_SUMMARY_ALIASES.successes);
+  const summaryFailures = firstSummaryValue(summary, STANDALONE_SUMMARY_ALIASES.failures);
+  const successes = progress.successes ?? summarySuccesses ?? 0;
+  const failures = progress.failures ?? summaryFailures ?? 0;
+  const completed = (Number(successes) || 0) + (Number(failures) || 0);
+  const highlights = [
+    ["成功次数", successes],
+    ["失败次数", failures],
+    ["完成次数", completed],
+  ];
+
+  const summaryWarnings = firstSummaryValue(summary, STANDALONE_SUMMARY_ALIASES.warnings);
+  const warningCount = summaryWarnings ?? warnings.length;
+  if ((Number(warningCount) || 0) > 0) {
+    highlights.push(["警告次数", warningCount]);
+  }
+  for (const [key, value] of Object.entries(summary)) {
+    if (STANDALONE_NORMALIZED_SUMMARY_KEYS.has(key)) continue;
+    highlights.push([resultSummaryLabel(key), value]);
+  }
+  return highlights;
+}
+
 function resultStatusPresentation(status) {
   return {
     passed: { mark: "✓", kicker: "RUN COMPLETE", title: "测试已通过", message: "所有已报告的检查均已完成。" },
@@ -1480,10 +1533,11 @@ function renderResultSummary(snapshot, detail = {}) {
     factContainer.appendChild(fact);
   }
 
-  const highlights = [];
-  for (const [key, value] of Object.entries(result.summary || {})) {
-    highlights.push([resultSummaryLabel(key), displayResultValue(value)]);
-  }
+  const highlights = snapshot.runner_type === "standalone"
+    ? standaloneResultHighlights(result, snapshot, warnings)
+    : Object.entries(result.summary || {}).map(
+        ([key, value]) => [resultSummaryLabel(key), value]
+      );
   if (!highlights.length && snapshot.runner_type !== "standalone") {
     const statuses = results.map((item) => item.status).filter(Boolean);
     if (statuses.length) {
@@ -1495,7 +1549,12 @@ function renderResultSummary(snapshot, detail = {}) {
     const topics = snapshot.performance?.fps_topics || [];
     if (topics.length) highlights.push(["数据流", `${topics.length} 个 Topic`]);
   }
-  if (warnings.length) highlights.push(["警告", `${warnings.length} 条`]);
+  if (
+    warnings.length
+    && !highlights.some(([labelText]) => ["警告", "警告次数", "警告数量"].includes(labelText))
+  ) {
+    highlights.push(["警告", `${warnings.length} 条`]);
+  }
 
   const highlightContainer = $("runResultHighlights");
   highlightContainer.replaceChildren();
