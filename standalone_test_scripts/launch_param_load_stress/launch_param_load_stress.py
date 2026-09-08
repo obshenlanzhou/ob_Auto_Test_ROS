@@ -621,7 +621,7 @@ def check_params(
         if not ok:
             row["status"] = "failed"
             row["message"] = message or "parameter query failed"
-            emit(f"[PARAM][FAIL] {key}: {row['message']}")
+            emit(f"[PARAM][FAIL] camera={camera_name} parameter={key}: {row['message']}")
         elif values_match(expected, actual):
             row["status"] = "passed"
             row["message"] = "matches"
@@ -629,7 +629,7 @@ def check_params(
         else:
             row["status"] = "failed"
             row["message"] = f"expected {expected!r}, got {actual!r}"
-            emit(f"[PARAM][FAIL] {key}: {row['message']}")
+            emit(f"[PARAM][FAIL] camera={camera_name} parameter={key}: {row['message']}")
         rows.append(row)
     return rows
 
@@ -689,11 +689,14 @@ def check_topics(
         elif expected_enabled:
             row["status"] = "failed"
             row["message"] = message
-            emit(f"[TOPIC][FAIL] {topic}: {message}")
+            emit(f"[TOPIC][FAIL] camera={camera_name} topic={topic}: {message}")
         elif has_message:
             row["status"] = "failed"
             row["message"] = "received message although stream is disabled"
-            emit(f"[TOPIC][FAIL] {topic}: disabled but received message")
+            emit(
+                f"[TOPIC][FAIL] camera={camera_name} topic={topic}: "
+                "disabled but received message"
+            )
         else:
             row["status"] = "passed"
             row["message"] = "no message observed while disabled"
@@ -1370,7 +1373,9 @@ def check_services(
         if not ok:
             row["status"] = "failed"
             row["message"] = message
-            emit(f"[SERVICE][FAIL] {service_name}: {message}")
+            emit(
+                f"[SERVICE][FAIL] camera={camera_name} service={service_name}: {message}"
+            )
         elif values_match(expected, actual):
             row["status"] = "passed"
             row["message"] = "matches"
@@ -1378,7 +1383,10 @@ def check_services(
         else:
             row["status"] = "failed"
             row["message"] = f"expected {expected!r}, got {actual!r}"
-            emit(f"[SERVICE][FAIL] {service_name}: {row['message']}")
+            emit(
+                f"[SERVICE][FAIL] camera={camera_name} service={service_name}: "
+                f"{row['message']}"
+            )
         rows.append(row)
     return rows
 
@@ -1458,6 +1466,38 @@ def failed_run_reason(run: Dict[str, Any]) -> str:
                 message = str(check.get("message") or "check failed")
                 reasons.append(f"{camera_name}/{check_name}: {message}")
     return "; ".join(reasons) or "run failed"
+
+
+def run_failure_details(run: Dict[str, Any]) -> List[Dict[str, str]]:
+    details: List[Dict[str, str]] = []
+    for camera in run.get("cameras", []):
+        camera_name = str(camera.get("camera", "") or "unknown")
+        for group, kind in (
+            ("param_checks", "parameter"),
+            ("topic_checks", "topic"),
+            ("service_checks", "service"),
+        ):
+            for check in camera.get(group, []):
+                if check.get("status") != "failed":
+                    continue
+                target = str(
+                    check.get("topic")
+                    or check.get("service")
+                    or check.get("name")
+                    or kind
+                )
+                details.append(
+                    {
+                        "camera": camera_name,
+                        "topic": target,
+                        "reason": str(check.get("message") or f"{kind} check failed"),
+                    }
+                )
+    if not details and run.get("error"):
+        details.append(
+            {"camera": "unknown", "topic": "run", "reason": str(run["error"])}
+        )
+    return details
 
 
 def build_summary(result: Dict[str, Any]) -> str:
@@ -1801,7 +1841,10 @@ def run(args) -> int:
                 # Wait for each camera to be ready
                 for camera, session in zip(cameras, sessions):
                     emit(f"waiting for {camera.name} to start...")
-                    wait_for_launch_start(session, startup_timeout, emit=emit)
+                    try:
+                        wait_for_launch_start(session, startup_timeout, emit=emit)
+                    except Exception as exc:
+                        raise RuntimeError(f"camera={camera.name}: {exc}") from exc
 
                 # Check each camera
                 images_dir = results_dir / "images" if save_images_count > 0 else None
@@ -1894,12 +1937,15 @@ def run(args) -> int:
                     for k in ("param_checks", "topic_checks", "service_checks")
                 )
                 run_result["status"] = "failed" if failed else "passed"
+                if failed:
+                    run_result["failure_details"] = run_failure_details(run_result)
             except KeyboardInterrupt:
                 run_result["status"] = "interrupted"
                 emit("run interrupted by user")
             except Exception as exc:  # noqa: BLE001
                 run_result["status"] = "failed"
                 run_result["error"] = str(exc)
+                run_result["failure_details"] = run_failure_details(run_result)
                 emit(f"run failed: {exc}")
             finally:
                 for session in sessions:

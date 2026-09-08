@@ -1326,10 +1326,58 @@ function resultWarningMessage(warning) {
   return warning.outcome_message || warning.message || "";
 }
 
+function resultFailureDetails(result = {}) {
+  const root = result.details && typeof result.details === "object" ? result.details : result;
+  const found = [];
+  const visited = new Set();
+  function visit(value) {
+    if (!value || typeof value !== "object" || visited.has(value)) return;
+    visited.add(value);
+    if (Array.isArray(value.failure_details)) {
+      for (const detail of value.failure_details) {
+        if (detail && typeof detail === "object") found.push(detail);
+      }
+    }
+    for (const key of ["cycles", "tests", "runs", "attempts", "operations", "profile_switch"]) {
+      const child = value[key];
+      if (Array.isArray(child)) {
+        for (const item of child) visit(item);
+      } else {
+        visit(child);
+      }
+    }
+  }
+  visit(root);
+  const unique = [];
+  const keys = new Set();
+  for (const detail of found) {
+    const camera = detail.camera || detail.target || "unknown";
+    const topic = detail.topic || detail.operation || "";
+    const reason = detail.reason || detail.message || "check failed";
+    const key = `${camera}\u0000${topic}\u0000${reason}`;
+    if (keys.has(key)) continue;
+    keys.add(key);
+    unique.push({ camera, topic, reason });
+  }
+  return unique;
+}
+
+function formatResultFailureDetails(details) {
+  return details.map((detail) => {
+    const target = detail.topic ? ` · ${detail.topic}` : "";
+    return `${detail.camera}${target}: ${detail.reason}`;
+  });
+}
+
 function resultFailureMessage(result = {}) {
   const errorValue = result.error?.message || result.error;
-  if (errorValue) return displayResultValue(errorValue);
   const details = result.details && typeof result.details === "object" ? result.details : {};
+  const failureDetails = resultFailureDetails(result);
+  if (failureDetails.length) {
+    const headline = errorValue ? [displayResultValue(errorValue)] : [];
+    return [...headline, ...formatResultFailureDetails(failureDetails)].join("\n");
+  }
+  if (errorValue) return displayResultValue(errorValue);
   const cycles = Array.isArray(details.cycles) ? details.cycles : [];
   const failedCycle = cycles.find(
     (cycle) => cycle && typeof cycle === "object" && cycle.status === "failed"
@@ -2411,6 +2459,11 @@ function renderJsonSummary(results = {}) {
       ];
       if (result.warnings?.length) lines.push(`warnings: ${JSON.stringify(result.warnings)}`);
       if (result.error) lines.push(`error: ${JSON.stringify(result.error)}`);
+      const failureDetails = resultFailureDetails(result);
+      if (failureDetails.length) {
+        lines.push("failure details:");
+        lines.push(...formatResultFailureDetails(failureDetails).map((line) => `- ${line}`));
+      }
       blocks.push({ title: `${name} · ${result.test_id}`, text: lines.join("\n") });
       continue;
     }

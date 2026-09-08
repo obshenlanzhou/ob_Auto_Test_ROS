@@ -16,7 +16,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 from _test_protocol import (
     EventWriter,
@@ -999,6 +999,37 @@ def write_json(path: Path, payload: Any) -> None:
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=True) + "\n", encoding="utf-8")
 
 
+def sensor_failure_details(snapshot: Sequence[Dict[str, Any]]) -> List[Dict[str, str]]:
+    details: List[Dict[str, str]] = []
+    for row in snapshot:
+        expected = max(int(row.get("expected_count", 0) or 0), 1)
+        kind = str(row.get("kind", "sensor"))
+        completed = (
+            int(row.get("valid_message_count", 0) or 0)
+            if kind == "point_cloud"
+            else int(row.get("completed_windows", 0) or 0)
+        )
+        error = str(row.get("error", "") or "")
+        if error or completed < expected:
+            details.append(
+                {
+                    "camera": str(row.get("camera", "") or "unknown"),
+                    "topic": str(row.get("topic") or row.get("name") or ""),
+                    "reason": error or f"received {completed}/{expected} required {kind} sample(s)",
+                }
+            )
+    return details
+
+
+def emit_failure_details(emit: StatusLogger, details: Sequence[Dict[str, str]]) -> None:
+    for detail in details:
+        emit(
+            "[FAIL] "
+            f"camera={detail.get('camera', 'unknown')} "
+            f"topic={detail.get('topic', '')}: {detail.get('reason', 'check failed')}"
+        )
+
+
 def build_summary(result: Dict[str, Any]) -> str:
     tests = result.get("tests", [])
     status_counts: Dict[str, int] = {}
@@ -1081,6 +1112,11 @@ def build_summary(result: Dict[str, Any]) -> str:
             )
             if test.get("message"):
                 lines.append(f"  {test['message']}")
+            for detail in test.get("failure_details", []):
+                lines.append(
+                    f"  - camera `{detail.get('camera', 'unknown')}`, "
+                    f"topic `{detail.get('topic', '')}`: {detail.get('reason', '')}"
+                )
             if test.get("preset_log_message") and test.get("status") != "passed":
                 lines.append(f"  - preset log: {test['preset_log_message']}")
             if test.get("upgrade_returncode") not in (None, 0):
@@ -1561,6 +1597,9 @@ def run(args) -> int:
                     )
                     test_record["sensors"] = sensor_snapshot
                     if not ok:
+                        failure_details = sensor_failure_details(sensor_snapshot)
+                        test_record["failure_details"] = failure_details
+                        emit_failure_details(emit, failure_details)
                         if args.continue_on_failure:
                             test_record["status"] = "failed"
                             test_record["message"] = sensor_message

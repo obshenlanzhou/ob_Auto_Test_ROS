@@ -1613,6 +1613,109 @@ def test_launch_param_summary_lists_only_failed_runs_with_reasons():
     assert "## Run 3/" not in summary
 
 
+def test_launch_param_failure_details_preserve_camera_and_topic():
+    module = load_script(SCRIPTS["launch_param_load"])
+    run = {
+        "status": "failed",
+        "cameras": [
+            {
+                "camera": "camera_02",
+                "param_checks": [],
+                "topic_checks": [
+                    {
+                        "topic": "/camera_02/depth/image_raw",
+                        "status": "failed",
+                        "message": "no message within 20.0s",
+                    }
+                ],
+                "service_checks": [],
+            }
+        ],
+    }
+
+    assert module.run_failure_details(run) == [
+        {
+            "camera": "camera_02",
+            "topic": "/camera_02/depth/image_raw",
+            "reason": "no message within 20.0s",
+        }
+    ]
+
+
+def test_export_stream_failure_details_identify_stalled_camera_topic():
+    module = load_script(SCRIPTS["export_load"])
+
+    details = module.stream_failure_details(
+        [
+            {
+                "name": "/camera_03/color/image_raw",
+                "message_count": 8,
+                "seconds_since_last_message": 5.0,
+                "stable_seconds": 0.0,
+            }
+        ],
+        {"/camera_03/color/image_raw": "camera_03"},
+        stable_seconds=4.0,
+        max_gap_seconds=1.5,
+    )
+
+    assert details[0]["camera"] == "camera_03"
+    assert details[0]["topic"] == "/camera_03/color/image_raw"
+    assert "last frame was 5.0s ago" in details[0]["reason"]
+
+
+@pytest.mark.parametrize("script_name", ("launch_restart", "preset_upgrade"))
+def test_sensor_failure_details_identify_camera_and_topic(script_name):
+    module = load_script(SCRIPTS[script_name])
+
+    details = module.sensor_failure_details(
+        [
+            {
+                "camera": "camera_04",
+                "topic": "/camera_04/depth/points",
+                "kind": "point_cloud",
+                "expected_count": 1,
+                "valid_message_count": 0,
+            }
+        ]
+    )
+
+    assert details == [
+        {
+            "camera": "camera_04",
+            "topic": "/camera_04/depth/points",
+            "reason": "received 0/1 required point_cloud sample(s)",
+        }
+    ]
+
+
+def test_firmware_summary_identifies_failed_target():
+    module = load_script(SCRIPTS["firmware_update"])
+    summary = module.build_summary(
+        {
+            "status": "failed",
+            "tests": [
+                {
+                    "test_index": 2,
+                    "status": "failed",
+                    "firmware_path": "/tmp/fw.bin",
+                    "returncode": 1,
+                    "message": "update command failed",
+                    "failure_details": [
+                        {
+                            "target": "serial=SN001,SN002",
+                            "reason": "firmware_update_tool exited with 1",
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+
+    assert "target `serial=SN001,SN002`" in summary
+    assert "firmware_update_tool exited with 1" in summary
+
+
 def test_launch_param_run_logs_use_common_logs_directory(tmp_path):
     module = load_script(SCRIPTS["launch_param_load"])
 

@@ -1580,6 +1580,7 @@ def wait_for_disabled_state(
         f"disabled-state verification timed out after {timeout:.1f}s for {target_topic}",
         {
             "elapsed_seconds": time.monotonic() - started,
+            "disabled_target_topic": target_topic,
             "target_quiet": monitor.topic_is_quiet(target_topic, stop_stable_seconds),
             "other_streams_stable": monitor.topics_are_stable(
                 other_topics, stable_seconds, max_gap_seconds
@@ -2501,6 +2502,116 @@ def build_result_statistics(result: Dict[str, Any]) -> Dict[str, int]:
     }
 
 
+def verification_failure_details(
+    verification: Dict[str, Any],
+    targets: Sequence[Any],
+    *,
+    stable_seconds: float,
+    max_gap_seconds: float,
+) -> List[Dict[str, str]]:
+    """Turn a raw stream verification snapshot into actionable failures."""
+    target_cameras: Dict[str, str] = {}
+    for target in targets:
+        if isinstance(target, dict):
+            topic = str(target.get("topic", ""))
+            camera = str(
+                target.get("camera_name") or target.get("camera_namespace") or ""
+            ).strip("/")
+        else:
+            topic = str(getattr(target, "topic", ""))
+            camera = str(
+                getattr(target, "camera_name", "")
+                or getattr(target, "camera_namespace", "")
+            ).strip("/")
+        if topic:
+            target_cameras[topic] = camera
+
+    profile_checks = {
+        str(row.get("topic", "")): row
+        for row in verification.get("profiles", [])
+        if isinstance(row, dict) and row.get("topic")
+    }
+    quiet_topics = {
+        str(topic) for topic in verification.get("quiet_topics", []) if topic
+    }
+    checking_disabled_state = "all_streams_quiet" in verification
+    disabled_target_topic = str(verification.get("disabled_target_topic") or "")
+    details: List[Dict[str, str]] = []
+    for row in verification.get("topics", []):
+        if not isinstance(row, dict):
+            continue
+        topic = str(row.get("topic") or row.get("name") or "")
+        if not topic:
+            continue
+        reasons: List[str] = []
+        window_count = int(row.get("window_message_count", 0) or 0)
+        total_count = int(row.get("message_count", 0) or 0)
+        seconds_since_last = row.get("seconds_since_last_message")
+        window_gap = float(row.get("window_max_gap_seconds", 0.0) or 0.0)
+        exceeded_gap = float(row.get("last_exceeded_gap_seconds", 0.0) or 0.0)
+        stable_for = float(row.get("window_stable_seconds", 0.0) or 0.0)
+
+        if disabled_target_topic and topic == disabled_target_topic:
+            if not verification.get("target_quiet", False):
+                reasons.append("stream still publishes frames while it should be disabled")
+        elif checking_disabled_state:
+            if topic not in quiet_topics:
+                reasons.append("stream still publishes frames while it should be disabled")
+        elif window_count == 0:
+            if total_count == 0:
+                reasons.append("no frames received")
+            elif seconds_since_last is not None:
+                reasons.append(
+                    "stream stalled; last frame was "
+                    f"{float(seconds_since_last):.1f}s ago"
+                )
+            else:
+                reasons.append("no frames received in the verification window")
+        else:
+            observed_gap = max(window_gap, exceeded_gap)
+            if observed_gap > max_gap_seconds:
+                reasons.append(
+                    f"frame gap {observed_gap:.2f}s exceeded {max_gap_seconds:.2f}s"
+                )
+            elif stable_for < stable_seconds:
+                reasons.append(
+                    f"stable for only {stable_for:.1f}s; required {stable_seconds:.1f}s"
+                )
+
+        profile = profile_checks.get(topic)
+        if profile and not profile.get("passed", False):
+            reasons.append(
+                "profile resolution mismatch: expected "
+                f"{profile.get('expected_width', 0)}x{profile.get('expected_height', 0)}"
+                + ", actual "
+                f"{profile.get('actual_width', 0)}x{profile.get('actual_height', 0)}"
+                f" (requested {profile.get('expected_fps', 0)} fps, "
+                f"format {profile.get('expected_format', '') or 'any'}; "
+                f"ROS encoding {profile.get('actual_encoding', '') or 'unknown'})"
+            )
+
+        if reasons:
+            details.append(
+                {
+                    "camera": target_cameras.get(topic, "") or "unknown",
+                    "topic": topic,
+                    "reason": "; ".join(dict.fromkeys(reasons)),
+                }
+            )
+    return details
+
+
+def emit_failure_details(
+    emit: StatusLogger, details: Sequence[Dict[str, str]]
+) -> None:
+    for detail in details:
+        emit(
+            "[STREAM][FAIL] "
+            f"camera={detail.get('camera', 'unknown')} "
+            f"topic={detail.get('topic', '')}: {detail.get('reason', 'verification failed')}"
+        )
+
+
 def failed_cycle_summary(cycle: Dict[str, Any]) -> str:
     cycle_index = cycle.get("cycle", "?")
     error = str(cycle.get("error") or "cycle failed")
@@ -2531,6 +2642,17 @@ def failed_cycle_summary(cycle: Dict[str, Any]) -> str:
     unique_topics = list(dict.fromkeys(topic for topic in recovery_topics if topic))
     topics_text = f"; recovery topics: {', '.join(unique_topics)}" if unique_topics else ""
     return f"Cycle {cycle_index}{context}: {error}{topics_text}"
+
+
+def failed_cycle_details(cycle: Dict[str, Any]) -> List[Dict[str, str]]:
+    details: List[Dict[str, str]] = []
+    profile_switch = cycle.get("profile_switch")
+    if isinstance(profile_switch, dict):
+        details.extend(profile_switch.get("failure_details", []))
+    for operation in cycle.get("operations", []):
+        if isinstance(operation, dict):
+            details.extend(operation.get("failure_details", []))
+    return [detail for detail in details if isinstance(detail, dict)]
 
 
 def build_summary(result: Dict[str, Any]) -> str:
@@ -2606,9 +2728,22 @@ def build_summary(result: Dict[str, Any]) -> str:
     ]
     lines.extend(["", "## Failed Cycles", ""])
     if failed_cycles:
-        lines.extend(f"- {failed_cycle_summary(cycle)}" for cycle in failed_cycles)
+        for cycle in failed_cycles:
+            lines.append(f"- {failed_cycle_summary(cycle)}")
+            for detail in failed_cycle_details(cycle):
+                lines.append(
+                    f"  - camera `{detail.get('camera', 'unknown')}`, "
+                    f"topic `{detail.get('topic', '')}`: {detail.get('reason', '')}"
+                )
     else:
         lines.append("- None")
+    if result.get("failure_details"):
+        lines.extend(["", "## Failure Details", ""])
+        for detail in result["failure_details"]:
+            lines.append(
+                f"- camera `{detail.get('camera', 'unknown')}`, "
+                f"topic `{detail.get('topic', '')}`: {detail.get('reason', '')}"
+            )
     if result.get("warnings"):
         lines.extend(["", "## Warnings", ""])
         for warning in result["warnings"]:
@@ -3171,6 +3306,10 @@ def run(args) -> int:
                         result["status"] = "failed"
                         result.setdefault("errors", []).append(str(exc))
                         emit(
+                            f"[PROFILE][FAIL] cycle={cycle_index} "
+                            f"profile_set={profile_label}: {exc}"
+                        )
+                        emit(
                             f"cycle {cycle_index}: profile switch failed"
                             + (
                                 "; continuing with the next cycle"
@@ -3189,17 +3328,30 @@ def run(args) -> int:
                             raise
                         continue
                     except StreamVerificationError as exc:
+                        failure_details = verification_failure_details(
+                            exc.details,
+                            targets,
+                            stable_seconds=config["stream_on_preview"],
+                            max_gap_seconds=config["max_gap"],
+                        )
                         cycle["profile_switch"] = {
                             "profile_set": profile_label,
                             "status": "failed",
                             "error": str(exc),
                             "verification_failure": exc.details,
+                            "failure_details": failure_details,
                         }
                         cycle["status"] = "failed"
                         cycle["error"] = str(exc)
                         cycle["ended_at"] = iso_now()
                         result["status"] = "failed"
                         result.setdefault("errors", []).append(str(exc))
+                        emit_failure_details(emit, failure_details)
+                        if not failure_details:
+                            emit(
+                                f"[PROFILE][FAIL] cycle={cycle_index} "
+                                f"profile_set={profile_label}: {exc}"
+                            )
                         emit(
                             f"cycle {cycle_index}: profile verification failed"
                             + (
@@ -3362,11 +3514,23 @@ def run(args) -> int:
                             )
                         if isinstance(exc, StreamVerificationError):
                             operation["verification_failure"] = exc.details
+                            operation["failure_details"] = verification_failure_details(
+                                exc.details,
+                                targets,
+                                stable_seconds=config["stream_on_preview"],
+                                max_gap_seconds=config["max_gap"],
+                            )
                         if isinstance(exc, (KeyboardInterrupt, SystemExit)) or INTERRUPTED:
                             raise
                         cycle["status"] = "failed"
                         result["status"] = "failed"
                         result.setdefault("errors", []).append(str(exc))
+                        emit_failure_details(emit, operation.get("failure_details", []))
+                        if not operation.get("failure_details"):
+                            emit(
+                                f"[STREAM][FAIL] cycle={cycle_index} "
+                                f"operation=all-streams: {exc}"
+                            )
                         emit(
                             f"cycle {cycle_index}: all-stream operation failed"
                             + (
@@ -3541,12 +3705,24 @@ def run(args) -> int:
                             }
                         if isinstance(exc, StreamVerificationError):
                             operation["verification_failure"] = exc.details
+                            operation["failure_details"] = verification_failure_details(
+                                exc.details,
+                                targets,
+                                stable_seconds=config["stream_on_preview"],
+                                max_gap_seconds=config["max_gap"],
+                            )
                         if isinstance(exc, (KeyboardInterrupt, SystemExit)) or INTERRUPTED:
                             raise
                         first_cycle_failure = cycle["status"] != "failed"
                         cycle["status"] = "failed"
                         result["status"] = "failed"
                         result.setdefault("errors", []).append(str(exc))
+                        emit_failure_details(emit, operation.get("failure_details", []))
+                        if not operation.get("failure_details"):
+                            emit(
+                                f"[STREAM][FAIL] cycle={cycle_index} "
+                                f"camera={target.camera_name} topic={target.topic}: {exc}"
+                            )
                         if first_cycle_failure:
                             emit(
                                 f"cycle {cycle_index}: {target.topic} failed"
@@ -3594,6 +3770,20 @@ def run(args) -> int:
             result["error"] = str(exc)
             if isinstance(exc, StreamVerificationError):
                 result["verification_failure"] = exc.details
+                nested_failure_details = [
+                    detail
+                    for cycle in result.get("cycles", [])
+                    if isinstance(cycle, dict)
+                    for detail in failed_cycle_details(cycle)
+                ]
+                if not nested_failure_details:
+                    result["failure_details"] = verification_failure_details(
+                        exc.details,
+                        result.get("targets", []),
+                        stable_seconds=config["stream_on_preview"],
+                        max_gap_seconds=config["max_gap"],
+                    )
+                    emit_failure_details(emit, result["failure_details"])
             emit(f"test failed: {exc}")
         if result["cycles"] and result["cycles"][-1]["status"] == "running":
             result["cycles"][-1]["status"] = result["status"]

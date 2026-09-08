@@ -2649,3 +2649,6 @@ button.ghost {
     transition-duration: 0.01ms !important;
   }
 }
+#runResultMessage {
+  white-space: pre-line;
+}

@@ -1267,6 +1267,78 @@ def test_result_statistics_and_summary_distinguish_recovery_outcomes():
     assert "- FAILED: cycle 2" in summary
 
 
+def test_verification_failure_details_identify_camera_topic_and_reason():
+    module = load_script()
+    targets = [
+        module.stream_target_from_topic("/camera_01/color/image_raw"),
+        module.stream_target_from_topic("/camera_02/depth/image_raw"),
+    ]
+    details = module.verification_failure_details(
+        {
+            "topics": [
+                {
+                    "topic": "/camera_01/color/image_raw",
+                    "message_count": 0,
+                    "window_message_count": 0,
+                },
+                {
+                    "topic": "/camera_02/depth/image_raw",
+                    "message_count": 12,
+                    "window_message_count": 0,
+                    "seconds_since_last_message": 18.4,
+                },
+            ]
+        },
+        targets,
+        stable_seconds=4.0,
+        max_gap_seconds=1.5,
+    )
+
+    assert details == [
+        {
+            "camera": "camera_01",
+            "topic": "/camera_01/color/image_raw",
+            "reason": "no frames received",
+        },
+        {
+            "camera": "camera_02",
+            "topic": "/camera_02/depth/image_raw",
+            "reason": "stream stalled; last frame was 18.4s ago",
+        },
+    ]
+
+
+def test_stream_toggle_summary_expands_failed_topic_details():
+    module = load_script()
+    result = {
+        "status": "failed",
+        "cycles": [
+            {
+                "cycle": 265,
+                "status": "failed",
+                "error": "enabled-state verification timed out after 20.0s",
+                "profile_switch": {
+                    "profile_set": "A",
+                    "failure_details": [
+                        {
+                            "camera": "camera_02",
+                            "topic": "/camera_02/depth/image_raw",
+                            "reason": "no frames received",
+                        }
+                    ],
+                },
+                "operations": [],
+            }
+        ],
+    }
+
+    summary = module.build_summary(result)
+
+    assert "Cycle 265, profile set A" in summary
+    assert "camera `camera_02`" in summary
+    assert "topic `/camera_02/depth/image_raw`: no frames received" in summary
+
+
 def test_all_disabled_state_requires_every_target_to_be_quiet(monkeypatch):
     module = load_script()
 

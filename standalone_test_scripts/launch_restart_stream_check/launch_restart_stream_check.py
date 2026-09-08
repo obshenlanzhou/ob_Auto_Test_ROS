@@ -15,7 +15,7 @@ from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 from _test_protocol import (
     EventWriter,
@@ -909,6 +909,66 @@ def expand_camera_topic(topic: str, camera_name: str) -> str:
     return topic.replace("{camera}", camera_name).replace("${camera}", camera_name)
 
 
+def stream_failure_details(
+    snapshot: Sequence[Dict[str, Any]],
+    *,
+    stable_seconds: float,
+    max_gap_seconds: float,
+) -> List[Dict[str, str]]:
+    details: List[Dict[str, str]] = []
+    for row in snapshot:
+        topic = str(row.get("topic") or row.get("name") or "")
+        count = int(row.get("message_count", 0) or 0)
+        age = row.get("seconds_since_last_message")
+        stable_for = float(row.get("stable_seconds", 0.0) or 0.0)
+        reason = ""
+        if count == 0:
+            reason = "no frames received"
+        elif age is not None and float(age) > max_gap_seconds:
+            reason = (
+                f"stream stalled; last frame was {float(age):.1f}s ago "
+                f"(maximum {max_gap_seconds:.1f}s)"
+            )
+        elif stable_for < stable_seconds:
+            reason = f"stable for only {stable_for:.1f}s; required {stable_seconds:.1f}s"
+        if reason:
+            details.append(
+                {"camera": _image_topic_parts(topic)[0], "topic": topic, "reason": reason}
+            )
+    return details
+
+
+def sensor_failure_details(snapshot: Sequence[Dict[str, Any]]) -> List[Dict[str, str]]:
+    details: List[Dict[str, str]] = []
+    for row in snapshot:
+        expected = max(int(row.get("expected_count", 0) or 0), 1)
+        kind = str(row.get("kind", "sensor"))
+        completed = (
+            int(row.get("valid_message_count", 0) or 0)
+            if kind == "point_cloud"
+            else int(row.get("completed_windows", 0) or 0)
+        )
+        error = str(row.get("error", "") or "")
+        if error or completed < expected:
+            details.append(
+                {
+                    "camera": str(row.get("camera", "") or "unknown"),
+                    "topic": str(row.get("topic") or row.get("name") or ""),
+                    "reason": error or f"received {completed}/{expected} required {kind} sample(s)",
+                }
+            )
+    return details
+
+
+def emit_failure_details(emit: StatusLogger, details: Sequence[Dict[str, str]]) -> None:
+    for detail in details:
+        emit(
+            "[FAIL] "
+            f"camera={detail.get('camera', 'unknown')} "
+            f"topic={detail.get('topic', '')}: {detail.get('reason', 'check failed')}"
+        )
+
+
 def build_summary(result: Dict[str, Any]) -> str:
     command = result.get("command", [])
     command_text = " ".join(shlex.quote(str(item)) for item in command) if command else ""
@@ -969,6 +1029,19 @@ def build_summary(result: Dict[str, Any]) -> str:
             lines.append("| " + " | ".join(escaped_cells) + " |")
     else:
         lines.append("- None")
+    failure_details = [
+        detail
+        for attempt in failed_attempts
+        for detail in attempt.get("failure_details", [])
+        if isinstance(detail, dict)
+    ]
+    if failure_details:
+        lines.extend(["", "## Failure Details", ""])
+        for detail in failure_details:
+            lines.append(
+                f"- camera `{detail.get('camera', 'unknown')}`, "
+                f"topic `{detail.get('topic', '')}`: {detail.get('reason', '')}"
+            )
     lines.extend(
         [
             "",
@@ -1252,6 +1325,13 @@ def run(args) -> int:
                     default=0.0,
                 )
                 if not ok:
+                    failure_details = stream_failure_details(
+                        snapshot,
+                        stable_seconds=stable_seconds,
+                        max_gap_seconds=max_gap_seconds,
+                    )
+                    attempt["failure_details"] = failure_details
+                    emit_failure_details(emit, failure_details)
                     attempt["status"] = "failed"
                     result["status"] = "failed"
                     result.setdefault("errors", []).append(
@@ -1337,6 +1417,9 @@ def run(args) -> int:
                 )
                 attempt["sensors"] = sensor_snapshot
                 if not sensor_ok:
+                    failure_details = sensor_failure_details(sensor_snapshot)
+                    attempt["failure_details"] = failure_details
+                    emit_failure_details(emit, failure_details)
                     attempt["status"] = "failed"
                     attempt["message"] = sensor_message
                     attempt["ended_at"] = datetime.now().isoformat(timespec="seconds")
@@ -1400,6 +1483,17 @@ def run(args) -> int:
             if current_attempt is not None:
                 current_attempt["status"] = "failed"
                 current_attempt["message"] = str(exc)
+                current_attempt.setdefault(
+                    "failure_details",
+                    [
+                        {
+                            "camera": template_camera_name or "unknown",
+                            "topic": "launch/topic discovery",
+                            "reason": str(exc),
+                        }
+                    ],
+                )
+                emit_failure_details(emit, current_attempt["failure_details"])
             emit(f"test failed: {exc}")
     finally:
         if active_session is not None and not keep_launch_running:

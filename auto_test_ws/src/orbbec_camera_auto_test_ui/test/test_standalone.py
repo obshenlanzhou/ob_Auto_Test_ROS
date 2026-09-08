@@ -971,6 +971,9 @@ def test_standalone_ui_prefers_failed_cycle_over_retry_warning():
     ).read_text(encoding="utf-8")
 
     assert "function resultFailureMessage(result = {})" in script
+    assert "function resultFailureDetails(result = {})" in script
+    assert '"attempts"' in script
+    assert "formatResultFailureDetails(failureDetails)" in script
     assert 'cycle.status === "failed"' in script
     assert "failedCycle.error" in script
     assert "warning.outcome_message || warning.message" in script

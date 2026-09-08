@@ -243,6 +243,18 @@ def write_json(path: Path, payload: Any) -> None:
         handle.write("\n")
 
 
+def firmware_target_label(
+    serial_numbers: List[str], usb_port: str, device_ip: str
+) -> str:
+    if serial_numbers:
+        return "serial=" + ",".join(serial_numbers)
+    if usb_port:
+        return f"usb-port={usb_port}"
+    if device_ip:
+        return f"device-ip={device_ip}"
+    return "default device"
+
+
 def build_summary(result: Dict[str, Any]) -> str:
     tests = result.get("tests", [])
     failed_tests = [test for test in tests if test.get("status") == "failed"]
@@ -304,6 +316,11 @@ def build_summary(result: Dict[str, Any]) -> str:
             )
             if test.get("message"):
                 lines.append(f"  {test['message']}")
+            for detail in test.get("failure_details", []):
+                lines.append(
+                    f"  - target `{detail.get('target', 'default device')}`: "
+                    f"{detail.get('reason', '')}"
+                )
             if test.get("log"):
                 lines.append(f"  - log: {test['log']}")
     return "\n".join(lines) + "\n"
@@ -433,6 +450,7 @@ def run(args) -> int:
                 "message": "",
                 "returncode": None,
                 "success_log": None,
+                "target": firmware_target_label(serial_numbers, usb_port, device_ip),
                 "started_at": datetime.now().isoformat(timespec="seconds"),
                 "ended_at": "",
             }
@@ -482,12 +500,20 @@ def run(args) -> int:
                 )
 
             if failure_message:
+                failure_detail = {
+                    "target": test_record["target"],
+                    "topic": "firmware update",
+                    "reason": failure_message,
+                }
+                test_record["failure_details"] = [failure_detail]
                 test_record["status"] = "failed"
                 test_record["message"] = failure_message
                 test_record["ended_at"] = datetime.now().isoformat(timespec="seconds")
                 result["status"] = "failed"
                 result.setdefault("errors", []).append(failure_message)
-                emit(failure_message)
+                emit(
+                    f"[FAIL] target={test_record['target']}: {failure_message}"
+                )
                 if not args.continue_on_failure:
                     emit(
                         "stopping after failed update "
@@ -544,10 +570,15 @@ def run(args) -> int:
         else:
             result["status"] = "failed"
             result["error"] = str(exc)
+            target = firmware_target_label(serial_numbers, usb_port, device_ip)
+            emit(f"[FAIL] target={target}: {exc}")
             emit(f"test failed: {exc}")
             if result["tests"] and result["tests"][-1].get("status") == "running":
                 result["tests"][-1]["status"] = "failed"
                 result["tests"][-1]["message"] = str(exc)
+                result["tests"][-1]["failure_details"] = [
+                    {"target": target, "topic": "firmware update", "reason": str(exc)}
+                ]
     finally:
         result["elapsed_seconds"] = time.monotonic() - start_monotonic
         for test in result.get("tests", []):

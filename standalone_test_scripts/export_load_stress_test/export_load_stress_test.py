@@ -16,7 +16,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 from _test_protocol import (
     EventWriter,
@@ -1243,6 +1243,71 @@ def build_camera_launch_args(
     return launch_args
 
 
+def stream_failure_details(
+    snapshot: Sequence[Dict[str, Any]],
+    topic_cameras: Dict[str, str],
+    *,
+    stable_seconds: float,
+    max_gap_seconds: float,
+) -> List[Dict[str, str]]:
+    details: List[Dict[str, str]] = []
+    for row in snapshot:
+        topic = str(row.get("topic") or row.get("name") or "")
+        count = int(row.get("message_count", 0) or 0)
+        age = row.get("seconds_since_last_message")
+        stable_for = float(row.get("stable_seconds", 0.0) or 0.0)
+        reason = ""
+        if count == 0:
+            reason = "no frames received"
+        elif age is not None and float(age) > max_gap_seconds:
+            reason = (
+                f"stream stalled; last frame was {float(age):.1f}s ago "
+                f"(maximum {max_gap_seconds:.1f}s)"
+            )
+        elif stable_for < stable_seconds:
+            reason = f"stable for only {stable_for:.1f}s; required {stable_seconds:.1f}s"
+        if reason:
+            details.append(
+                {
+                    "camera": topic_cameras.get(topic, "") or "unknown",
+                    "topic": topic,
+                    "reason": reason,
+                }
+            )
+    return details
+
+
+def sensor_failure_details(snapshot: Sequence[Dict[str, Any]]) -> List[Dict[str, str]]:
+    details: List[Dict[str, str]] = []
+    for row in snapshot:
+        expected = max(int(row.get("expected_count", 0) or 0), 1)
+        kind = str(row.get("kind", "sensor"))
+        completed = (
+            int(row.get("valid_message_count", 0) or 0)
+            if kind == "point_cloud"
+            else int(row.get("completed_windows", 0) or 0)
+        )
+        error = str(row.get("error", "") or "")
+        if error or completed < expected:
+            details.append(
+                {
+                    "camera": str(row.get("camera", "") or "unknown"),
+                    "topic": str(row.get("topic") or row.get("name") or ""),
+                    "reason": error or f"received {completed}/{expected} required {kind} sample(s)",
+                }
+            )
+    return details
+
+
+def emit_failure_details(emit: StatusLogger, details: Sequence[Dict[str, str]]) -> None:
+    for detail in details:
+        emit(
+            "[FAIL] "
+            f"camera={detail.get('camera', 'unknown')} "
+            f"topic={detail.get('topic', '')}: {detail.get('reason', 'check failed')}"
+        )
+
+
 def build_summary(result: Dict[str, Any]) -> str:
     tests = result.get("tests", [])
     status_counts: Dict[str, int] = {}
@@ -1310,6 +1375,11 @@ def build_summary(result: Dict[str, Any]) -> str:
         )
         if test.get("message"):
             lines.append(f"  {test['message']}")
+        for detail in test.get("failure_details", []):
+            lines.append(
+                f"  - camera `{detail.get('camera', 'unknown')}`, "
+                f"topic `{detail.get('topic', '')}`: {detail.get('reason', '')}"
+            )
         for export_result in test.get("exports", []):
             if export_result.get("status") == "passed":
                 continue
@@ -1633,11 +1703,19 @@ def run(args) -> int:
                 )
                 test_payload["topics"] = snapshot
                 if not ok:
+                    failure_details = stream_failure_details(
+                        snapshot,
+                        topic_cameras,
+                        stable_seconds=stable_seconds,
+                        max_gap_seconds=max_gap_seconds,
+                    )
+                    test_payload["failure_details"] = failure_details
                     test_payload["status"] = "failed"
                     test_payload["message"] = message
                     test_payload["ended_at"] = datetime.now().isoformat(timespec="seconds")
                     result["status"] = "failed"
                     result.setdefault("errors", []).append(f"{test_name}: {message}")
+                    emit_failure_details(emit, failure_details)
                     if args.continue_on_failure:
                         emit(f"{test_name}: streams not stable; continuing after cleanup")
                         for session in reversed(sessions):
@@ -1691,6 +1769,8 @@ def run(args) -> int:
                 )
                 test_payload["sensors"] = sensor_snapshot
                 if not ok:
+                    failure_details = sensor_failure_details(sensor_snapshot)
+                    test_payload["failure_details"] = failure_details
                     test_payload["status"] = "failed"
                     test_payload["message"] = sensor_message
                     test_payload["ended_at"] = datetime.now().isoformat(timespec="seconds")
@@ -1698,6 +1778,7 @@ def run(args) -> int:
                     result.setdefault("errors", []).append(
                         f"{test_name}: {sensor_message}"
                     )
+                    emit_failure_details(emit, failure_details)
                     if args.continue_on_failure:
                         emit(
                             f"{test_name}: sensor artifact capture failed; "
@@ -1736,6 +1817,15 @@ def run(args) -> int:
                 ]
                 if failed_camera_results:
                     failed_names = ", ".join(item["camera"] for item in failed_camera_results)
+                    failure_details = [
+                        {
+                            "camera": str(item.get("camera", "") or "unknown"),
+                            "topic": str(item.get("service", "") or "export service"),
+                            "reason": str(item.get("message", "") or "export comparison failed"),
+                        }
+                        for item in failed_camera_results
+                    ]
+                    test_payload["failure_details"] = failure_details
                     test_payload["status"] = "failed"
                     test_payload["message"] = f"export compare failed for: {failed_names}"
                     test_payload["ended_at"] = datetime.now().isoformat(timespec="seconds")
@@ -1743,6 +1833,7 @@ def run(args) -> int:
                     result.setdefault("errors", []).append(
                         f"{test_name}: export compare failed for {failed_names}"
                     )
+                    emit_failure_details(emit, failure_details)
                     if args.continue_on_failure:
                         emit(
                             f"{test_name}: export compare failed for {failed_names}; "
