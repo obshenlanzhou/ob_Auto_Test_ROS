@@ -250,8 +250,8 @@ def test_image_stats_stop_on_failure_by_default_and_can_opt_in_to_continue():
 @pytest.mark.parametrize(
     ("ros_version", "expected_suffix"),
     [
-        ("ros1", "_image_receive_stats_v2.1.0"),
-        ("ros2", "_image_receive_stats_ros2_v2.1.0"),
+        ("ros1", "_image_receive_stats_v2.1.1"),
+        ("ros2", "_image_receive_stats_ros2_v2.1.1"),
     ],
 )
 def test_image_stats_default_result_directory_includes_tool_version(
@@ -1467,7 +1467,7 @@ def test_launch_restart_summary_lists_only_failed_attempts():
     module = load_script(SCRIPTS["launch_restart"])
     result = {
         "status": "failed",
-        "tool_version": "2.1.0",
+        "tool_version": "2.1.1",
         "successful_restarts": 1,
         "launch_attempts": 3,
         "attempts": [
@@ -1513,7 +1513,7 @@ def test_launch_restart_summary_reports_no_failed_attempts():
     summary = module.build_summary(
         {
             "status": "passed",
-            "tool_version": "2.1.0",
+            "tool_version": "2.1.1",
             "successful_restarts": 1,
             "launch_attempts": 1,
             "attempts": [{"attempt": 1, "status": "passed"}],

@@ -161,7 +161,7 @@ def test_ui_packages_standalone_result_and_opens_run_directory(tmp_path, monkeyp
 
 
 def test_ui_rejects_packaging_for_image_receive_stats(tmp_path, monkeypatch):
-    run_id = "20260902_120000_standalone_image_receive_stats_test_v2.1.0"
+    run_id = "20260902_120000_standalone_image_receive_stats_test_v2.1.1"
     run_dir = tmp_path / run_id
     run_dir.mkdir()
     (run_dir / "ui_status.json").write_text(
