@@ -765,6 +765,105 @@ def test_other_image_callbacks_skip_frames_then_write_in_background(
         saver.close()
 
 
+@pytest.mark.parametrize(
+    "test_id",
+    ["export_load", "launch_param_load", "launch_restart", "preset_upgrade"],
+)
+def test_restart_stress_image_monitors_reuse_subscriptions_across_cycles(
+    tmp_path, test_id
+):
+    module = load_script(SCRIPTS[test_id])
+    topic = "/camera/depth/image_raw"
+
+    class Harness:
+        ros_version = "1"
+
+        def __init__(self):
+            self.callback = None
+            self.create_count = 0
+            self.destroy_count = 0
+
+        def resolve_image_topic_kind(self, _topic):
+            return "raw"
+
+        def create_image_subscription(self, _topic, callback, topic_kind=None):
+            assert topic_kind == "raw"
+            self.create_count += 1
+            self.callback = callback
+            return callback
+
+        def create_subscription(self, topic_name, callback, topic_kind=None):
+            return self.create_image_subscription(
+                topic_name, callback, topic_kind=topic_kind
+            )
+
+        def destroy_subscription(self, _subscription):
+            self.destroy_count += 1
+            self.callback = None
+
+    harness = Harness()
+    common = {
+        "harness": harness,
+        "topics": [topic],
+        "output_root": tmp_path / test_id,
+        "active": False,
+    }
+    if test_id == "export_load":
+        monitor = module.ImageSaver(
+            **common,
+            topic_cameras={topic: "camera"},
+            count_per_topic=1,
+        )
+    elif test_id == "launch_param_load":
+        monitor = module.ImageCaptureMonitor(
+            **common,
+            camera_name="camera",
+            save_images_count=1,
+        )
+    elif test_id == "preset_upgrade":
+        monitor = module.ImageCaptureMonitor(
+            **common,
+            topic_cameras={topic: "camera"},
+            save_images_count=1,
+        )
+    else:
+        monitor = module.ImageSaver(**common, count=1)
+
+    try:
+        for _ in range(2):
+            monitor.begin_capture(skip_frames=0)
+            harness.callback(
+                SimpleNamespace(width=1, height=1, data=b"image", encoding="mono8")
+            )
+            state = monitor.metadata if test_id == "export_load" else monitor.state
+            count_key = (
+                "message_count" if test_id == "preset_upgrade" else "received_count"
+            )
+            assert state[topic][count_key] == 1
+            monitor.end_capture()
+        assert harness.create_count == 1
+        assert harness.destroy_count == 0
+    finally:
+        monitor.close()
+
+    assert harness.destroy_count == 1
+
+
+def test_restart_stress_callers_pass_persistent_monitors():
+    image_monitor_arguments = {
+        "export_load": "saver=image_monitor",
+        "launch_param_load": "image_monitor=image_monitors.get(camera.name)",
+        "launch_restart": "saver=image_monitor",
+        "preset_upgrade": "monitor=image_monitor",
+    }
+    for test_id, image_monitor_argument in image_monitor_arguments.items():
+        source = SCRIPTS[test_id].read_text(encoding="utf-8")
+        assert image_monitor_argument in source
+        assert "persistent image subscriptions are ready" in source
+        assert "monitor=sensor_monitor" in source
+        assert "persistent point cloud/IMU subscriptions are ready" in source
+
+
 def test_stream_toggle_image_writer_submit_is_non_blocking(monkeypatch, tmp_path):
     module = load_script(SCRIPTS["stream_toggle"])
     writer = module.ImageWriter(tmp_path / "stream_toggle")

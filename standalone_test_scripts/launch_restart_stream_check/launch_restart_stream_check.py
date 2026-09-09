@@ -13,6 +13,7 @@ import threading
 import time
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import ExitStack
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
@@ -30,6 +31,7 @@ from _test_protocol import (
     test_environment_markdown,
 )
 from _sensor_artifacts import (
+    SensorCaptureMonitor,
     SensorArtifactPathSequence,
     capture_sensor_artifacts,
     discover_sensor_topics,
@@ -44,7 +46,7 @@ DEFAULT_CAMERA_LAUNCH = {
 }
 ENV_READY_VAR = "LAUNCH_RESTART_STREAM_CHECK_ENV_READY"
 INTERRUPTED = False
-TOOL_VERSION = "2.1.1"
+TOOL_VERSION = "2.1.2"
 TEST_ID = "launch_restart_stream_check"
 DEFAULT_STRESS_LAUNCH_ARGS = {
     "enable_heartbeat": "true",
@@ -562,6 +564,14 @@ class StableImageMonitor:
         self.subscriptions = []
 
 
+def drain_inactive_subscriptions(harness: RosImageHarness, topic_count: int) -> None:
+    if getattr(harness, "ros_version", "2") != "2":
+        return
+    queue_depth = max(int(getattr(harness, "queue_size", 10) or 10), 1)
+    for _ in range(max(32, queue_depth * max(topic_count, 1) * 2)):
+        harness.spin_once(0.0)
+
+
 def wait_for_stable_streams(
     *,
     session: LaunchSession,
@@ -571,8 +581,18 @@ def wait_for_stable_streams(
     timeout: float,
     max_gap_seconds: float,
     emit: StatusLogger,
+    monitor: Optional[ImageSaver] = None,
 ) -> tuple[bool, List[Dict[str, Any]], str]:
-    monitor = StableImageMonitor(harness, topics, emit)
+    owns_monitor = monitor is None
+    if monitor is None:
+        monitor = StableImageMonitor(harness, topics, emit)
+        snapshot = monitor.snapshot
+    else:
+        if set(monitor.state) != set(topics):
+            raise ValueError("persistent image monitor topics do not match stability topics")
+        drain_inactive_subscriptions(harness, len(topics))
+        monitor.begin_stability_window()
+        snapshot = monitor.stream_snapshot
     deadline = time.monotonic() + timeout
     streams_detected_logged = False
     try:
@@ -583,10 +603,13 @@ def wait_for_stable_streams(
                 emit(f"streams detected, checking {stable_seconds:.1f}s stability")
                 streams_detected_logged = True
             if monitor.stable_for(stable_seconds, max_gap_seconds):
-                return True, monitor.snapshot(), "image streams are stable"
-        return False, monitor.snapshot(), f"image streams were not stable within {timeout:.1f}s"
+                return True, snapshot(), "image streams are stable"
+        return False, snapshot(), f"image streams were not stable within {timeout:.1f}s"
     finally:
-        monitor.close()
+        if owns_monitor:
+            monitor.close()
+        else:
+            monitor.end_capture()
 
 
 def discover_image_topics(
@@ -692,12 +715,16 @@ class ImageSaver:
         count: int,
         skip_frames: int = 0,
         path_sequence: Optional[ImagePathSequence] = None,
+        active: bool = True,
     ) -> None:
         self.harness = harness
         self.count = count
         self.skip_frames = skip_frames
         self.paths = path_sequence or ImagePathSequence(output_root)
-        self.state: Dict[str, Dict[str, Any]] = {}
+        self.topic_kinds = {
+            topic: harness.resolve_image_topic_kind(topic) for topic in topics
+        }
+        self.state: Dict[str, Dict[str, Any]] = self._new_state()
         self.subscriptions = []
         self._bridge = None
         self._cv2 = None
@@ -705,19 +732,9 @@ class ImageSaver:
         self._state_changed = threading.Condition(self._state_lock)
         self._writer = ThreadPoolExecutor(max_workers=1, thread_name_prefix="image-writer")
         self._frozen = False
+        self._active = bool(active)
         for topic in topics:
-            topic_kind = harness.resolve_image_topic_kind(topic)
-            self.state[topic] = {
-                "topic_kind": topic_kind,
-                "files": [],
-                "error": "",
-                "pending_saves": 0,
-                "selected_count": 0,
-                "received_count": 0,
-                "skipped_count": 0,
-                "buffer": deque(maxlen=count),
-                "errors": [],
-            }
+            topic_kind = self.topic_kinds[topic]
             self.subscriptions.append(
                 harness.create_image_subscription(
                     topic,
@@ -727,6 +744,58 @@ class ImageSaver:
                     topic_kind=topic_kind,
                 )
             )
+
+    def _new_state(self) -> Dict[str, Dict[str, Any]]:
+        return {
+            topic: {
+                "topic_kind": topic_kind,
+                "files": [],
+                "error": "",
+                "pending_saves": 0,
+                "selected_count": 0,
+                "received_count": 0,
+                "skipped_count": 0,
+                "buffer": deque(maxlen=self.count),
+                "errors": [],
+                "message_count": 0,
+                "first_message_at": None,
+                "last_message_at": None,
+                "width": 0,
+                "height": 0,
+                "data_size": 0,
+            }
+            for topic, topic_kind in self.topic_kinds.items()
+        }
+
+    def begin_capture(self, skip_frames: Optional[int] = None) -> None:
+        with self._state_changed:
+            while any(item["pending_saves"] for item in self.state.values()):
+                self._state_changed.wait()
+            if skip_frames is not None:
+                self.skip_frames = max(int(skip_frames), 0)
+            self.state = self._new_state()
+            self._frozen = False
+            self._active = True
+
+    def begin_stability_window(self) -> None:
+        with self._state_lock:
+            for item in self.state.values():
+                item.update(
+                    {
+                        "message_count": 0,
+                        "first_message_at": None,
+                        "last_message_at": None,
+                        "width": 0,
+                        "height": 0,
+                        "data_size": 0,
+                    }
+                )
+            self._frozen = True
+            self._active = True
+
+    def end_capture(self) -> None:
+        with self._state_lock:
+            self._active = False
 
     def _write(self, topic: str, message: Any, target: Path) -> None:
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -758,8 +827,23 @@ class ImageSaver:
             raise RuntimeError(f"failed to write PNG image: {target}")
 
     def _on_message(self, topic: str, message: Any) -> None:
+        now = time.monotonic()
         with self._state_lock:
+            if not self._active:
+                return
             item = self.state[topic]
+            item["message_count"] += 1
+            item["last_message_at"] = now
+            item["width"] = int(getattr(message, "width", 0) or 0)
+            item["height"] = int(getattr(message, "height", 0) or 0)
+            item["data_size"] = len(getattr(message, "data", b"") or b"")
+            has_valid_payload = (
+                item["data_size"] > 0
+                if item["topic_kind"] == "compressed"
+                else item["width"] > 0 and item["height"] > 0
+            )
+            if item["first_message_at"] is None and has_valid_payload:
+                item["first_message_at"] = now
             item["received_count"] += 1
             if item["skipped_count"] < self.skip_frames:
                 item["skipped_count"] += 1
@@ -771,6 +855,52 @@ class ImageSaver:
             ):
                 return
             item["buffer"].append(message)
+
+    def all_streams_detected(self) -> bool:
+        with self._state_lock:
+            return all(
+                item["first_message_at"] is not None for item in self.state.values()
+            )
+
+    def stable_for(self, stable_seconds: float, max_gap_seconds: float) -> bool:
+        now = time.monotonic()
+        with self._state_lock:
+            for item in self.state.values():
+                first = item["first_message_at"]
+                last = item["last_message_at"]
+                if first is None or last is None:
+                    return False
+                if now - last > max_gap_seconds:
+                    item["first_message_at"] = None
+                    return False
+                if now - first < stable_seconds:
+                    return False
+            return True
+
+    def stream_snapshot(self) -> List[Dict[str, Any]]:
+        now = time.monotonic()
+        with self._state_lock:
+            return [
+                {
+                    "name": topic,
+                    "topic_kind": item["topic_kind"],
+                    "message_count": item["message_count"],
+                    "width": item["width"],
+                    "height": item["height"],
+                    "data_size": item["data_size"],
+                    "seconds_since_last_message": (
+                        now - item["last_message_at"]
+                        if item["last_message_at"] is not None
+                        else None
+                    ),
+                    "stable_seconds": (
+                        now - item["first_message_at"]
+                        if item["first_message_at"] is not None
+                        else 0.0
+                    ),
+                }
+                for topic, item in self.state.items()
+            ]
 
     def buffer_ready(self) -> bool:
         with self._state_lock:
@@ -887,17 +1017,26 @@ def save_images(
     skip_frames: int = 0,
     timeout: float,
     path_sequence: Optional[ImagePathSequence] = None,
+    saver: Optional[ImageSaver] = None,
 ) -> tuple[bool, List[Dict[str, Any]], str]:
     if count <= 0:
         return True, [], "image saving disabled"
-    saver = ImageSaver(
-        harness,
-        topics,
-        output_root,
-        count,
-        skip_frames=skip_frames,
-        path_sequence=path_sequence,
-    )
+    owns_saver = saver is None
+    if saver is None:
+        saver = ImageSaver(
+            harness,
+            topics,
+            output_root,
+            count,
+            skip_frames=skip_frames,
+            path_sequence=path_sequence,
+            active=False,
+        )
+    if set(saver.state) != set(topics) or saver.count != count:
+        raise ValueError("persistent image saver configuration does not match capture")
+    if not owns_saver:
+        drain_inactive_subscriptions(harness, len(topics))
+    saver.begin_capture(skip_frames=skip_frames)
     deadline = time.monotonic() + timeout
     try:
         while time.monotonic() < deadline and not saver.buffer_ready():
@@ -921,7 +1060,9 @@ def save_images(
         snapshot = saver.snapshot()
         return True, snapshot, f"saved {sum(len(row['files']) for row in snapshot)} image file(s)"
     finally:
-        saver.close()
+        saver.end_capture()
+        if owns_saver:
+            saver.close()
 
 
 def expand_camera_topic(topic: str, camera_name: str) -> str:
@@ -1236,12 +1377,16 @@ def run(args) -> int:
     attempt_index = 0
     monitored_topics = list(explicit_topics)
     sensor_baseline: Optional[tuple[List[str], List[str], Dict[str, str]]] = None
+    image_monitor: Optional[ImageSaver] = None
+    sensor_monitor: Optional[SensorCaptureMonitor] = None
     test_start_monotonic = time.monotonic()
     active_session: Optional[LaunchSession] = None
     current_attempt: Optional[Dict[str, Any]] = None
     keep_launch_running = False
     try:
-        with RosImageHarness(args.ros_version, "launch_restart_stream_check", args.queue_size) as harness:
+        with RosImageHarness(
+            args.ros_version, "launch_restart_stream_check", args.queue_size
+        ) as harness, ExitStack() as resources:
             while deadline is None or time.monotonic() < deadline:
                 if run_count is not None and attempt_index >= run_count:
                     break
@@ -1299,6 +1444,18 @@ def run(args) -> int:
                     )
                 elif auto_discover_topics:
                     pass
+                if image_monitor is None:
+                    image_monitor = ImageSaver(
+                        harness,
+                        monitored_topics,
+                        results_dir / "images",
+                        save_image_count,
+                        skip_frames=skip_image_frames,
+                        path_sequence=image_paths,
+                        active=False,
+                    )
+                    resources.callback(image_monitor.close)
+                    emit("persistent image subscriptions are ready")
                 image_ok, image_snapshot, image_message = save_images(
                     session=session,
                     harness=harness,
@@ -1308,6 +1465,7 @@ def run(args) -> int:
                     skip_frames=skip_image_frames,
                     timeout=save_image_timeout,
                     path_sequence=image_paths,
+                    saver=image_monitor,
                 )
                 attempt["images"] = image_snapshot
                 if not image_ok:
@@ -1336,6 +1494,7 @@ def run(args) -> int:
                     timeout=stream_timeout,
                     max_gap_seconds=max_gap_seconds,
                     emit=emit,
+                    monitor=image_monitor,
                 )
                 attempt["topics"] = snapshot
                 attempt["message"] = message
@@ -1425,6 +1584,20 @@ def run(args) -> int:
                         f"{len(sensor_baseline[1])} IMU topic(s)"
                     )
                 point_cloud_topics, imu_topics, sensor_topic_cameras = sensor_baseline
+                if sensor_monitor is None and (point_cloud_topics or imu_topics):
+                    sensor_monitor = SensorCaptureMonitor(
+                        harness=harness,
+                        point_cloud_topics=point_cloud_topics,
+                        imu_topics=imu_topics,
+                        topic_cameras=sensor_topic_cameras,
+                        output_root=results_dir / "images",
+                        save_count=save_image_count,
+                        skip_frames=skip_image_frames,
+                        active=False,
+                        path_sequence=sensor_paths,
+                    )
+                    resources.callback(sensor_monitor.close)
+                    emit("persistent point cloud/IMU subscriptions are ready")
                 sensor_timeout = max(
                     save_image_timeout,
                     2.0 * max(save_image_count, 1) + 5.0,
@@ -1440,6 +1613,7 @@ def run(args) -> int:
                     skip_frames=skip_image_frames,
                     path_sequence=sensor_paths,
                     ensure_running=session.assert_running,
+                    monitor=sensor_monitor,
                 )
                 attempt["sensors"] = sensor_snapshot
                 if not sensor_ok:

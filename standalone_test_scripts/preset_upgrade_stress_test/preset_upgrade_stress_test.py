@@ -13,6 +13,7 @@ import threading
 import time
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import ExitStack
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
@@ -31,6 +32,7 @@ from _test_protocol import (
     test_environment_markdown,
 )
 from _sensor_artifacts import (
+    SensorCaptureMonitor,
     SensorArtifactPathSequence,
     capture_sensor_artifacts,
     discover_sensor_topics,
@@ -40,7 +42,7 @@ from _sensor_artifacts import (
 ENV_READY_VAR = "PRESET_UPGRADE_STRESS_TEST_ENV_READY"
 INTERRUPTED = False
 SCRIPT_DIR = Path(__file__).resolve().parent
-TOOL_VERSION = "2.1.1"
+TOOL_VERSION = "2.1.2"
 TEST_ID = "preset_upgrade_stress_test"
 DEFAULT_STRESS_LAUNCH_ARGS = {
     "enable_heartbeat": "true",
@@ -699,6 +701,7 @@ class ImageCaptureMonitor:
         save_images_count: int,
         skip_frames: int = 0,
         path_sequence: Optional[ImagePathSequence] = None,
+        active: bool = True,
     ) -> None:
         self.harness = harness
         self.topics = topics
@@ -706,7 +709,10 @@ class ImageCaptureMonitor:
         self.output_root = output_root
         self.save_images_count = save_images_count
         self.skip_frames = skip_frames
-        self.state: Dict[str, Dict[str, Any]] = {}
+        self.topic_kinds = {
+            topic: self.harness.resolve_image_topic_kind(topic) for topic in topics
+        }
+        self.state: Dict[str, Dict[str, Any]] = self._new_state()
         self.subscriptions = []
         self._bridge = None
         self._cv2 = None
@@ -715,9 +721,20 @@ class ImageCaptureMonitor:
         self._state_changed = threading.Condition(self._state_lock)
         self._writer = ThreadPoolExecutor(max_workers=1, thread_name_prefix="image-writer")
         self._frozen = False
+        self._active = bool(active)
         for topic in topics:
-            topic_kind = self.harness.resolve_image_topic_kind(topic)
-            self.state[topic] = {
+            topic_kind = self.topic_kinds[topic]
+            self.subscriptions.append(
+                self.harness.create_image_subscription(
+                    topic,
+                    lambda msg, topic_name=topic: self._on_message(topic_name, msg),
+                    topic_kind=topic_kind,
+                )
+            )
+
+    def _new_state(self) -> Dict[str, Dict[str, Any]]:
+        return {
+            topic: {
                 "topic_kind": topic_kind,
                 "message_count": 0,
                 "first_message_at": None,
@@ -730,17 +747,26 @@ class ImageCaptureMonitor:
                 "pending_saves": 0,
                 "selected_count": 0,
                 "skipped_count": 0,
-                "buffer": deque(maxlen=save_images_count),
+                "buffer": deque(maxlen=self.save_images_count),
                 "error": "",
                 "errors": [],
             }
-            self.subscriptions.append(
-                self.harness.create_image_subscription(
-                    topic,
-                    lambda msg, topic_name=topic: self._on_message(topic_name, msg),
-                    topic_kind=topic_kind,
-                )
-            )
+            for topic, topic_kind in self.topic_kinds.items()
+        }
+
+    def begin_capture(self, skip_frames: Optional[int] = None) -> None:
+        with self._state_changed:
+            while any(item["pending_saves"] for item in self.state.values()):
+                self._state_changed.wait()
+            if skip_frames is not None:
+                self.skip_frames = max(int(skip_frames), 0)
+            self.state = self._new_state()
+            self._frozen = False
+            self._active = True
+
+    def end_capture(self) -> None:
+        with self._state_lock:
+            self._active = False
 
     def _ensure_cv_tools(self):
         if self._bridge is not None and self._cv2 is not None:
@@ -782,6 +808,8 @@ class ImageCaptureMonitor:
     def _on_message(self, topic_name: str, message: Any) -> None:
         now = time.monotonic()
         with self._state_lock:
+            if not self._active:
+                return
             item = self.state[topic_name]
             item["message_count"] += 1
             item["last_message_at"] = now
@@ -925,6 +953,14 @@ class ImageCaptureMonitor:
         self._writer.shutdown(wait=True, cancel_futures=True)
 
 
+def drain_inactive_subscriptions(harness: RosImageHarness, topic_count: int) -> None:
+    if getattr(harness, "ros_version", "2") != "2":
+        return
+    queue_depth = max(int(getattr(harness, "queue_size", 10) or 10), 1)
+    for _ in range(max(32, queue_depth * max(topic_count, 1) * 2)):
+        harness.spin_once(0.0)
+
+
 def wait_for_images(
     *,
     sessions: List[LaunchSession],
@@ -936,16 +972,25 @@ def wait_for_images(
     skip_frames: int = 0,
     timeout: float,
     path_sequence: Optional[ImagePathSequence] = None,
+    monitor: Optional[ImageCaptureMonitor] = None,
 ) -> tuple[bool, List[Dict[str, Any]], str]:
-    monitor = ImageCaptureMonitor(
-        harness=harness,
-        topics=topics,
-        topic_cameras=topic_cameras,
-        output_root=output_root,
-        save_images_count=save_images_count,
-        skip_frames=skip_frames,
-        path_sequence=path_sequence,
-    )
+    owns_monitor = monitor is None
+    if monitor is None:
+        monitor = ImageCaptureMonitor(
+            harness=harness,
+            topics=topics,
+            topic_cameras=topic_cameras,
+            output_root=output_root,
+            save_images_count=save_images_count,
+            skip_frames=skip_frames,
+            path_sequence=path_sequence,
+            active=False,
+        )
+    if set(monitor.state) != set(topics) or monitor.save_images_count != save_images_count:
+        raise ValueError("persistent image monitor configuration does not match capture")
+    if not owns_monitor:
+        drain_inactive_subscriptions(harness, len(topics))
+    monitor.begin_capture(skip_frames=skip_frames)
     deadline = time.monotonic() + timeout
     try:
         if save_images_count <= 0:
@@ -983,7 +1028,9 @@ def wait_for_images(
         total = sum(row["saved_count"] for row in monitor.snapshot())
         return True, monitor.snapshot(), f"received streams and saved {total} image file(s)"
     finally:
-        monitor.close()
+        monitor.end_capture()
+        if owns_monitor:
+            monitor.close()
 
 
 def run_command_to_log(command: List[str], env: Dict[str, str], work_dir: Path, log_file: Path) -> int:
@@ -1333,9 +1380,13 @@ def run(args) -> int:
     test_image_dir = results_dir / "images"
     image_paths = ImagePathSequence(test_image_dir)
     sensor_paths = SensorArtifactPathSequence(test_image_dir)
+    image_monitor: Optional[ImageCaptureMonitor] = None
+    sensor_monitor: Optional[SensorCaptureMonitor] = None
 
     try:
-        with RosImageHarness(args.ros_version, "preset_upgrade_stress_test", args.queue_size) as harness:
+        with RosImageHarness(
+            args.ros_version, "preset_upgrade_stress_test", args.queue_size
+        ) as harness, ExitStack() as resources:
             while True:
                 if INTERRUPTED:
                     result["status"] = "interrupted"
@@ -1540,7 +1591,7 @@ def run(args) -> int:
                         active_sessions = []
                         continue
 
-                    if auto_discover_image_topics:
+                    if auto_discover_image_topics and image_monitor is None:
                         topics, topic_cameras = discover_image_topics(
                             harness=harness,
                             camera_names=camera_names,
@@ -1552,6 +1603,20 @@ def run(args) -> int:
                         )
                         emit(f"{test_name}: discovered image topics: {', '.join(topics)}")
 
+                    if image_monitor is None:
+                        image_monitor = ImageCaptureMonitor(
+                            harness=harness,
+                            topics=topics,
+                            topic_cameras=topic_cameras,
+                            output_root=test_image_dir,
+                            save_images_count=save_images_count,
+                            skip_frames=skip_image_frames,
+                            path_sequence=image_paths,
+                            active=False,
+                        )
+                        resources.callback(image_monitor.close)
+                        emit("persistent image subscriptions are ready")
+
                     ok, image_snapshot, image_message = wait_for_images(
                         sessions=sessions,
                         harness=harness,
@@ -1562,6 +1627,7 @@ def run(args) -> int:
                         skip_frames=skip_image_frames,
                         timeout=stream_timeout,
                         path_sequence=image_paths,
+                        monitor=image_monitor,
                     )
                     test_record["topics"] = [
                         {
@@ -1612,6 +1678,20 @@ def run(args) -> int:
                             f"{len(sensor_baseline[1])} IMU topic(s)"
                         )
                     point_cloud_topics, imu_topics, sensor_topic_cameras = sensor_baseline
+                    if sensor_monitor is None and (point_cloud_topics or imu_topics):
+                        sensor_monitor = SensorCaptureMonitor(
+                            harness=harness,
+                            point_cloud_topics=point_cloud_topics,
+                            imu_topics=imu_topics,
+                            topic_cameras=sensor_topic_cameras,
+                            output_root=test_image_dir,
+                            save_count=save_images_count,
+                            skip_frames=skip_image_frames,
+                            active=False,
+                            path_sequence=sensor_paths,
+                        )
+                        resources.callback(sensor_monitor.close)
+                        emit("persistent point cloud/IMU subscriptions are ready")
                     sensor_timeout = max(
                         stream_timeout,
                         2.0 * max(save_images_count, 1) + 5.0,
@@ -1629,6 +1709,7 @@ def run(args) -> int:
                         ensure_running=lambda: [
                             session.assert_running() for session in sessions
                         ],
+                        monitor=sensor_monitor,
                     )
                     test_record["sensors"] = sensor_snapshot
                     if not ok:

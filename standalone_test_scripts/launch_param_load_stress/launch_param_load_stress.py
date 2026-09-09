@@ -12,6 +12,7 @@ import threading
 import time
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import ExitStack
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
@@ -30,6 +31,7 @@ from _test_protocol import (
     test_environment_markdown,
 )
 from _sensor_artifacts import (
+    SensorCaptureMonitor,
     SensorArtifactPathSequence,
     capture_sensor_artifacts,
     discover_sensor_topics,
@@ -47,7 +49,7 @@ else:
 
 ENV_READY_VAR = "LAUNCH_PARAM_LOAD_STRESS_ENV_READY"
 INTERRUPTED = False
-TOOL_VERSION = "2.1.1"
+TOOL_VERSION = "2.1.2"
 TEST_ID = "launch_param_load_stress"
 DEFAULT_STRESS_LAUNCH_ARGS = {
     "enable_heartbeat": "true",
@@ -1035,13 +1037,18 @@ class ImageCaptureMonitor:
         save_images_count: int,
         skip_frames: int = 0,
         path_sequence: Optional[ImagePathSequence] = None,
+        active: bool = True,
     ) -> None:
         self.harness = harness
         self.camera_name = camera_name
         self.save_images_count = save_images_count
         self.skip_frames = skip_frames
         self.output_root = output_root
-        self.state: Dict[str, Dict[str, Any]] = {}
+        self.topic_kinds = {
+            topic: self.harness.resolve_image_topic_kind(topic) for topic in topics
+        }
+        self.state: Dict[str, Dict[str, Any]] = self._new_state()
+        self.subscriptions = []
         self._bridge = None
         self._cv2 = None
         self._image_paths = path_sequence or ImagePathSequence(output_root)
@@ -1049,9 +1056,20 @@ class ImageCaptureMonitor:
         self._state_changed = threading.Condition(self._state_lock)
         self._writer = ThreadPoolExecutor(max_workers=1, thread_name_prefix="image-writer")
         self._frozen = False
+        self._active = bool(active)
         for topic in topics:
-            topic_kind = harness.resolve_image_topic_kind(topic)
-            self.state[topic] = {
+            topic_kind = self.topic_kinds[topic]
+            self.subscriptions.append(
+                harness.create_subscription(
+                    topic,
+                    lambda msg, t=topic: self._on_message(t, msg),
+                    topic_kind=topic_kind,
+                )
+            )
+
+    def _new_state(self) -> Dict[str, Dict[str, Any]]:
+        return {
+            topic: {
                 "saved_files": [],
                 "first_at": None,
                 "topic_kind": topic_kind,
@@ -1059,15 +1077,26 @@ class ImageCaptureMonitor:
                 "selected_count": 0,
                 "received_count": 0,
                 "skipped_count": 0,
-                "buffer": deque(maxlen=save_images_count),
+                "buffer": deque(maxlen=self.save_images_count),
                 "error": "",
                 "errors": [],
             }
-            harness.create_subscription(
-                topic,
-                lambda msg, t=topic: self._on_message(t, msg),
-                topic_kind=topic_kind,
-            )
+            for topic, topic_kind in self.topic_kinds.items()
+        }
+
+    def begin_capture(self, skip_frames: Optional[int] = None) -> None:
+        with self._state_changed:
+            while any(item["pending_saves"] for item in self.state.values()):
+                self._state_changed.wait()
+            if skip_frames is not None:
+                self.skip_frames = max(int(skip_frames), 0)
+            self.state = self._new_state()
+            self._frozen = False
+            self._active = True
+
+    def end_capture(self) -> None:
+        with self._state_lock:
+            self._active = False
 
     def _ensure_cv_tools(self):
         if self._bridge is not None:
@@ -1106,6 +1135,8 @@ class ImageCaptureMonitor:
 
     def _on_message(self, topic: str, message: Any) -> None:
         with self._state_lock:
+            if not self._active:
+                return
             item = self.state[topic]
             if item["first_at"] is None:
                 item["first_at"] = time.monotonic()
@@ -1216,7 +1247,18 @@ class ImageCaptureMonitor:
             return files
 
     def close(self) -> None:
+        for subscription in list(self.subscriptions):
+            self.harness.destroy_subscription(subscription)
+        self.subscriptions = []
         self._writer.shutdown(wait=True, cancel_futures=True)
+
+
+def drain_inactive_subscriptions(harness: RosImageHarness, topic_count: int) -> None:
+    if getattr(harness, "ros_version", "2") != "2":
+        return
+    queue_depth = max(int(getattr(harness, "queue_size", 10) or 10), 1)
+    for _ in range(max(32, queue_depth * max(topic_count, 1) * 2)):
+        harness.spin_once(0.0)
 
 
 def save_topic_images(
@@ -1231,6 +1273,8 @@ def save_topic_images(
     emit: StatusLogger,
     path_sequence: Optional[ImagePathSequence] = None,
     auto_discover_image_topics: Optional[bool] = None,
+    harness: Optional[RosImageHarness] = None,
+    monitor: Optional[ImageCaptureMonitor] = None,
 ) -> tuple[List[str], List[str], str]:
     emit(
         f"[IMAGE] saving up to {save_images_count} image(s) per topic for "
@@ -1240,13 +1284,17 @@ def save_topic_images(
     image_topics: List[str] = []
     saved: List[str] = []
     try:
-        with RosImageHarness(ros_version, node_name) as harness:
+        with ExitStack() as resources:
+            if harness is None:
+                harness = resources.enter_context(RosImageHarness(ros_version, node_name))
             auto_discover = (
                 not image_topic_templates
                 if auto_discover_image_topics is None
                 else auto_discover_image_topics
             )
-            if not auto_discover:
+            if monitor is not None:
+                image_topics = list(monitor.state)
+            elif not auto_discover:
                 image_topics = [
                     topic_template.replace("{camera}", camera_name).replace(
                         "${camera}", camera_name
@@ -1261,15 +1309,24 @@ def save_topic_images(
                     timeout=timeout,
                 )
                 emit(f"[IMAGE] discovered topics for {camera_name}: {', '.join(image_topics)}")
-            monitor = ImageCaptureMonitor(
-                harness=harness,
-                camera_name=camera_name,
-                topics=image_topics,
-                output_root=output_root,
-                save_images_count=save_images_count,
-                skip_frames=skip_frames,
-                path_sequence=path_sequence,
-            )
+            owns_monitor = monitor is None
+            if monitor is None:
+                monitor = ImageCaptureMonitor(
+                    harness=harness,
+                    camera_name=camera_name,
+                    topics=image_topics,
+                    output_root=output_root,
+                    save_images_count=save_images_count,
+                    skip_frames=skip_frames,
+                    path_sequence=path_sequence,
+                    active=False,
+                )
+                resources.callback(monitor.close)
+            if monitor.save_images_count != save_images_count:
+                raise ValueError("persistent image monitor configuration does not match capture")
+            if not owns_monitor:
+                drain_inactive_subscriptions(harness, len(image_topics))
+            monitor.begin_capture(skip_frames=skip_frames)
             try:
                 deadline = time.monotonic() + timeout
                 while time.monotonic() < deadline and not monitor.buffer_ready():
@@ -1291,7 +1348,7 @@ def save_topic_images(
                 emit(f"[IMAGE] saved {len(saved)} image(s) for {camera_name}")
                 return saved, image_topics, ""
             finally:
-                monitor.close()
+                monitor.end_capture()
     except Exception as exc:  # noqa: BLE001
         emit(f"[IMAGE][WARN] image saving failed for {camera_name}: {exc}")
         return saved, image_topics, str(exc)
@@ -1598,6 +1655,8 @@ def _check_one_camera(
     images_dir: Optional[Path],
     image_path_sequence: Optional[ImagePathSequence] = None,
     auto_discover_image_topics: Optional[bool] = None,
+    image_harness: Optional[RosImageHarness] = None,
+    image_monitor: Optional[ImageCaptureMonitor] = None,
     emit: StatusLogger,
 ) -> Dict[str, Any]:
     cam: Dict[str, Any] = {
@@ -1626,6 +1685,8 @@ def _check_one_camera(
             emit=emit,
             path_sequence=image_path_sequence,
             auto_discover_image_topics=auto_discover_image_topics,
+            harness=image_harness,
+            monitor=image_monitor,
         )
         cam["image_save_status"] = (
             "failed" if cam["image_save_error"] else "passed"
@@ -1805,7 +1866,13 @@ def run(args) -> int:
         if duration_seconds is not None
         else None
     )
+    resources = ExitStack()
+    image_monitors: Dict[str, ImageCaptureMonitor] = {}
+    sensor_monitor: Optional[SensorCaptureMonitor] = None
     try:
+        stream_harness = resources.enter_context(
+            RosImageHarness(args.ros_version, "launch_param_load_stress_streams")
+        )
         run_index = 0
         while run_count is None or run_index < run_count:
             if deadline is not None and time.monotonic() >= deadline:
@@ -1871,6 +1938,35 @@ def run(args) -> int:
                 images_dir = results_dir / "images" if save_images_count > 0 else None
                 for camera, session, yaml_params in zip(cameras, sessions, yaml_params_list):
                     emit(f"checking camera: {camera.name}")
+                    camera_image_topics = image_topics_for_camera(
+                        configured_image_topics,
+                        image_topic_cameras,
+                        camera.name,
+                    )
+                    if save_images_count > 0 and camera.name not in image_monitors:
+                        if auto_discover_image_topics:
+                            camera_image_topics = discover_image_topics(
+                                harness=stream_harness,
+                                camera_name=camera.name,
+                                timeout=topic_timeout,
+                            )
+                            emit(
+                                f"[IMAGE] discovered topics for {camera.name}: "
+                                + ", ".join(camera_image_topics)
+                            )
+                        image_monitor = ImageCaptureMonitor(
+                            harness=stream_harness,
+                            camera_name=camera.name,
+                            topics=camera_image_topics,
+                            output_root=results_dir / "images",
+                            save_images_count=save_images_count,
+                            skip_frames=skip_image_frames,
+                            path_sequence=image_paths,
+                            active=False,
+                        )
+                        image_monitors[camera.name] = image_monitor
+                        resources.callback(image_monitor.close)
+                        emit(f"persistent image subscriptions are ready for {camera.name}")
                     cam = _check_one_camera(
                         camera_name=camera.name,
                         yaml_params=yaml_params,
@@ -1884,14 +1980,12 @@ def run(args) -> int:
                         skip_service_check=args.skip_service_check,
                         save_images_count=save_images_count,
                         skip_image_frames=skip_image_frames,
-                        image_topic_templates=image_topics_for_camera(
-                            configured_image_topics,
-                            image_topic_cameras,
-                            camera.name,
-                        ),
+                        image_topic_templates=camera_image_topics,
                         images_dir=images_dir,
                         image_path_sequence=image_paths,
-                        auto_discover_image_topics=auto_discover_image_topics,
+                        auto_discover_image_topics=False,
+                        image_harness=stream_harness,
+                        image_monitor=image_monitors.get(camera.name),
                         emit=emit,
                     )
                     run_result["cameras"].append(cam)
@@ -1905,52 +1999,63 @@ def run(args) -> int:
                         run_result.setdefault("warnings", []).append(warning)
                         result.setdefault("warnings", []).append(warning)
 
-                with RosImageHarness(
-                    args.ros_version,
-                    f"launch_param_sensor_capture_{run_index}",
-                ) as sensor_harness:
-                    if sensor_baseline is None:
-                        sensor_baseline = discover_sensor_topics(
-                            harness=sensor_harness,
-                            camera_names=camera_names,
-                            point_cloud_topics=configured_point_cloud_topics,
-                            imu_topics=configured_imu_topics,
-                            timeout=topic_timeout,
-                            ensure_running=lambda: [
-                                session.assert_running() for session in sessions
-                            ],
-                        )
-                        result["point_cloud_topics"] = sensor_baseline[0]
-                        result["imu_topics"] = sensor_baseline[1]
-                        emit(
-                            f"sensor baseline: {len(sensor_baseline[0])} point cloud, "
-                            f"{len(sensor_baseline[1])} IMU topic(s)"
-                        )
-                    point_cloud_topics, imu_topics, sensor_topic_cameras = sensor_baseline
-                    sensor_timeout = max(
-                        topic_timeout,
-                        2.0 * max(save_images_count, 1) + 5.0,
+                if sensor_baseline is None:
+                    sensor_baseline = discover_sensor_topics(
+                        harness=stream_harness,
+                        camera_names=camera_names,
+                        point_cloud_topics=configured_point_cloud_topics,
+                        imu_topics=configured_imu_topics,
+                        timeout=topic_timeout,
+                        ensure_running=lambda: [
+                            session.assert_running() for session in sessions
+                        ],
                     )
-                    sensor_ok, sensor_snapshot, sensor_message = (
-                        capture_sensor_artifacts(
-                            harness=sensor_harness,
-                            point_cloud_topics=point_cloud_topics,
-                            imu_topics=imu_topics,
-                            topic_cameras=sensor_topic_cameras,
-                            output_root=results_dir / "images",
-                            save_count=save_images_count,
-                            timeout=sensor_timeout,
-                            skip_frames=skip_image_frames,
-                            path_sequence=sensor_paths,
-                            ensure_running=lambda: [
-                                session.assert_running() for session in sessions
-                            ],
-                        )
+                    result["point_cloud_topics"] = sensor_baseline[0]
+                    result["imu_topics"] = sensor_baseline[1]
+                    emit(
+                        f"sensor baseline: {len(sensor_baseline[0])} point cloud, "
+                        f"{len(sensor_baseline[1])} IMU topic(s)"
                     )
-                    run_result["sensors"] = sensor_snapshot
-                    if not sensor_ok:
-                        raise RuntimeError(sensor_message)
-                    emit(sensor_message)
+                point_cloud_topics, imu_topics, sensor_topic_cameras = sensor_baseline
+                if sensor_monitor is None and (point_cloud_topics or imu_topics):
+                    sensor_monitor = SensorCaptureMonitor(
+                        harness=stream_harness,
+                        point_cloud_topics=point_cloud_topics,
+                        imu_topics=imu_topics,
+                        topic_cameras=sensor_topic_cameras,
+                        output_root=results_dir / "images",
+                        save_count=save_images_count,
+                        skip_frames=skip_image_frames,
+                        active=False,
+                        path_sequence=sensor_paths,
+                    )
+                    resources.callback(sensor_monitor.close)
+                    emit("persistent point cloud/IMU subscriptions are ready")
+                sensor_timeout = max(
+                    topic_timeout,
+                    2.0 * max(save_images_count, 1) + 5.0,
+                )
+                sensor_ok, sensor_snapshot, sensor_message = (
+                    capture_sensor_artifacts(
+                        harness=stream_harness,
+                        point_cloud_topics=point_cloud_topics,
+                        imu_topics=imu_topics,
+                        topic_cameras=sensor_topic_cameras,
+                        output_root=results_dir / "images",
+                        save_count=save_images_count,
+                        timeout=sensor_timeout,
+                        skip_frames=skip_image_frames,
+                        path_sequence=sensor_paths,
+                        ensure_running=lambda: [
+                            session.assert_running() for session in sessions
+                        ],
+                        monitor=sensor_monitor,
+                    )
+                )
+                run_result["sensors"] = sensor_snapshot
+                if not sensor_ok:
+                    raise RuntimeError(sensor_message)
+                emit(sensor_message)
 
                 failed = any(
                     status_has_failure(cam[k])
@@ -2007,6 +2112,7 @@ def run(args) -> int:
         result["status"] = "interrupted"
         emit("test interrupted by user")
     finally:
+        resources.close()
         result["elapsed_seconds"] = time.monotonic() - test_start_monotonic
         (results_dir / "summary.md").write_text(build_summary(result), encoding="utf-8")
         emit(

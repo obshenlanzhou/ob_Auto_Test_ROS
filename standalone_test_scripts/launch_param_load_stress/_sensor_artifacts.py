@@ -773,6 +773,10 @@ def capture_sensor_artifacts(
     configured_topics = set(point_cloud_topics) | set(imu_topics)
     if set(monitor.state) != configured_topics:
         raise ValueError("sensor monitor topics do not match capture topics")
+    if not owns_monitor:
+        queue_depth = max(int(getattr(harness, "queue_size", 10) or 10), 1)
+        for _ in range(max(32, queue_depth * max(len(configured_topics), 1) * 2)):
+            harness.spin_once(0.0)
     monitor.begin_capture(skip_frames=skip_frames)
     deadline = time.monotonic() + max(float(timeout), 0.0)
     try:
