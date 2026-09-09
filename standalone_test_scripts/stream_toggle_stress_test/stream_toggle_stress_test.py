@@ -38,7 +38,7 @@ from _sensor_artifacts import (
 
 ENV_READY_VAR = "STREAM_TOGGLE_STRESS_TEST_ENV_READY"
 INTERRUPTED = False
-TOOL_VERSION = "2.1.2"
+TOOL_VERSION = "2.1.3"
 TEST_ID = "stream_toggle_stress_test"
 DEFAULT_STRESS_LAUNCH_ARGS = {
     "enable_heartbeat": "true",
@@ -604,7 +604,10 @@ class RosHarness:
         if self.ros_version == "2":
             try:
                 import rclpy
-                from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
+                from rclpy.callback_groups import (
+                    MutuallyExclusiveCallbackGroup,
+                    ReentrantCallbackGroup,
+                )
                 from rclpy.executors import MultiThreadedExecutor
                 from rclpy.qos import (
                     DurabilityPolicy,
@@ -631,11 +634,11 @@ class RosHarness:
             if callable(get_rmw_identifier):
                 self.rmw_implementation = str(get_rmw_identifier())
             self.node = rclpy.create_node(self.node_name)
-            # Keep ROS2 callbacks draining continuously in one long-lived MTE. Topics
-            # from the same camera share a mutually-exclusive callback group, while
-            # different camera groups and the service-control group may run in parallel.
+            # Keep ROS2 callbacks draining continuously in one long-lived MTE. Sensor
+            # callbacks may run concurrently so high-bandwidth image topics cannot
+            # serialize all work for one camera. Keep service control mutually exclusive.
             self._executor_type = MultiThreadedExecutor
-            self._subscription_callback_group_type = MutuallyExclusiveCallbackGroup
+            self._subscription_callback_group_type = ReentrantCallbackGroup
             self._control_callback_group = MutuallyExclusiveCallbackGroup()
             self._start_executor()
             self._image_type = Image

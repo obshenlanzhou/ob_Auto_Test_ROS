@@ -673,7 +673,10 @@ def test_ros2_harness_uses_background_multithreaded_executor(monkeypatch):
             calls.append(("executor_shutdown", timeout_sec))
             self.stopped.set()
 
-    class FakeCallbackGroup:
+    class FakeMutuallyExclusiveCallbackGroup:
+        pass
+
+    class FakeReentrantCallbackGroup:
         pass
 
     class FakeQoSProfile:
@@ -691,7 +694,10 @@ def test_ros2_harness_uses_background_multithreaded_executor(monkeypatch):
     executors = ModuleType("rclpy.executors")
     executors.MultiThreadedExecutor = FakeExecutor
     callback_groups = ModuleType("rclpy.callback_groups")
-    callback_groups.MutuallyExclusiveCallbackGroup = FakeCallbackGroup
+    callback_groups.MutuallyExclusiveCallbackGroup = (
+        FakeMutuallyExclusiveCallbackGroup
+    )
+    callback_groups.ReentrantCallbackGroup = FakeReentrantCallbackGroup
     qos = ModuleType("rclpy.qos")
     qos.QoSProfile = FakeQoSProfile
     qos.HistoryPolicy = SimpleNamespace(KEEP_LAST="keep_last")
@@ -726,6 +732,14 @@ def test_ros2_harness_uses_background_multithreaded_executor(monkeypatch):
             "reliability": "reliable",
             "durability": "volatile",
         }
+        assert (
+            harness._subscription_callback_group_type
+            is FakeReentrantCallbackGroup
+        )
+        assert isinstance(
+            harness._control_callback_group,
+            FakeMutuallyExclusiveCallbackGroup,
+        )
         assert isinstance(harness._executor, FakeExecutor)
 
     assert ("rclpy_init", []) in calls
