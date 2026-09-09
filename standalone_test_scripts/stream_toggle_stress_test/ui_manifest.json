@@ -42,6 +42,6 @@
     {"name": "service_timeout", "option": "--service-timeout", "type": "duration", "label": "服务调用超时", "label_en": "Service Timeout", "group": "advanced", "section": "advanced", "default": "15"},
     {"name": "service_retry_delay", "option": "--service-retry-delay", "type": "number", "label": "服务重试间隔", "label_en": "Service Retry Delay", "group": "advanced", "section": "advanced", "default": "1", "min": 0},
     {"name": "save_image_timeout", "option": "--save-image-timeout", "type": "duration", "label": "存图超时", "label_en": "Image Save Timeout", "group": "advanced", "section": "advanced", "default": "30"},
-    {"name": "queue_size", "option": "--queue-size", "type": "integer", "label": "ROS1 订阅队列大小", "label_en": "ROS1 Queue Size", "group": "advanced", "section": "advanced", "default": 10, "min": 1, "note": "ROS2 图像和传感器存活检测固定使用 depth=1，只保留最新样本；MultiThreadedExecutor 使用 rclpy 默认工作线程策略。"}
+    {"name": "queue_size", "option": "--queue-size", "type": "integer", "label": "订阅队列深度", "label_en": "Subscription Queue Depth", "group": "advanced", "section": "advanced", "default": 10, "min": 1, "note": "ROS1 用作 subscriber queue_size；ROS2 用作 RELIABLE + KEEP_LAST 的 depth。"}
   ]
 }

@@ -643,11 +643,13 @@ class RosHarness:
             self._point_cloud_type = PointCloud2
             self._imu_type = Imu
             self._set_bool_type = SetBool
-            # Liveness checks need the newest sample, not a backlog of large images.
+            # Match the camera driver's reliable image publishers and retain the
+            # configured history so short subscriber-side scheduling delays do not
+            # drop samples.
             self._sensor_qos = QoSProfile(
                 history=HistoryPolicy.KEEP_LAST,
-                depth=1,
-                reliability=ReliabilityPolicy.BEST_EFFORT,
+                depth=self.queue_size,
+                reliability=ReliabilityPolicy.RELIABLE,
                 durability=DurabilityPolicy.VOLATILE,
             )
             if self.enable_profile_switch:
@@ -2984,7 +2986,9 @@ def run(args) -> int:
             if args.ros_version == "2"
             else None
         ),
-        "ros2_subscription_depth": 1 if args.ros_version == "2" else None,
+        "ros2_subscription_depth": (
+            args.queue_size if args.ros_version == "2" else None
+        ),
         "completed_cycles": 0,
         "completed_operations": 0,
         "saved_image_count": 0,
@@ -4025,7 +4029,9 @@ def parse_args(argv: Optional[Sequence[str]] = None):
         "--queue-size",
         type=int,
         default=10,
-        help="ROS1 subscriber queue size; ROS2 liveness subscriptions always use depth=1",
+        help=(
+            "subscriber queue depth (ROS1 queue_size; ROS2 RELIABLE KEEP_LAST depth)"
+        ),
     )
     parser.add_argument("--results-dir", default="")
     parser.add_argument("--version", action="version", version=f"%(prog)s {TOOL_VERSION}")

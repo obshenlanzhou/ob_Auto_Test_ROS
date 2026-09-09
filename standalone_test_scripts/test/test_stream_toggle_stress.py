@@ -594,7 +594,7 @@ def test_ros2_set_bool_client_is_reused_across_toggle_cycles():
     assert harness.node.created == ["/camera/set_streams_enable"]
 
 
-def test_ros2_subscriptions_share_groups_per_camera_and_use_depth_one_qos():
+def test_ros2_subscriptions_share_groups_per_camera_and_use_configured_qos_depth():
     module = load_script()
     created = []
 
@@ -614,7 +614,7 @@ def test_ros2_subscriptions_share_groups_per_camera_and_use_depth_one_qos():
     harness = module.RosHarness("2", "test", 10)
     harness.node = Node()
     harness._image_type = object()
-    harness._sensor_qos = SimpleNamespace(depth=1)
+    harness._sensor_qos = SimpleNamespace(depth=17)
     harness._subscription_callback_group_type = CallbackGroup
 
     first = harness.create_image_subscription(
@@ -634,7 +634,7 @@ def test_ros2_subscriptions_share_groups_per_camera_and_use_depth_one_qos():
     assert second is created[1][0]
     assert third is created[2][0]
     assert fourth is created[3][0]
-    assert created[0][4].depth == 1
+    assert created[0][4].depth == 17
     assert isinstance(created[0][5], CallbackGroup)
     assert isinstance(created[1][5], CallbackGroup)
     assert created[0][5] is created[1][5]
@@ -695,7 +695,7 @@ def test_ros2_harness_uses_background_multithreaded_executor(monkeypatch):
     qos = ModuleType("rclpy.qos")
     qos.QoSProfile = FakeQoSProfile
     qos.HistoryPolicy = SimpleNamespace(KEEP_LAST="keep_last")
-    qos.ReliabilityPolicy = SimpleNamespace(BEST_EFFORT="best_effort")
+    qos.ReliabilityPolicy = SimpleNamespace(RELIABLE="reliable")
     qos.DurabilityPolicy = SimpleNamespace(VOLATILE="volatile")
     sensor_msgs = ModuleType("sensor_msgs")
     sensor_msgs_msg = ModuleType("sensor_msgs.msg")
@@ -719,11 +719,11 @@ def test_ros2_harness_uses_background_multithreaded_executor(monkeypatch):
     }.items():
         monkeypatch.setitem(sys.modules, name, fake_module)
 
-    with module.RosHarness("2", "stream_toggle_test", 10) as harness:
+    with module.RosHarness("2", "stream_toggle_test", 17) as harness:
         assert harness._sensor_qos.settings == {
             "history": "keep_last",
-            "depth": 1,
-            "reliability": "best_effort",
+            "depth": 17,
+            "reliability": "reliable",
             "durability": "volatile",
         }
         assert isinstance(harness._executor, FakeExecutor)
