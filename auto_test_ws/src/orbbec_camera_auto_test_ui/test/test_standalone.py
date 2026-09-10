@@ -17,6 +17,7 @@ sys.path.insert(
 )
 
 import orbbec_camera_auto_test_ui.server as ui_server  # noqa: E402
+import orbbec_camera_auto_test_ui.run_manager as run_manager  # noqa: E402
 from orbbec_camera_auto_test_ui.standalone import (  # noqa: E402
     REQUIRED_RESULT_KEYS,
     build_command,
@@ -462,6 +463,49 @@ def test_high_risk_run_requires_server_side_confirmation():
     )
     assert status == 400
     assert payload["errors"] == ["high-risk confirmation is required"]
+
+
+def test_standalone_localhost_only_defaults_to_compatible_ros2_variables(
+    tmp_path, monkeypatch
+):
+    captured = {}
+
+    class DeferredThread:
+        def __init__(self, *, target, args, daemon):
+            captured["target"] = target
+            captured["args"] = args
+            captured["daemon"] = daemon
+
+        def start(self):
+            captured["started"] = True
+
+    monkeypatch.setattr(run_manager, "CONFIG_PATH", tmp_path / "ui_config.json")
+    monkeypatch.setattr(run_manager, "UI_RESULTS_ROOT", tmp_path / "ui_runs")
+    monkeypatch.setattr(run_manager.threading, "Thread", DeferredThread)
+
+    manager = RunManager()
+    status, payload = manager.start_standalone(
+        {
+            "test_id": "image_receive_stats_test",
+            "values": {
+                "ros_version": "2",
+                "ros_setup": "/opt/ros/humble/setup.bash",
+                "image_topics": ["/camera/color/image_raw"],
+            },
+        }
+    )
+
+    assert status == 200
+    assert captured["started"] is True
+    script = captured["args"][1]
+    assert "export ROS_LOCALHOST_ONLY=1" in script
+    assert "export ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST" in script
+    request = json.loads(
+        (tmp_path / "ui_runs" / payload["run_id"] / "ui_request.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert request["request"]["ros_localhost_only"] is True
 
 
 def test_run_manager_requires_valid_standalone_result(tmp_path):

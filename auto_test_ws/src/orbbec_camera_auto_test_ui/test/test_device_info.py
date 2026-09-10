@@ -91,6 +91,8 @@ def test_query_camera_devices_sources_setups_and_returns_parsed_data(tmp_path):
     assert f"source '{ros_setup}'" in command[2]
     assert f"source '{camera_setup}'" in command[2]
     assert "export ROS_DOMAIN_ID=18" in command[2]
+    assert "export ROS_LOCALHOST_ONLY=1" in command[2]
+    assert "export ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST" in command[2]
     assert "ros2 run orbbec_camera list_devices_node" in command[2]
 
 
@@ -113,10 +115,19 @@ def test_query_camera_devices_unsets_inherited_domain_when_value_is_empty(tmp_pa
         return_value=completed,
     ) as run:
         query_camera_devices(
-            {"ros_version": "2", "ros_domain_id": "", "ros_setup": str(ros_setup)}
+            {
+                "ros_version": "2",
+                "ros_domain_id": "",
+                "ros_localhost_only": False,
+                "ros_setup": str(ros_setup),
+            }
         )
 
     assert "unset ROS_DOMAIN_ID" in run.call_args.args[0][2]
+    assert (
+        "unset ROS_LOCALHOST_ONLY ROS_AUTOMATIC_DISCOVERY_RANGE"
+        in run.call_args.args[0][2]
+    )
 
 
 def test_query_camera_devices_exposes_command_failure_output(tmp_path):

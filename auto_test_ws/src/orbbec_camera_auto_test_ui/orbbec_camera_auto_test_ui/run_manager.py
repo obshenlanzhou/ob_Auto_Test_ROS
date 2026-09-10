@@ -687,6 +687,39 @@ def _ros_domain_environment_command(ros_version: Any, value: Any) -> str:
     )
 
 
+def _ros_localhost_environment_command(
+    ros_version: Any,
+    value: Any,
+    *,
+    ros_distro_available: bool = True,
+) -> str:
+    if str(ros_version or "2").strip() != "2":
+        return ""
+    if not _bool_value(value):
+        return "unset ROS_LOCALHOST_ONLY ROS_AUTOMATIC_DISCOVERY_RANGE"
+    if not ros_distro_available:
+        return "\n".join(
+            [
+                "export ROS_LOCALHOST_ONLY=1",
+                "export ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST",
+            ]
+        )
+    return "\n".join(
+        [
+            'case "${ROS_DISTRO:-}" in',
+            "  ardent|bouncy|crystal|dashing|eloquent|foxy|galactic|humble)",
+            "    export ROS_LOCALHOST_ONLY=1",
+            "    unset ROS_AUTOMATIC_DISCOVERY_RANGE",
+            "    ;;",
+            "  *)",
+            "    unset ROS_LOCALHOST_ONLY",
+            "    export ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST",
+            "    ;;",
+            "esac",
+        ]
+    )
+
+
 def load_config() -> Dict[str, Any]:
     config = read_json(CONFIG_PATH, {})
     ros_version = str(config.get("ros_version") or "2")
@@ -700,6 +733,7 @@ def load_config() -> Dict[str, Any]:
     loaded = {
         "ros_version": ros_version,
         "ros_domain_id": ros_domain_id,
+        "ros_localhost_only": _bool_value(config.get("ros_localhost_only", True)),
         "ros_setup": config.get("ros_setup") or _default_ros_setup_for_version(ros_version),
         "camera_setup": config.get("camera_setup") or _default_camera_setup_for_version(ros_version),
         "host": config.get("host") or "127.0.0.1",
@@ -758,6 +792,7 @@ def save_config(payload: Dict[str, Any]) -> Dict[str, Any]:
         "ros_setup",
         "ros_version",
         "ros_domain_id",
+        "ros_localhost_only",
         "camera_setup",
         "host",
         "port",
@@ -786,11 +821,12 @@ def save_config(payload: Dict[str, Any]) -> Dict[str, Any]:
         "standalone_configs",
     ):
         if key in payload:
-            config[key] = (
-                normalize_ros_domain_id(payload[key])
-                if key == "ros_domain_id"
-                else payload[key]
-            )
+            value = payload[key]
+            if key == "ros_domain_id":
+                value = normalize_ros_domain_id(value)
+            elif key == "ros_localhost_only":
+                value = _bool_value(value)
+            config[key] = value
     mode = _safe_text(payload.get("mode") or config.get("mode")) or "functional"
     if mode in FRAMEWORK_MODES:
         mode_config = dict(config.get("mode_configs", {}).get(mode, {}))
@@ -1004,6 +1040,18 @@ def _build_shell_script(payload: Dict[str, Any], run_root: Path) -> tuple[str, L
             else "[UI] ROS_DOMAIN_ID is not set"
         )
         commands.append(f"echo {shlex.quote(domain_message)}")
+    localhost_only = _bool_value(payload.get("ros_localhost_only", True))
+    localhost_command = _ros_localhost_environment_command(
+        ros_version, localhost_only
+    )
+    if localhost_command:
+        commands.append(localhost_command)
+        localhost_message = (
+            "[UI] ROS discovery is limited to localhost"
+            if localhost_only
+            else "[UI] ROS localhost-only discovery is disabled"
+        )
+        commands.append(f"echo {shlex.quote(localhost_message)}")
     commands.append(f"export ORBBEC_ROS_VERSION={shlex.quote(ros_version)}")
     commands.append(f"export ORBBEC_ROS_SETUP={shlex.quote(ros_setup)}")
     commands.append(f"export PYTHONPATH={shlex.quote(str(CORE_PACKAGE_ROOT))}:\"${{PYTHONPATH:-}}\"")
@@ -1329,6 +1377,9 @@ class RunManager:
             {
                 "ros_version": payload.get("ros_version") or "2",
                 "ros_domain_id": normalize_ros_domain_id(payload.get("ros_domain_id")),
+                "ros_localhost_only": _bool_value(
+                    payload.get("ros_localhost_only", True)
+                ),
                 "ros_setup": payload.get("ros_setup")
                 or _default_ros_setup_for_version(payload.get("ros_version") or "2"),
                 "camera_setup": payload.get("camera_setup")
@@ -1414,9 +1465,11 @@ class RunManager:
         config = load_config()
         standalone_configs = dict(config.get("standalone_configs") or {})
         standalone_configs[test_id] = values
+        localhost_only = _bool_value(payload.get("ros_localhost_only", True))
         save_config(
             {
                 "ros_domain_id": ros_domain_id,
+                "ros_localhost_only": localhost_only,
                 "standalone_configs": standalone_configs,
             }
         )
@@ -1428,11 +1481,21 @@ class RunManager:
         domain_command = _ros_domain_environment_command(
             values.get("ros_version"), ros_domain_id
         )
-        displayed_command = (
-            f"ROS_DOMAIN_ID={shlex.quote(ros_domain_id)} {command_line}"
-            if domain_command and ros_domain_id
-            else command_line
+        localhost_command = _ros_localhost_environment_command(
+            values.get("ros_version"),
+            localhost_only,
+            ros_distro_available=False,
         )
+        displayed_environment = []
+        if domain_command and ros_domain_id:
+            displayed_environment.append(
+                f"export ROS_DOMAIN_ID={shlex.quote(ros_domain_id)}"
+            )
+        if localhost_command and localhost_only:
+            displayed_environment.append(
+                " ".join(line.strip() for line in localhost_command.splitlines())
+            )
+        displayed_command = "; ".join([*displayed_environment, command_line])
         script_lines = [
             "set -e",
             f"cd {shlex.quote(str(AUTO_TEST_WS.parent))}",
@@ -1440,6 +1503,8 @@ class RunManager:
         ]
         if domain_command:
             script_lines.append(domain_command)
+        if localhost_command:
+            script_lines.append(localhost_command)
         script_lines.append(f"exec {command_line}")
         script = "\n".join(script_lines)
         write_json(
@@ -1449,7 +1514,11 @@ class RunManager:
                 "mode": f"standalone:{test_id}",
                 "runner_type": "standalone",
                 "test_id": test_id,
-                "request": {**values, "ros_domain_id": ros_domain_id},
+                "request": {
+                    **values,
+                    "ros_domain_id": ros_domain_id,
+                    "ros_localhost_only": localhost_only,
+                },
                 "command_lines": [displayed_command],
                 "manifest_path": manifest["manifest_path"],
                 "auto_test_ws": str(AUTO_TEST_WS),

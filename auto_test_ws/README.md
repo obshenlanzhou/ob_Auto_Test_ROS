@@ -46,7 +46,7 @@ Preset 升级等 safe-point 任务会持续等待当前操作到达安全点，�
 ```bash
 curl -X POST http://127.0.0.1:8000/api/devices \
   -H 'Content-Type: application/json' \
-  -d '{"ros_version":"2","ros_domain_id":"0","ros_setup":"/opt/ros/humble/setup.bash","camera_setup":"/path/to/driver/install/setup.bash"}'
+  -d '{"ros_version":"2","ros_domain_id":"0","ros_localhost_only":true,"ros_setup":"/opt/ros/humble/setup.bash","camera_setup":"/path/to/driver/install/setup.bash"}'
 ```
 
 响应中的 `devices` 是结构化相机列表，`output` 保留节点原始输出；该查询接口仅支持
@@ -98,6 +98,12 @@ export ORBBEC_ROS1_CAMERA_SETUP=/path/to/ros1_driver/devel/setup.bash
 ROS 2 的 Domain ID 可在自动化框架和独立脚本页面配置，允许范围为 `0-232`。
 配置后，测试进程以及顶部“相机信息”查询都会使用对应的 `ROS_DOMAIN_ID`；留空表示
 不设置，执行前会清除从 Web UI 服务进程继承的 `ROS_DOMAIN_ID`。ROS 1 运行时不注入该变量。
+“仅本机通信”开关默认开启，会限制上述 ROS 2 进程只通过本机接口发现和通信。加载 ROS 环境后，
+Foxy、Galactic、Humble 及更早发行版使用 `ROS_LOCALHOST_ONLY=1`；Iron 及更新发行版使用
+`ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST`。关闭时会显式清除这两个变量，避免继承 Web UI
+服务进程的发现范围配置。该开关可与 Domain ID 组合使用，以同时隔离其他主机和本机上的
+不同测试组。独立脚本在其内部加载 ROS 环境，因此启动包装层会同时导出两个兼容变量；
+对应 ROS 版本会使用其支持的变量。ROS 1 不注入上述变量。
 
 依赖包括 `PyYAML`、`psutil` 以及对应 ROS 版本的 `rclpy` 或 `rospy`。运行 `stress` 场景还需要安装 `stress-ng`。
 

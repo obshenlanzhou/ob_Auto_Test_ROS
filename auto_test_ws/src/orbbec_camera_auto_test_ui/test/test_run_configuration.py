@@ -1,5 +1,6 @@
 from pathlib import Path
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -13,6 +14,7 @@ import orbbec_camera_auto_test_ui.run_manager as run_manager  # noqa: E402
 from orbbec_camera_auto_test_ui.run_manager import (  # noqa: E402
     _build_shell_script,
     _ros_domain_environment_command,
+    _ros_localhost_environment_command,
     _build_runner_args,
     build_performance_metrics,
     normalize_ros_domain_id,
@@ -72,6 +74,64 @@ class RunConfigurationTest(unittest.TestCase):
         self.assertIn("export ROS_DOMAIN_ID=42", script)
         self.assertIn("[UI] ROS_DOMAIN_ID=42", script)
 
+    def test_ros2_localhost_only_is_exported_and_unset_explicitly(self):
+        enabled_command = _ros_localhost_environment_command("2", True)
+        self.assertIn('case "${ROS_DISTRO:-}" in', enabled_command)
+        self.assertIn("foxy|galactic|humble", enabled_command)
+        self.assertIn("export ROS_LOCALHOST_ONLY=1", enabled_command)
+        self.assertIn(
+            "export ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST", enabled_command
+        )
+        self.assertEqual(
+            _ros_localhost_environment_command("2", False),
+            "unset ROS_LOCALHOST_ONLY ROS_AUTOMATIC_DISCOVERY_RANGE",
+        )
+        self.assertEqual(_ros_localhost_environment_command("1", True), "")
+        self.assertEqual(
+            _ros_localhost_environment_command(
+                "2", True, ros_distro_available=False
+            ),
+            "export ROS_LOCALHOST_ONLY=1\n"
+            "export ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST",
+        )
+
+        for distro, expected in (
+            ("humble", "1|"),
+            ("iron", "|LOCALHOST"),
+            ("jazzy", "|LOCALHOST"),
+            ("future", "|LOCALHOST"),
+        ):
+            completed = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    enabled_command
+                    + '\nprintf "%s|%s" "${ROS_LOCALHOST_ONLY:-}" '
+                    + '"${ROS_AUTOMATIC_DISCOVERY_RANGE:-}"',
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+                env={**os.environ, "ROS_DISTRO": distro},
+            )
+            self.assertEqual(completed.stdout, expected, distro)
+
+        payload = self.base_payload()
+        script, _commands, _shell = _build_shell_script(
+            payload, Path("/tmp/localhost-results")
+        )
+        self.assertIn("export ROS_LOCALHOST_ONLY=1", script)
+        self.assertIn("export ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST", script)
+        self.assertIn("[UI] ROS discovery is limited to localhost", script)
+
+        payload["ros_localhost_only"] = False
+        script, _commands, _shell = _build_shell_script(
+            payload, Path("/tmp/localhost-results")
+        )
+        self.assertIn(
+            "unset ROS_LOCALHOST_ONLY ROS_AUTOMATIC_DISCOVERY_RANGE", script
+        )
+
     def test_ros_domain_id_rejects_out_of_range_and_non_integer_values(self):
         for value in ("-1", "1.5", "233", "domain"):
             payload = self.base_payload()
@@ -92,6 +152,18 @@ class RunConfigurationTest(unittest.TestCase):
                 self.assertEqual(run_manager.load_config()["ros_domain_id"], "21")
                 run_manager.save_config({"ros_domain_id": ""})
                 self.assertEqual(run_manager.load_config()["ros_domain_id"], "")
+
+    def test_ros_localhost_only_config_does_not_inherit_environment_and_persists(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "ui_config.json"
+            with patch.object(run_manager, "CONFIG_PATH", config_path), patch.dict(
+                os.environ, {"ROS_LOCALHOST_ONLY": "1"}
+            ):
+                self.assertTrue(run_manager.load_config()["ros_localhost_only"])
+                run_manager.save_config({"ros_localhost_only": True})
+                self.assertTrue(run_manager.load_config()["ros_localhost_only"])
+                run_manager.save_config({"ros_localhost_only": False})
+                self.assertFalse(run_manager.load_config()["ros_localhost_only"])
 
     def test_framework_modes_keep_independent_configuration_history(self):
         with tempfile.TemporaryDirectory() as temp_dir:

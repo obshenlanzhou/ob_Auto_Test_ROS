@@ -103,6 +103,10 @@
                 <span>ROS Domain ID</span>
                 <input id="rosDomainId" name="ros_domain_id" type="number" min="0" max="232" step="1" placeholder="0（留空表示不设置）" />
               </label>
+              <label class="checkbox-field">
+                <span class="field-label"><b>仅本机通信</b><small>ROS discovery: LOCALHOST</small></span>
+                <input id="rosLocalhostOnly" name="ros_localhost_only" type="checkbox" checked />
+              </label>
               <label>
                 <span>ROS Setup</span>
                 <input id="rosSetup" name="ros_setup" autocomplete="off" placeholder="/opt/ros/humble/setup.bash" />
@@ -255,6 +259,12 @@
               <label>
                 <span class="field-label"><b>ROS 域 ID</b><small>ROS Domain ID</small></span>
                 <input id="standaloneRosDomainId" name="ros_domain_id" type="number" min="0" max="232" step="1" placeholder="0（留空表示不设置）" />
+              </label>
+            </div>
+            <div class="standalone-field standalone-localhost-field" data-field-name="ros_localhost_only" data-field-type="boolean">
+              <label class="checkbox-field">
+                <span class="field-label"><b>仅本机通信</b><small>ROS discovery: LOCALHOST</small></span>
+                <input id="standaloneRosLocalhostOnly" name="ros_localhost_only" type="checkbox" checked />
               </label>
             </div>
           </div>

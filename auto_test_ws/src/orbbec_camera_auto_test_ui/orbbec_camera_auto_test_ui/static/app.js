@@ -212,6 +212,7 @@ function deviceQueryPayload() {
     return {
       ros_version: rosVersion,
       ros_domain_id: $("standaloneRosDomainId").value.trim(),
+      ros_localhost_only: $("standaloneRosLocalhostOnly").checked,
       ros_setup: values.ros_setup || defaults.ros_setup || "",
       camera_setup: values.driver_setup || defaults.driver_setup || "",
     };
@@ -219,6 +220,7 @@ function deviceQueryPayload() {
   return {
     ros_version: $("rosVersion").value,
     ros_domain_id: $("rosDomainId").value.trim(),
+    ros_localhost_only: $("rosLocalhostOnly").checked,
     ros_setup: $("rosSetup").value.trim(),
     camera_setup: $("cameraSetup").value.trim(),
   };
@@ -356,6 +358,7 @@ function formPayload() {
   return {
     ros_version: $("rosVersion").value,
     ros_domain_id: $("rosDomainId").value.trim(),
+    ros_localhost_only: $("rosLocalhostOnly").checked,
     ros_setup: $("rosSetup").value.trim(),
     camera_setup: $("cameraSetup").value.trim(),
     mode: $("mode").value,
@@ -755,11 +758,16 @@ function updateStandaloneRosVersion(rosVersion) {
 
 function updateStandaloneDomainControl(rosVersion) {
   const control = $("standaloneRosDomainId");
+  const localhostControl = $("standaloneRosLocalhostOnly");
   const enabled = String(rosVersion) === "2";
   control.disabled = !enabled;
   control.title = enabled
     ? "ROS 2 Domain ID，留空表示不设置"
     : "ROS 1 不使用 Domain ID";
+  localhostControl.disabled = !enabled;
+  localhostControl.title = enabled
+    ? "按 ROS 2 发行版限制节点只能通过本机接口发现和通信"
+    : "ROS 1 不使用 ROS 2 discovery range 配置";
 }
 
 function renderStandaloneForm(testId = "") {
@@ -768,9 +776,11 @@ function renderStandaloneForm(testId = "") {
   state.standaloneTest = test || null;
   const groupRoot = $("standaloneFieldGroups");
   const domainField = $("standaloneRosDomainId").closest(".standalone-field");
+  const localhostField = $("standaloneRosLocalhostOnly").closest(".standalone-field");
+  const rosEnvironmentFields = [domainField, localhostField];
   groupRoot.replaceChildren();
   if (!test) {
-    $("standaloneFieldStaging").appendChild(domainField);
+    $("standaloneFieldStaging").append(...rosEnvironmentFields);
     $("standaloneDescription").textContent = "没有找到可用的独立脚本清单。";
     $("standaloneVersion").textContent = "TOOL v—";
     return;
@@ -799,7 +809,7 @@ function renderStandaloneForm(testId = "") {
       groupHeading.insertBefore(cameraActions, group.status);
     }
     if (field.name === "ros_version") {
-      group.fields.appendChild(domainField);
+      group.fields.append(...rosEnvironmentFields);
       domainAttached = true;
     }
   }
@@ -813,7 +823,7 @@ function renderStandaloneForm(testId = "") {
     "页面设置的日志级别和 Launch 参数不会生效，请直接在 Launch 文件中配置。"
   );
   groups.advanced.fields.prepend(multiCameraLaunchWarning);
-  if (!domainAttached) groups.environment.fields.prepend(domainField);
+  if (!domainAttached) groups.environment.fields.prepend(...rosEnvironmentFields);
   const limitFieldCount = groups.limits.fields.querySelectorAll(".standalone-field").length;
   groups.limits.fields.querySelector(".limits-note")
     ?.classList.toggle("is-hidden", limitFieldCount < 2);
@@ -1794,6 +1804,10 @@ function updateRosVersionControls({ fillBlank = false } = {}) {
   $("rosDomainId").title = domainEnabled
     ? "ROS 2 Domain ID，留空表示不设置"
     : "ROS 1 不使用 Domain ID";
+  $("rosLocalhostOnly").disabled = !domainEnabled;
+  $("rosLocalhostOnly").title = domainEnabled
+    ? "按 ROS 2 发行版限制节点只能通过本机接口发现和通信"
+    : "ROS 1 不使用 ROS 2 discovery range 配置";
   if (fillBlank) {
     if (!$("rosSetup").value.trim()) {
       $("rosSetup").value = defaults.ros;
@@ -1896,6 +1910,8 @@ async function loadConfig() {
   $("rosVersion").value = config.ros_version || "2";
   $("rosDomainId").value = config.ros_domain_id || "";
   $("standaloneRosDomainId").value = config.ros_domain_id || "";
+  $("rosLocalhostOnly").checked = truthy(config.ros_localhost_only);
+  $("standaloneRosLocalhostOnly").checked = truthy(config.ros_localhost_only);
   $("rosSetup").value = config.ros_setup || "";
   $("cameraSetup").value = config.camera_setup || "";
   $("mode").value = config.mode || "functional";
@@ -2030,6 +2046,7 @@ async function startStandaloneRun(event) {
         test_id: test.id,
         confirmed_test_id: confirmedTestId,
         ros_domain_id: $("standaloneRosDomainId").value.trim(),
+        ros_localhost_only: $("standaloneRosLocalhostOnly").checked,
         values: standaloneCurrentValues(),
       }),
     });
