@@ -485,8 +485,180 @@ def test_profile_service_retries_once_and_reports_degraded_success():
     )
 
     assert result["retried"] is True
+    assert result["had_timeout"] is True
+    assert result["recovered_as_already_active"] is False
     assert [attempt["success"] for attempt in result["attempts"]] == [False, True]
     assert sleeps == [1]
+
+
+def test_profile_service_timeout_then_already_active_is_recovered():
+    module = load_script()
+    spec = module.parse_stream_profile_spec("/camera/color/image_raw=640x480@30")
+    group = module.StreamProfileGroup(
+        camera_namespace="/camera",
+        camera_name="camera",
+        service="/camera/set_stream_profile",
+        profiles=(spec,),
+    )
+
+    class Session:
+        def assert_running(self):
+            pass
+
+    class Harness:
+        calls = 0
+
+        def call_set_stream_profile(self, service, profiles, timeout):
+            del service, profiles, timeout
+            self.calls += 1
+            if self.calls == 1:
+                raise TimeoutError("service call timed out after 15.0s")
+            return {
+                "success": False,
+                "message": module.PROFILE_ALREADY_ACTIVE_MESSAGE,
+            }
+
+    sleeps = []
+    result = module.call_profile_with_retry(
+        session=Session(),
+        harness=Harness(),
+        group=group,
+        timeout=15,
+        retry_delay=1,
+        sleep=sleeps.append,
+    )
+
+    assert result["success"] is True
+    assert result["retried"] is True
+    assert result["had_timeout"] is True
+    assert result["recovered_as_already_active"] is True
+    assert [attempt["success"] for attempt in result["attempts"]] == [False, False]
+    assert sleeps == [1]
+
+
+def test_profile_timeout_recovery_is_reported_as_warning(monkeypatch):
+    module = load_script()
+    group = SimpleNamespace(
+        camera_namespace="/camera",
+        service="/camera/set_stream_profile",
+    )
+    recovered_call = {
+        "success": True,
+        "retried": True,
+        "had_timeout": True,
+        "recovered_as_already_active": True,
+        "attempts": [
+            {"attempt": 1, "success": False, "error": "service timed out"},
+            {
+                "attempt": 2,
+                "success": False,
+                "error": module.PROFILE_ALREADY_ACTIVE_MESSAGE,
+            },
+        ],
+    }
+    monkeypatch.setattr(
+        module, "call_profile_with_retry", lambda **_kwargs: dict(recovered_call)
+    )
+    monkeypatch.setattr(
+        module,
+        "wait_for_profile_state",
+        lambda **_kwargs: {"all_profiles_match": True, "profiles": [], "topics": []},
+    )
+
+    class Monitor:
+        def reset_window(self):
+            pass
+
+    warnings = []
+    emitted = []
+    result = module.apply_profile_set(
+        session=object(),
+        harness=object(),
+        monitor=Monitor(),
+        groups=[group],
+        specs=[],
+        label="A",
+        cycle_index=1761,
+        service_timeout=15.0,
+        retry_delay=1.0,
+        stable_seconds=4.0,
+        max_gap_seconds=1.5,
+        stream_timeout=30.0,
+        warnings=warnings,
+        emit=emitted.append,
+    )
+
+    assert result["services"][0]["success"] is True
+    assert warnings == [
+        {
+            "cycle": 1761,
+            "camera_namespace": "/camera",
+            "action": "set-stream-profile",
+            "profile_set": "A",
+            "reason": "service-timeout",
+            "recovered_as_already_active": True,
+            "message": (
+                "cycle 1761 /camera: profile set A service timed out; retry confirmed "
+                "the requested profiles were already active"
+            ),
+        }
+    ]
+    assert emitted == [warnings[0]["message"]]
+
+
+def test_ros2_profile_timeout_removes_pending_request():
+    module = load_script()
+    spec = module.parse_stream_profile_spec("/camera/color/image_raw=640x480@30")
+
+    class Request:
+        def __init__(self):
+            self.profiles = []
+
+    class Message:
+        pass
+
+    class Future:
+        def __init__(self):
+            self.cancelled = False
+
+        def done(self):
+            return False
+
+        def cancel(self):
+            self.cancelled = True
+
+    future = Future()
+
+    class Client:
+        def __init__(self):
+            self.removed = []
+
+        def wait_for_service(self, timeout_sec):
+            assert timeout_sec == 0.001
+            return True
+
+        def call_async(self, request):
+            assert len(request.profiles) == 1
+            return future
+
+        def remove_pending_request(self, pending_future):
+            self.removed.append(pending_future)
+
+    client = Client()
+    harness = module.RosHarness("2", "test", 10, enable_profile_switch=True)
+    harness._set_stream_profile_type = object()
+    harness._set_stream_profile_request_type = Request
+    harness._stream_profile_message_type = Message
+    harness._set_stream_profile_clients["/camera/set_stream_profile"] = client
+    harness.spin_once = lambda _timeout: None
+
+    with pytest.raises(TimeoutError, match="service call timed out"):
+        harness.call_set_stream_profile(
+            "/camera/set_stream_profile", (spec,), timeout=0.001
+        )
+
+    assert client.removed == [future]
+    assert future.cancelled is True
 
 
 def test_ros1_profile_request_batches_multiple_streams_for_one_camera():

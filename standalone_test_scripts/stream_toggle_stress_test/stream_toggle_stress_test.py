@@ -54,6 +54,7 @@ SET_STREAM_PROFILE_TYPES = {
     "orbbec_camera_msgs/srv/SetStreamProfile",
     "orbbec_camera/SetStreamProfile",
 }
+PROFILE_ALREADY_ACTIVE_MESSAGE = "requested stream profiles are already active"
 
 
 def timestamp() -> str:
@@ -867,6 +868,19 @@ class RosHarness:
         self._stop_executor()
         self._start_executor()
 
+    @staticmethod
+    def _discard_pending_request(client: Any, future: Any) -> None:
+        remove_pending_request = getattr(client, "remove_pending_request", None)
+        if callable(remove_pending_request):
+            try:
+                remove_pending_request(future)
+            except Exception:
+                pass
+        try:
+            future.cancel()
+        except Exception:
+            pass
+
     def call_set_bool(self, service_name: str, enabled: bool, timeout: float) -> Dict[str, Any]:
         if self.ros_version == "2":
             client = self._set_bool_clients.get(service_name)
@@ -888,6 +902,7 @@ class RosHarness:
             while not future.done() and time.monotonic() < deadline:
                 self.spin_once(min(0.1, max(deadline - time.monotonic(), 0.001)))
             if not future.done():
+                self._discard_pending_request(client, future)
                 raise TimeoutError(f"service call timed out after {timeout:.1f}s")
             response = future.result()
             if response is None:
@@ -956,6 +971,7 @@ class RosHarness:
             while not future.done() and time.monotonic() < deadline:
                 self.spin_once(min(0.1, max(deadline - time.monotonic(), 0.001)))
             if not future.done():
+                self._discard_pending_request(client, future)
                 raise TimeoutError(f"service call timed out after {timeout:.1f}s")
             response = future.result()
             if response is None:
@@ -1907,10 +1923,19 @@ def call_profile_with_retry(
                 "elapsed_seconds": time.monotonic() - started,
             }
         )
-        if success:
+        had_timeout = any("timed out" in item["error"].lower() for item in attempts)
+        already_active_after_timeout = (
+            attempt_index > 1
+            and had_timeout
+            and not success
+            and message.strip().lower() == PROFILE_ALREADY_ACTIVE_MESSAGE
+        )
+        if success or already_active_after_timeout:
             return {
                 "success": True,
                 "retried": attempt_index > 1,
+                "had_timeout": had_timeout,
+                "recovered_as_already_active": already_active_after_timeout,
                 "attempts": attempts,
             }
         if attempt_index == 1:
@@ -1952,15 +1977,32 @@ def apply_profile_set(
         call["service"] = group.service
         service_results.append(call)
         if call["retried"]:
+            if call.get("recovered_as_already_active"):
+                warning_message = (
+                    f"cycle {cycle_index} {group.camera_namespace}: profile set {label} "
+                    "service timed out; retry confirmed the requested profiles were "
+                    "already active"
+                )
+            elif call.get("had_timeout"):
+                warning_message = (
+                    f"cycle {cycle_index} {group.camera_namespace}: profile set {label} "
+                    "service timed out and succeeded on retry"
+                )
+            else:
+                warning_message = (
+                    f"cycle {cycle_index} {group.camera_namespace}: profile set {label} "
+                    "succeeded only after retry"
+                )
             warning = {
                 "cycle": cycle_index,
                 "camera_namespace": group.camera_namespace,
                 "action": "set-stream-profile",
                 "profile_set": label,
-                "message": (
-                    f"cycle {cycle_index} {group.camera_namespace}: profile set {label} "
-                    "succeeded only after retry"
+                "reason": "service-timeout" if call.get("had_timeout") else "service-retry",
+                "recovered_as_already_active": bool(
+                    call.get("recovered_as_already_active")
                 ),
+                "message": warning_message,
             }
             warnings.append(warning)
             emit(warning["message"])
