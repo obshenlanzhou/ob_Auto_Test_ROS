@@ -931,6 +931,16 @@ label > span {
   white-space: nowrap;
 }
 
+.standalone-group-fields .field-label b {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.standalone-group-fields .field-label small {
+  display: none;
+}
+
 .required-label::after {
   margin-left: 5px;
   color: var(--danger);
@@ -984,6 +994,108 @@ select {
   min-height: 18px;
   padding: 0;
   accent-color: var(--primary);
+}
+
+.localhost-toggle {
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  min-height: 63px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 9px 11px;
+  background: var(--input-bg);
+  cursor: pointer;
+  transition: border-color 150ms ease, background 150ms ease, box-shadow 150ms ease;
+}
+
+.localhost-toggle:hover {
+  border-color: var(--line-strong);
+  background: var(--surface-hover);
+}
+
+.localhost-toggle:focus-within {
+  border-color: var(--primary-line-strong);
+  box-shadow: 0 0 0 3px var(--primary-wash-strong);
+}
+
+.localhost-toggle .field-label {
+  display: grid;
+  gap: 2px;
+}
+
+.localhost-toggle .field-label b {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.localhost-toggle .field-label small {
+  overflow: visible;
+  color: var(--muted);
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  text-overflow: clip;
+}
+
+.localhost-switch {
+  position: relative;
+  display: block;
+  width: 38px;
+  height: 22px;
+  flex: 0 0 38px;
+}
+
+.checkbox-field .localhost-switch input {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  width: 100%;
+  min-height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.localhost-switch-track {
+  position: absolute;
+  inset: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--surface-soft);
+  transition: border-color 150ms ease, background 150ms ease;
+}
+
+.localhost-switch-track::after {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--muted);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.22);
+  content: "";
+  transition: transform 150ms ease, background 150ms ease;
+}
+
+.localhost-switch input:checked + .localhost-switch-track {
+  border-color: var(--primary);
+  background: var(--primary);
+}
+
+.localhost-switch input:checked + .localhost-switch-track::after {
+  background: var(--surface-solid);
+  transform: translateX(16px);
+}
+
+.localhost-switch input:focus-visible + .localhost-switch-track {
+  outline: 2px solid var(--primary);
+  outline-offset: 3px;
+}
+
+.localhost-switch input:disabled,
+.localhost-switch input:disabled + .localhost-switch-track {
+  cursor: not-allowed;
+  opacity: 0.48;
 }
 
 input::placeholder,

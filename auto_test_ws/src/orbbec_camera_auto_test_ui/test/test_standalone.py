@@ -958,6 +958,28 @@ def test_standalone_ros_change_handler_updates_version_dependent_fields():
     assert "versionDefaults[rosVersion]" in script
 
 
+def test_localhost_controls_use_compact_switch_styling():
+    template = (
+        PACKAGE_ROOT
+        / "orbbec_camera_auto_test_ui"
+        / "templates"
+        / "index.html"
+    ).read_text(encoding="utf-8")
+    stylesheet = (
+        PACKAGE_ROOT
+        / "orbbec_camera_auto_test_ui"
+        / "static"
+        / "style.css"
+    ).read_text(encoding="utf-8")
+
+    assert template.count('class="checkbox-field localhost-toggle"') == 2
+    assert template.count('class="localhost-switch-track"') == 2
+    assert template.count('role="switch"') == 2
+    assert ".localhost-toggle" in stylesheet
+    assert ".localhost-switch input:checked + .localhost-switch-track" in stylesheet
+    assert ".standalone-group-fields .field-label small" in stylesheet
+
+
 def test_camera_editor_separates_usb_and_network_fields():
     script = (
         PACKAGE_ROOT

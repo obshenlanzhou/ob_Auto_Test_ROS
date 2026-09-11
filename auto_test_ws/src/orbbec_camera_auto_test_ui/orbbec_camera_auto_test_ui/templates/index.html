@@ -103,9 +103,12 @@
                 <span>ROS Domain ID</span>
                 <input id="rosDomainId" name="ros_domain_id" type="number" min="0" max="232" step="1" placeholder="0（留空表示不设置）" />
               </label>
-              <label class="checkbox-field">
-                <span class="field-label"><b>仅本机通信</b><small>ROS discovery: LOCALHOST</small></span>
-                <input id="rosLocalhostOnly" name="ros_localhost_only" type="checkbox" checked />
+              <label class="checkbox-field localhost-toggle">
+                <span class="field-label"><b>仅本机通信</b><small>ROS 2 · LOCALHOST</small></span>
+                <span class="localhost-switch">
+                  <input id="rosLocalhostOnly" name="ros_localhost_only" type="checkbox" role="switch" checked />
+                  <span class="localhost-switch-track" aria-hidden="true"></span>
+                </span>
               </label>
               <label>
                 <span>ROS Setup</span>
@@ -262,9 +265,12 @@
               </label>
             </div>
             <div class="standalone-field standalone-localhost-field" data-field-name="ros_localhost_only" data-field-type="boolean">
-              <label class="checkbox-field">
-                <span class="field-label"><b>仅本机通信</b><small>ROS discovery: LOCALHOST</small></span>
-                <input id="standaloneRosLocalhostOnly" name="ros_localhost_only" type="checkbox" checked />
+              <label class="checkbox-field localhost-toggle">
+                <span class="field-label"><b>仅本机通信</b><small>ROS 2 · LOCALHOST</small></span>
+                <span class="localhost-switch">
+                  <input id="standaloneRosLocalhostOnly" name="ros_localhost_only" type="checkbox" role="switch" checked />
+                  <span class="localhost-switch-track" aria-hidden="true"></span>
+                </span>
               </label>
             </div>
           </div>
