@@ -391,6 +391,7 @@ def test_stream_toggle_manifest_requires_duration_or_run_count(tmp_path):
     manifest = manifest_catalog(STANDALONE_ROOT)["stream_toggle_stress_test"]
 
     values, errors = validate_request(manifest, {})
+    assert values["toggle_mode"] == "all"
     assert values["duration"] == ""
     assert values["run_count"] == ""
     assert "压测时间和压测次数至少填写一项" in errors
@@ -406,6 +407,22 @@ def test_stream_toggle_manifest_requires_duration_or_run_count(tmp_path):
     assert count_args[count_args.index("--run-count") + 1] == "10"
     assert "--duration" not in count_args
     assert "--duration" in both_args and "--run-count" in both_args
+
+
+def test_stream_toggle_manifest_defaults_mode_by_ros_version(tmp_path):
+    manifest = manifest_catalog(STANDALONE_ROOT)["stream_toggle_stress_test"]
+
+    ros2_args, ros2_values = build_command(
+        manifest, {"ros_version": "2", "run_count": "1"}, tmp_path
+    )
+    ros1_args, ros1_values = build_command(
+        manifest, {"ros_version": "1", "run_count": "1"}, tmp_path
+    )
+
+    assert ros2_values["toggle_mode"] == "all"
+    assert ros2_args[ros2_args.index("--toggle-mode") + 1] == "all"
+    assert ros1_values["toggle_mode"] == "individual"
+    assert ros1_args[ros1_args.index("--toggle-mode") + 1] == "individual"
 
 
 def test_all_stress_manifests_require_duration_or_run_count():
@@ -937,6 +954,8 @@ def test_standalone_ros_change_handler_updates_version_dependent_fields():
     assert "updateStandaloneRosVersion(control.value)" in script
     assert "launchFileForRosVersion(launchFile.value, rosVersion)" in script
     assert "launchFileForRosVersion(launchFile.placeholder, rosVersion)" in script
+    assert "field.defaults_by_ros_version" in script
+    assert "versionDefaults[rosVersion]" in script
 
 
 def test_camera_editor_separates_usb_and_network_fields():

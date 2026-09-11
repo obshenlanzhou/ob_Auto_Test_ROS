@@ -26,7 +26,7 @@ English: [README.md](README.md)
 
 整体模式会关闭全部目标流，确认停流后整体恢复；
 
-ROS 1 仅支持默认的 `individual` 逐路模式；`all` 整体模式仅支持 ROS 2。
+ROS 2 默认使用 `all` 整体模式，ROS 1 默认使用且仅支持 `individual` 逐路模式。
 
 ## 使用方法
 
@@ -119,7 +119,7 @@ A、B 两组必须配置相同的话题，且配置内容必须不同。
 | `--save-image-topic` | 目标 raw 话题 | 存图来源，可重复传入 |
 | `--point-cloud-topic` | 循环前自动发现 | 每次开流后必检的 `PointCloud2` topic，可重复传入并支持 `{camera}` |
 | `--imu-topic` | 循环前自动发现 | 每次开流后必检的 `Imu` topic，可重复传入并支持 `{camera}` |
-| `--toggle-mode` | `individual` | `individual` 逐路；`all` 整体开关 |
+| `--toggle-mode` | ROS 2：`all`；ROS 1：`individual` | `individual` 逐路；`all` 整体开关 |
 | `--switch-stream-profile` | `0` | 设为 `1` 时在 A/B 流配置间切换 |
 | `--stream-off-seconds` | `4` | 关流保持和验证时间，单位秒 |
 | `--stream-on-preview-seconds` | `4` | 开流后的预览和验证时间，单位秒 |

@@ -753,6 +753,14 @@ function updateStandaloneRosVersion(rosVersion) {
     launchFile.value = launchFileForRosVersion(launchFile.value, rosVersion);
     launchFile.placeholder = launchFileForRosVersion(launchFile.placeholder, rosVersion);
   }
+  for (const field of state.standaloneTest?.fields || []) {
+    const versionDefaults = field.defaults_by_ros_version;
+    if (!versionDefaults || versionDefaults[rosVersion] === undefined) continue;
+    const control = document.querySelector(
+      `[data-standalone-input="${field.name}"]`
+    );
+    if (control) control.value = String(versionDefaults[rosVersion]);
+  }
   updateStandaloneDomainControl(rosVersion);
 }
 

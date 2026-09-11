@@ -127,7 +127,7 @@ def list_standalone_tests() -> Dict[str, Any]:
         public = public_manifest(manifest)
         saved_values = saved.get(manifest["id"]) or {}
         values = {
-            **default_values(manifest),
+            **default_values(manifest, saved_values),
             **saved_values,
         }
         ros_version = str(values.get("ros_version") or "2")

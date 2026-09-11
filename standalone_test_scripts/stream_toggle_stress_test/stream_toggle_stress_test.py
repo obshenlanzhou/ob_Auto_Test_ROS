@@ -2684,7 +2684,11 @@ def build_summary(result: Dict[str, Any]) -> str:
         f"- ROS 2 executor: {result.get('ros2_executor', '') or 'n/a'}",
         f"- ROS 2 subscription depth: "
         f"{result.get('ros2_subscription_depth') or 'n/a'}",
-        f"- Toggle mode: {result.get('toggle_mode', 'individual')}",
+        "- Toggle mode: "
+        + (
+            result.get("toggle_mode")
+            or ("all" if result.get("ros_version") == "2" else "individual")
+        ),
         f"- Stream profile switching: "
         f"{'enabled' if result.get('profile_switch_enabled') else 'disabled'}",
         f"- Initial profile set: {result.get('initial_profile_set', 'disabled')}",
@@ -3945,10 +3949,10 @@ def parse_args(argv: Optional[Sequence[str]] = None):
     parser.add_argument(
         "--toggle-mode",
         choices=("individual", "all"),
-        default="individual",
+        default=None,
         help=(
             "individual toggles one stream at a time; all uses each camera's "
-            "set_streams_enable service"
+            "set_streams_enable service (default: all for ROS 2, individual for ROS 1)"
         ),
     )
     parser.add_argument(
@@ -4038,7 +4042,10 @@ def parse_args(argv: Optional[Sequence[str]] = None):
     )
     parser.add_argument("--results-dir", default="")
     parser.add_argument("--version", action="version", version=f"%(prog)s {TOOL_VERSION}")
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if args.toggle_mode is None:
+        args.toggle_mode = "all" if args.ros_version == "2" else "individual"
+    return args
 
 
 def main() -> None:

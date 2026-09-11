@@ -27,7 +27,8 @@ Continue with the next stream → start a new cycle after all targets pass
 All-stream mode stops every target stream, verifies the stopped state, restores all streams, then
 verifies and saves each stream.
 
-ROS 1 supports only the default `individual` mode. The `all` mode is currently ROS 2 only.
+The default is `all` for ROS 2 and `individual` for ROS 1. ROS 1 supports only
+`individual`; `all` is currently ROS 2 only.
 
 ## Usage
 
@@ -121,7 +122,7 @@ decode or validate compressed data; it writes `CompressedImage.data` directly to
 | `--save-image-topic` | target raw topics | Image source to save; repeatable |
 | `--point-cloud-topic` | pre-cycle discovery | Required `PointCloud2` topic during each enabled state; repeatable, supports `{camera}` |
 | `--imu-topic` | pre-cycle discovery | Required `Imu` topic during each enabled state; repeatable, supports `{camera}` |
-| `--toggle-mode` | `individual` | `individual` per-stream; `all` all streams |
+| `--toggle-mode` | ROS 2: `all`; ROS 1: `individual` | `individual` per-stream; `all` all streams |
 | `--switch-stream-profile` | `0` | Set to `1` to alternate A/B stream profiles |
 | `--stream-off-seconds` | `4` | Off-state dwell and verification time in seconds |
 | `--stream-on-preview-seconds` | `4` | Preview and verification time after enabling |

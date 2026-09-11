@@ -144,15 +144,26 @@ def test_all_stream_groups_scale_to_four_discovered_camera_namespaces():
     ]
 
 
-def test_toggle_mode_defaults_to_individual_and_accepts_all():
+def test_toggle_mode_defaults_by_ros_version_and_accepts_explicit_override():
     module = load_script()
 
-    assert module.parse_args(["--launch-file", "test.launch.py"]).toggle_mode == "individual"
     assert (
         module.parse_args(
-            ["--launch-file", "test.launch.py", "--toggle-mode", "all"]
+            ["--launch-file", "test.launch.py", "--ros-version", "2"]
         ).toggle_mode
         == "all"
+    )
+    assert (
+        module.parse_args(
+            ["--launch-file", "test.launch", "--ros-version", "1"]
+        ).toggle_mode
+        == "individual"
+    )
+    assert (
+        module.parse_args(
+            ["--launch-file", "test.launch.py", "--toggle-mode", "individual"]
+        ).toggle_mode
+        == "individual"
     )
 
 

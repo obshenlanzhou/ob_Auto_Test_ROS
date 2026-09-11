@@ -197,7 +197,8 @@ def public_manifest(manifest: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def default_values(manifest: Dict[str, Any]) -> Dict[str, Any]:
+def default_values(manifest: Dict[str, Any], context: Any = None) -> Dict[str, Any]:
+    source = context if isinstance(context, dict) else {}
     defaults: Dict[str, Any] = {}
     for field in manifest["fields"]:
         if "default" in field:
@@ -208,12 +209,22 @@ def default_values(manifest: Dict[str, Any]) -> Dict[str, Any]:
             defaults[field["name"]] = False
         else:
             defaults[field["name"]] = ""
+    ros_version = _safe_text(source.get("ros_version")) or _safe_text(
+        defaults.get("ros_version")
+    )
+    for field in manifest["fields"]:
+        name = field["name"]
+        version_defaults = field.get("defaults_by_ros_version")
+        if name in source or not isinstance(version_defaults, dict):
+            continue
+        if ros_version in version_defaults:
+            defaults[name] = version_defaults[ros_version]
     return defaults
 
 
 def normalize_values(manifest: Dict[str, Any], raw_values: Any) -> Dict[str, Any]:
     source = raw_values if isinstance(raw_values, dict) else {}
-    values = default_values(manifest)
+    values = default_values(manifest, source)
     for field in manifest["fields"]:
         name = field["name"]
         if name not in source:
