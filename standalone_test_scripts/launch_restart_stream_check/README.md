@@ -103,7 +103,7 @@ mandatory from the first launch.
 Each run creates:
 
 ```text
-launch_restart_stream_check/results/YYYYMMDD_HHMMSS_restart_stream_v2.0.0/
+launch_restart_stream_check/results/YYYYMMDD_HHMMSS_restart_stream_v2.2.1/
 ├── logs/test_XXXX/<camera>.launch.log      # ROS launch log for each restart
 ├── logs/test_XXXX/sdk/Log/<camera>/        # SDK debug log for each restart
 ├── images/<camera>/<stream>/               # Image/IMU PNG and point-cloud PLY evidence

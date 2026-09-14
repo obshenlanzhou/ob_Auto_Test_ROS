@@ -135,7 +135,7 @@ To use different presets, pass the path and name explicitly:
 Each run creates:
 
 ```text
-preset_upgrade_stress_test/results/YYYYMMDD_HHMMSS_preset_upgrade_v2.0.0/
+preset_upgrade_stress_test/results/YYYYMMDD_HHMMSS_preset_upgrade_v2.2.1/
 ├── summary.md                              # Final summary
 ├── result.json                             # Machine-readable result
 ├── events.jsonl                            # Structured lifecycle and progress events

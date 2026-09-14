@@ -42,7 +42,7 @@ from _sensor_artifacts import (
 ENV_READY_VAR = "PRESET_UPGRADE_STRESS_TEST_ENV_READY"
 INTERRUPTED = False
 SCRIPT_DIR = Path(__file__).resolve().parent
-TOOL_VERSION = "2.1.3"
+TOOL_VERSION = "2.2.1"
 TEST_ID = "preset_upgrade_stress_test"
 POINT_CLOUD_RESUBSCRIBE_AFTER_SECONDS = 2.0
 IMAGE_RESUBSCRIBE_AFTER_PEER_SECONDS = 2.0
