@@ -111,3 +111,8 @@ launch_restart_stream_check/results/YYYYMMDD_HHMMSS_restart_stream_v2.0.0/
 ├── events.jsonl                            # Structured lifecycle and progress events
 └── result.json                             # Structured per-restart results and log paths
 ```
+
+Each image-topic variant has its own directory. For example,
+`depth/image_raw` and `depth/image_unaligned` are stored under `depth/` and
+`depth_unaligned/`; compressed transports use directories such as
+`color_compressed/` and `depth_compressed_depth/`.

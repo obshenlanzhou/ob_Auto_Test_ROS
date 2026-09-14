@@ -46,7 +46,7 @@ DEFAULT_CAMERA_LAUNCH = {
 }
 ENV_READY_VAR = "LAUNCH_RESTART_STREAM_CHECK_ENV_READY"
 INTERRUPTED = False
-TOOL_VERSION = "2.1.2"
+TOOL_VERSION = "2.1.3"
 TEST_ID = "launch_restart_stream_check"
 DEFAULT_STRESS_LAUNCH_ARGS = {
     "enable_heartbeat": "true",
@@ -639,11 +639,44 @@ STREAM_DIRECTORY_NAMES = {
     "left_color": "color_left",
     "right_color": "color_right",
 }
+IMAGE_TRANSPORT_DIRECTORY_SUFFIXES = {
+    "compressed": "compressed",
+    "compresseddepth": "compressed_depth",
+}
 IMAGE_FILE_PATTERN = re.compile(r"^image_(\d+)\.(?:png|jpg)$", re.IGNORECASE)
+
+
+def sanitize_path_part(value: str) -> str:
+    text = value.strip().strip("/")
+    if not text:
+        return "unknown"
+    return "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in text)
 
 
 def _image_topic_parts(topic: str) -> tuple[str, str]:
     parts = [part for part in topic.strip().split("/") if part]
+    transport_suffix = ""
+    if parts:
+        transport_suffix = IMAGE_TRANSPORT_DIRECTORY_SUFFIXES.get(
+            parts[-1].lower(), ""
+        )
+        if transport_suffix:
+            parts = parts[:-1]
+    for index in range(len(parts) - 1, -1, -1):
+        image_part = parts[index]
+        if not image_part.startswith("image") or index == 0:
+            continue
+        stream_part = parts[index - 1]
+        camera_name = parts[index - 2] if index > 1 else "unknown_camera"
+        stream_name = STREAM_DIRECTORY_NAMES.get(
+            stream_part, sanitize_path_part(stream_part)
+        )
+        image_variant = image_part[len("image") :].strip("_")
+        if image_variant and image_variant != "raw":
+            stream_name += "_" + sanitize_path_part(image_variant)
+        if transport_suffix:
+            stream_name += "_" + transport_suffix
+        return camera_name, stream_name
     for index, part in enumerate(parts):
         if part in STREAM_DIRECTORY_NAMES:
             camera_name = parts[index - 1] if index > 0 else "unknown_camera"

@@ -156,6 +156,9 @@ stream_toggle_stress_test/results/YYYYMMDD_HHMMSS_stream_toggle_v2.0.0/
 └── result.json                # Per-cycle, per-stream, and image results
 ```
 
+Raw and compressed image topics use distinct artifact directories, such as
+`depth/` and `depth_compressed/`.
+
 `summary.md` reports attempted, passed, and failed cycle counts; subscription recovery successes
 and failures; and a concise list of failed cycles. `result.json` retains the detailed verification
 snapshot and recovery outcome for each affected cycle.

@@ -149,5 +149,7 @@ stream_toggle_stress_test/results/YYYYMMDD_HHMMSS_stream_toggle_v2.0.0/
 └── result.json                # 每轮、每路流及存图结果
 ```
 
+raw 与压缩图像 topic 使用不同的产物目录，例如 `depth/` 和 `depth_compressed/`。
+
 `summary.md` 会分别统计执行、通过、失败轮次和订阅恢复成功、失败次数，并列出失败轮次；
 `result.json` 保留对应轮次的完整验证快照和订阅恢复结果。

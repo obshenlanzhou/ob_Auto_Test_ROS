@@ -1595,7 +1595,7 @@ def test_image_paths_are_per_camera_stream_and_never_overwrite(tmp_path):
         tmp_path / "camera_01" / "depth" / "image_0004.png"
     )
     assert sequence.next_path(compressed) == (
-        tmp_path / "camera_01" / "depth" / "image_0005.jpg"
+        tmp_path / "camera_01" / "depth_compressed" / "image_0001.jpg"
     )
 
 

@@ -138,8 +138,9 @@ launch_param_load_stress/results/YYYYMMDD_HHMMSS_launch_param_load_stress_v2.0.0
 │   └── ...
 ├── images/                # 仅在 --save-image-count > 0 时生成
 │   ├── camera_01/color/image_0001.png
-│   ├── camera_01/color/image_0002.jpg
+│   ├── camera_01/color_compressed/image_0001.jpg
 │   ├── camera_01/depth/image_0001.png
+│   ├── camera_01/depth_unaligned/image_0001.png
 │   ├── camera_01/point_cloud_depth/point_cloud_0001.ply
 │   ├── camera_01/imu_gyro_accel/image_0001.png
 │   └── camera_02/ir_left/image_0001.png
@@ -148,4 +149,5 @@ launch_param_load_stress/results/YYYYMMDD_HHMMSS_launch_param_load_stress_v2.0.0
 └── result.json            # 所有轮次的机器可读结果
 ```
 
-每台相机的每个流独立编号，并在后续压测轮次继续递增；已有图片不会被覆盖。
+每台相机的每个图像 topic 变体独立编号，并在后续压测轮次继续递增。raw、
+未对齐、校正、compressed 和 compressedDepth 分别使用独立目录；已有图片不会被覆盖。

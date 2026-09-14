@@ -151,8 +151,9 @@ launch_param_load_stress/results/YYYYMMDD_HHMMSS_launch_param_load_stress_v2.0.0
 │   └── ...
 ├── images/                # Present only when --save-image-count > 0
 │   ├── camera_01/color/image_0001.png
-│   ├── camera_01/color/image_0002.jpg
+│   ├── camera_01/color_compressed/image_0001.jpg
 │   ├── camera_01/depth/image_0001.png
+│   ├── camera_01/depth_unaligned/image_0001.png
 │   ├── camera_01/point_cloud_depth/point_cloud_0001.ply
 │   ├── camera_01/imu_gyro_accel/image_0001.png
 │   └── camera_02/ir_left/image_0001.png
@@ -161,5 +162,6 @@ launch_param_load_stress/results/YYYYMMDD_HHMMSS_launch_param_load_stress_v2.0.0
 └── result.json            # Machine-readable result for all runs
 ```
 
-Image numbers continue independently for each camera and stream across test
-cycles. Existing images are never overwritten.
+Image numbers continue independently for each camera and image-topic variant
+across test cycles. Raw, unaligned, rectified, compressed, and compressed-depth
+topics use distinct directories. Existing images are never overwritten.

@@ -543,6 +543,11 @@ def test_image_saving_uses_stream_directories_and_continuing_indices(tmp_path):
     topics_and_directories = {
         "/camera/color/image_raw": "color",
         "/camera/depth/image_raw": "depth",
+        "/camera/depth/image_unaligned": "depth_unaligned",
+        "/camera/depth/image_raw/compressedDepth": "depth_compressed_depth",
+        "/camera/color/image_raw/compressed": "color_compressed",
+        "/camera/color/image_rect_raw": "color_rect_raw",
+        "/camera/depth_to_color/image_raw": "depth_to_color",
         "/camera/ir/image_raw": "ir",
         "/camera/left_ir/image_raw": "ir_left",
         "/camera/right_ir/image_raw": "ir_right",
@@ -571,7 +576,15 @@ def test_image_saving_uses_stream_directories_and_continuing_indices(tmp_path):
         compressed = sequence.next_path(
             "/camera_01/color/image_raw/compressed", "camera_01", ".jpg"
         )
-        assert compressed == output_root / "camera_01" / "color" / "image_0002.jpg"
+        assert compressed == (
+            output_root / "camera_01" / "color_compressed" / "image_0001.jpg"
+        )
+        unaligned = sequence.next_path(
+            "/camera_01/depth/image_unaligned", "camera_01"
+        )
+        assert unaligned == (
+            output_root / "camera_01" / "depth_unaligned" / "image_0001.png"
+        )
 
 
 def test_preset_image_callback_skips_frames_then_writes_in_background(

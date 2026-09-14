@@ -135,11 +135,13 @@ preset_upgrade_stress_test/results/YYYYMMDD_HHMMSS_preset_upgrade_v2.0.0/
 ├── logs/test_XXXX/<camera>/sdk/Log/         # 升级工具及相机 SDK debug 日志
 └── images/                                # raw 彩色/IR PNG、彩色深度 PNG 和 CompressedImage 原始 JPG
     ├── camera_01/color/image_0001.png
-    ├── camera_01/color/image_0002.jpg
+    ├── camera_01/color_compressed/image_0001.jpg
     ├── camera_01/depth/image_0001.png
+    ├── camera_01/depth_unaligned/image_0001.png
     ├── camera_01/point_cloud_depth/point_cloud_0001.ply
     ├── camera_01/imu_gyro_accel/image_0001.png
     └── camera_02/ir_left/image_0001.png
 ```
 
-每台相机的每个流独立编号，并在后续压测轮次继续递增；已有图片不会被覆盖。
+每台相机的每个图像 topic 变体独立编号，并在后续压测轮次继续递增。raw、
+未对齐、校正、compressed 和 compressedDepth 分别使用独立目录；已有图片不会被覆盖。

@@ -414,3 +414,9 @@ def test_launch_restart_image_paths_are_per_camera_stream_and_non_overwriting(
     assert sequence.next_path(
         "/camera_02/color/image_raw", ".png"
     ) == tmp_path / "camera_02" / "color" / "image_0001.png"
+    assert sequence.next_path(
+        "/camera_01/depth/image_unaligned", ".png"
+    ) == tmp_path / "camera_01" / "depth_unaligned" / "image_0001.png"
+    assert sequence.next_path(
+        "/camera_01/depth/image_raw/compressedDepth", ".jpg"
+    ) == tmp_path / "camera_01" / "depth_compressed_depth" / "image_0001.jpg"

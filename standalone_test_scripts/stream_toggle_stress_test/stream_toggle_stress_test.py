@@ -38,7 +38,7 @@ from _sensor_artifacts import (
 
 ENV_READY_VAR = "STREAM_TOGGLE_STRESS_TEST_ENV_READY"
 INTERRUPTED = False
-TOOL_VERSION = "2.1.3"
+TOOL_VERSION = "2.1.4"
 TEST_ID = "stream_toggle_stress_test"
 DEFAULT_STRESS_LAUNCH_ARGS = {
     "enable_heartbeat": "true",
@@ -2138,6 +2138,36 @@ def sanitize_path_part(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "_", value.strip("/")) or "unknown"
 
 
+IMAGE_TRANSPORT_DIRECTORY_SUFFIXES = {
+    "compressed": "compressed",
+}
+
+
+def image_stream_name(topic: str, fallback_stream: str) -> str:
+    """Return a stable directory that uniquely identifies an image topic."""
+    parts = [part for part in normalize_topic(topic).split("/") if part]
+    transport_suffix = ""
+    if parts:
+        transport_suffix = IMAGE_TRANSPORT_DIRECTORY_SUFFIXES.get(
+            parts[-1].lower(), ""
+        )
+        if transport_suffix:
+            parts = parts[:-1]
+    image_variant = ""
+    for part in reversed(parts):
+        if part.startswith("image"):
+            candidate = part[len("image") :].strip("_")
+            if candidate and candidate != "raw":
+                image_variant = sanitize_path_part(candidate)
+            break
+    stream_name = sanitize_path_part(fallback_stream)
+    if image_variant:
+        stream_name += "_" + image_variant
+    if transport_suffix:
+        stream_name += "_" + transport_suffix
+    return stream_name
+
+
 class ImagePathSequence:
     def __init__(self, output_root: Path) -> None:
         self.output_root = output_root
@@ -2146,11 +2176,12 @@ class ImagePathSequence:
 
     def next_path(self, target: SaveImageTarget) -> Path:
         with self._lock:
-            key = (target.camera_name, target.stream)
+            stream_name = image_stream_name(target.topic, target.stream)
+            key = (target.camera_name, stream_name)
             directory = (
                 self.output_root
                 / sanitize_path_part(target.camera_name)
-                / sanitize_path_part(target.stream)
+                / stream_name
             )
             if key not in self._next_indices:
                 highest = 0

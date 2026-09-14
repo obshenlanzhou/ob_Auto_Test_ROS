@@ -107,3 +107,7 @@ launch_restart_stream_check/results/YYYYMMDD_HHMMSS_restart_stream_v2.0.0/
 ├── events.jsonl                            # 结构化生命周期和进度事件
 └── result.json                             # 每次重启的结构化结果和日志路径
 ```
+
+每个图像 topic 变体使用独立目录。例如，`depth/image_raw` 和
+`depth/image_unaligned` 分别保存到 `depth/` 和 `depth_unaligned/`；压缩传输使用
+`color_compressed/`、`depth_compressed_depth/` 等目录。

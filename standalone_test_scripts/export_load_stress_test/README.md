@@ -127,8 +127,9 @@ export_load_stress_test/results/YYYYMMDD_HHMMSS_export_load_v2.0.0/
 ├── events.jsonl     # Structured lifecycle and progress events
 ├── images/          # Raw color/IR PNG, colorized depth PNG, and byte-for-byte CompressedImage JPG files
 │   ├── camera_01/color/image_0001.png
-│   ├── camera_01/color/image_0002.jpg
+│   ├── camera_01/color_compressed/image_0001.jpg
 │   ├── camera_01/depth/image_0001.png
+│   ├── camera_01/depth_unaligned/image_0001.png
 │   ├── camera_01/point_cloud_depth/point_cloud_0001.ply
 │   ├── camera_01/imu_accel/image_0001.png
 │   └── camera_02/ir_left/image_0001.png
@@ -137,5 +138,6 @@ export_load_stress_test/results/YYYYMMDD_HHMMSS_export_load_v2.0.0/
 └── logs/test_XXXX/<camera>/sdk/Log/<camera>/  # Per-test camera SDK debug logs
 ```
 
-Image numbers continue independently for each camera and stream across test
-cycles. Existing images are never overwritten.
+Image numbers continue independently for each camera and image-topic variant
+across test cycles. Raw, unaligned, rectified, compressed, and compressed-depth
+topics use distinct directories. Existing images are never overwritten.
