@@ -16,7 +16,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Callable, Dict, List, Optional, Sequence
 
 from _test_protocol import (
     EventWriter,
@@ -48,6 +48,9 @@ ENV_READY_VAR = "LAUNCH_RESTART_STREAM_CHECK_ENV_READY"
 INTERRUPTED = False
 TOOL_VERSION = "2.1.3"
 TEST_ID = "launch_restart_stream_check"
+POINT_CLOUD_RESUBSCRIBE_AFTER_SECONDS = 2.0
+IMAGE_RESUBSCRIBE_AFTER_PEER_SECONDS = 2.0
+IMAGE_RESUBSCRIBE_STARTUP_GRACE_SECONDS = 10.0
 DEFAULT_STRESS_LAUNCH_ARGS = {
     "enable_heartbeat": "true",
     "enable_firmware_log": "true",
@@ -582,6 +585,10 @@ def wait_for_stable_streams(
     max_gap_seconds: float,
     emit: StatusLogger,
     monitor: Optional[ImageSaver] = None,
+    recovery_peer_wait_seconds: Optional[float] = None,
+    recovery_startup_grace_seconds: Optional[float] = None,
+    on_resubscribe: Optional[Callable[[Sequence[str], float], None]] = None,
+    recovery_attempted_topics: Optional[Sequence[str]] = None,
 ) -> tuple[bool, List[Dict[str, Any]], str]:
     owns_monitor = monitor is None
     if monitor is None:
@@ -593,12 +600,32 @@ def wait_for_stable_streams(
         drain_inactive_subscriptions(harness, len(topics))
         monitor.begin_stability_window()
         snapshot = monitor.stream_snapshot
-    deadline = time.monotonic() + timeout
+    started_at = time.monotonic()
+    deadline = started_at + timeout
+    attempted_recovery_topics = set(recovery_attempted_topics or [])
     streams_detected_logged = False
     try:
         while time.monotonic() < deadline:
             session.assert_running()
             harness.spin_once(0.1)
+            if not owns_monitor:
+                elapsed = time.monotonic() - started_at
+                effective_startup_grace = (
+                    min(float(recovery_startup_grace_seconds), timeout / 2.0)
+                    if recovery_startup_grace_seconds is not None
+                    else None
+                )
+                recovery_topics = monitor.image_recovery_candidates(
+                    elapsed=elapsed,
+                    peer_wait_seconds=recovery_peer_wait_seconds,
+                    startup_grace_seconds=effective_startup_grace,
+                    excluded_topics=attempted_recovery_topics,
+                )
+                if recovery_topics:
+                    recreated = monitor.recreate_image_subscriptions(recovery_topics)
+                    attempted_recovery_topics.update(recreated)
+                    if recreated and on_resubscribe is not None:
+                        on_resubscribe(recreated, elapsed)
             if not streams_detected_logged and monitor.all_streams_detected():
                 emit(f"streams detected, checking {stable_seconds:.1f}s stability")
                 streams_detected_logged = True
@@ -759,6 +786,8 @@ class ImageSaver:
         }
         self.state: Dict[str, Dict[str, Any]] = self._new_state()
         self.subscriptions = []
+        self.image_subscriptions: Dict[str, Any] = {}
+        self.resubscribed_image_topics: List[str] = []
         self._bridge = None
         self._cv2 = None
         self._state_lock = threading.Lock()
@@ -767,16 +796,9 @@ class ImageSaver:
         self._frozen = False
         self._active = bool(active)
         for topic in topics:
-            topic_kind = self.topic_kinds[topic]
-            self.subscriptions.append(
-                harness.create_image_subscription(
-                    topic,
-                    lambda message, topic_name=topic: self._on_message(
-                        topic_name, message
-                    ),
-                    topic_kind=topic_kind,
-                )
-            )
+            subscription = self._create_image_subscription(topic)
+            self.image_subscriptions[topic] = subscription
+            self.subscriptions.append(subscription)
 
     def _new_state(self) -> Dict[str, Dict[str, Any]]:
         return {
@@ -800,6 +822,68 @@ class ImageSaver:
             for topic, topic_kind in self.topic_kinds.items()
         }
 
+    def _create_image_subscription(self, topic: str) -> Any:
+        return self.harness.create_image_subscription(
+            topic,
+            lambda message, topic_name=topic: self._on_message(topic_name, message),
+            topic_kind=self.topic_kinds[topic],
+        )
+
+    def image_recovery_candidates(
+        self,
+        *,
+        elapsed: float,
+        peer_wait_seconds: Optional[float],
+        startup_grace_seconds: Optional[float],
+        excluded_topics: Sequence[str],
+    ) -> List[str]:
+        excluded = set(excluded_topics)
+        now = time.monotonic()
+        with self._state_lock:
+            missing = [
+                topic
+                for topic, item in self.state.items()
+                if item["first_message_at"] is None and topic not in excluded
+            ]
+            if (
+                startup_grace_seconds is not None
+                and elapsed >= max(float(startup_grace_seconds), 0.0)
+            ):
+                return missing
+            if peer_wait_seconds is None:
+                return []
+            candidates: List[str] = []
+            for topic in missing:
+                camera_name, _stream_name = _image_topic_parts(topic)
+                peer_first_messages = [
+                    item["first_message_at"]
+                    for peer_topic, item in self.state.items()
+                    if peer_topic != topic
+                    and _image_topic_parts(peer_topic)[0] == camera_name
+                    and item["first_message_at"] is not None
+                ]
+                if peer_first_messages and now - min(peer_first_messages) >= max(
+                    float(peer_wait_seconds), 0.0
+                ):
+                    candidates.append(topic)
+            return candidates
+
+    def recreate_image_subscriptions(self, topics: Sequence[str]) -> List[str]:
+        recreated: List[str] = []
+        for topic in topics:
+            old_subscription = self.image_subscriptions.get(topic)
+            if old_subscription is None:
+                continue
+            self.harness.destroy_subscription(old_subscription)
+            if old_subscription in self.subscriptions:
+                self.subscriptions.remove(old_subscription)
+            new_subscription = self._create_image_subscription(topic)
+            self.image_subscriptions[topic] = new_subscription
+            self.subscriptions.append(new_subscription)
+            recreated.append(topic)
+        self.resubscribed_image_topics.extend(recreated)
+        return recreated
+
     def begin_capture(self, skip_frames: Optional[int] = None) -> None:
         with self._state_changed:
             while any(item["pending_saves"] for item in self.state.values()):
@@ -807,6 +891,7 @@ class ImageSaver:
             if skip_frames is not None:
                 self.skip_frames = max(int(skip_frames), 0)
             self.state = self._new_state()
+            self.resubscribed_image_topics = []
             self._frozen = False
             self._active = True
 
@@ -825,6 +910,7 @@ class ImageSaver:
                 )
             self._frozen = True
             self._active = True
+            self.resubscribed_image_topics = []
 
     def end_capture(self) -> None:
         with self._state_lock:
@@ -1037,6 +1123,7 @@ class ImageSaver:
         for subscription in list(self.subscriptions):
             self.harness.destroy_subscription(subscription)
         self.subscriptions = []
+        self.image_subscriptions = {}
         self._writer.shutdown(wait=True, cancel_futures=True)
 
 
@@ -1051,6 +1138,9 @@ def save_images(
     timeout: float,
     path_sequence: Optional[ImagePathSequence] = None,
     saver: Optional[ImageSaver] = None,
+    recovery_peer_wait_seconds: Optional[float] = None,
+    recovery_startup_grace_seconds: Optional[float] = None,
+    on_resubscribe: Optional[Callable[[Sequence[str], float], None]] = None,
 ) -> tuple[bool, List[Dict[str, Any]], str]:
     if count <= 0:
         return True, [], "image saving disabled"
@@ -1070,11 +1160,30 @@ def save_images(
     if not owns_saver:
         drain_inactive_subscriptions(harness, len(topics))
     saver.begin_capture(skip_frames=skip_frames)
-    deadline = time.monotonic() + timeout
+    started_at = time.monotonic()
+    deadline = started_at + timeout
+    recovery_attempted_topics: set[str] = set()
     try:
         while time.monotonic() < deadline and not saver.buffer_ready():
             session.assert_running()
             harness.spin_once(0.1)
+            elapsed = time.monotonic() - started_at
+            effective_startup_grace = (
+                min(float(recovery_startup_grace_seconds), timeout / 2.0)
+                if recovery_startup_grace_seconds is not None
+                else None
+            )
+            recovery_topics = saver.image_recovery_candidates(
+                elapsed=elapsed,
+                peer_wait_seconds=recovery_peer_wait_seconds,
+                startup_grace_seconds=effective_startup_grace,
+                excluded_topics=recovery_attempted_topics,
+            )
+            if recovery_topics:
+                recreated = saver.recreate_image_subscriptions(recovery_topics)
+                recovery_attempted_topics.update(recreated)
+                if recreated and on_resubscribe is not None:
+                    on_resubscribe(recreated, elapsed)
         if not saver.buffer_ready():
             return (
                 False,
@@ -1234,6 +1343,22 @@ def build_summary(result: Dict[str, Any]) -> str:
             lines.append(
                 f"- camera `{detail.get('camera', 'unknown')}`, "
                 f"topic `{detail.get('topic', '')}`: {detail.get('reason', '')}"
+            )
+    warnings = [
+        warning
+        for warning in result.get("warnings", [])
+        if isinstance(warning, dict)
+    ]
+    if warnings:
+        lines.extend(["", "## Warnings", ""])
+        for warning in warnings:
+            topic_text = ", ".join(
+                f"`{topic}`" for topic in warning.get("topics", [])
+            )
+            topic_suffix = f", topics {topic_text}" if topic_text else ""
+            lines.append(
+                f"- attempt `{warning.get('attempt', '')}`"
+                f"{topic_suffix}: {warning.get('message', '')}"
             )
     lines.extend(
         [
@@ -1489,6 +1614,17 @@ def run(args) -> int:
                     )
                     resources.callback(image_monitor.close)
                     emit("persistent image subscriptions are ready")
+                resubscribed_image_topics: List[str] = []
+
+                def log_image_resubscribe(
+                    topics: Sequence[str], elapsed: float
+                ) -> None:
+                    resubscribed_image_topics.extend(topics)
+                    emit(
+                        f"[IMAGE][WARN] attempt {attempt_index}: no messages from "
+                        f"{', '.join(topics)} after {elapsed:.1f}s; recreating subscription(s)"
+                    )
+
                 image_ok, image_snapshot, image_message = save_images(
                     session=session,
                     harness=harness,
@@ -1499,6 +1635,11 @@ def run(args) -> int:
                     timeout=save_image_timeout,
                     path_sequence=image_paths,
                     saver=image_monitor,
+                    recovery_peer_wait_seconds=IMAGE_RESUBSCRIBE_AFTER_PEER_SECONDS,
+                    recovery_startup_grace_seconds=(
+                        IMAGE_RESUBSCRIBE_STARTUP_GRACE_SECONDS
+                    ),
+                    on_resubscribe=log_image_resubscribe,
                 )
                 attempt["images"] = image_snapshot
                 if not image_ok:
@@ -1528,9 +1669,37 @@ def run(args) -> int:
                     max_gap_seconds=max_gap_seconds,
                     emit=emit,
                     monitor=image_monitor,
+                    recovery_peer_wait_seconds=IMAGE_RESUBSCRIBE_AFTER_PEER_SECONDS,
+                    recovery_startup_grace_seconds=(
+                        IMAGE_RESUBSCRIBE_STARTUP_GRACE_SECONDS
+                    ),
+                    on_resubscribe=log_image_resubscribe,
+                    recovery_attempted_topics=resubscribed_image_topics,
                 )
                 attempt["topics"] = snapshot
                 attempt["message"] = message
+                if resubscribed_image_topics:
+                    recovered_topics = sorted(set(resubscribed_image_topics))
+                    outcome = "recovered" if ok else "failed"
+                    warning = {
+                        "attempt": attempt_index,
+                        "action": "recreate-image-subscription",
+                        "topics": recovered_topics,
+                        "outcome": outcome,
+                        "message": (
+                            "image streams recovered after subscription recreation; "
+                            "attempt accepted"
+                            if ok
+                            else "image streams did not recover after subscription recreation"
+                        ),
+                    }
+                    attempt.setdefault("warnings", []).append(warning)
+                    result.setdefault("warnings", []).append(warning)
+                    emit(
+                        f"[IMAGE][WARN] attempt {attempt_index}: {outcome} after "
+                        f"subscription recreation: {', '.join(recovered_topics)}"
+                        + ("; accepting attempt" if ok else "")
+                    )
                 attempt["stable_seconds"] = min(
                     (item.get("stable_seconds", 0.0) or 0.0 for item in snapshot),
                     default=0.0,
@@ -1635,6 +1804,17 @@ def run(args) -> int:
                     save_image_timeout,
                     2.0 * max(save_image_count, 1) + 5.0,
                 )
+                resubscribed_point_cloud_topics: List[str] = []
+
+                def log_point_cloud_resubscribe(
+                    topics: Sequence[str], elapsed: float
+                ) -> None:
+                    resubscribed_point_cloud_topics.extend(topics)
+                    emit(
+                        f"[POINT_CLOUD][WARN] attempt {attempt_index}: no messages from "
+                        f"{', '.join(topics)} after {elapsed:.1f}s; recreating subscription(s)"
+                    )
+
                 sensor_ok, sensor_snapshot, sensor_message = capture_sensor_artifacts(
                     harness=harness,
                     point_cloud_topics=point_cloud_topics,
@@ -1647,8 +1827,28 @@ def run(args) -> int:
                     path_sequence=sensor_paths,
                     ensure_running=session.assert_running,
                     monitor=sensor_monitor,
+                    resubscribe_after_seconds=POINT_CLOUD_RESUBSCRIBE_AFTER_SECONDS,
+                    on_resubscribe=log_point_cloud_resubscribe,
                 )
                 attempt["sensors"] = sensor_snapshot
+                if sensor_ok and resubscribed_point_cloud_topics:
+                    recovered_topics = sorted(set(resubscribed_point_cloud_topics))
+                    warning = {
+                        "attempt": attempt_index,
+                        "action": "recreate-point-cloud-subscription",
+                        "topics": recovered_topics,
+                        "message": (
+                            "point cloud recovered after subscription recreation; "
+                            "attempt accepted"
+                        ),
+                    }
+                    attempt.setdefault("warnings", []).append(warning)
+                    result.setdefault("warnings", []).append(warning)
+                    emit(
+                        f"[POINT_CLOUD][WARN] attempt {attempt_index}: recovered after "
+                        f"subscription recreation: {', '.join(recovered_topics)}; "
+                        "accepting attempt"
+                    )
                 if not sensor_ok:
                     failure_details = sensor_failure_details(sensor_snapshot)
                     attempt["failure_details"] = failure_details

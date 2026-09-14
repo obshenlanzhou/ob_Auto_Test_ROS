@@ -381,6 +381,65 @@ def test_persistent_sensor_monitor_reuses_subscriptions_across_captures(tmp_path
     assert not harness.callbacks
 
 
+def test_point_cloud_subscription_is_recreated_and_capture_recovers(tmp_path):
+    module = load_helper()
+
+    class RecoveringHarness(FakeHarness):
+        def __init__(self):
+            super().__init__()
+            self.create_count = 0
+            self.destroy_count = 0
+
+        def create_sensor_subscription(self, topic, kind, callback):
+            self.create_count += 1
+            return super().create_sensor_subscription(topic, kind, callback)
+
+        def destroy_subscription(self, subscription):
+            self.destroy_count += 1
+            super().destroy_subscription(subscription)
+
+        def spin_once(self, _timeout):
+            if self.create_count >= 2:
+                self.callbacks["/camera/depth/points"][1](point_cloud_message())
+
+    harness = RecoveringHarness()
+    monitor = module.SensorCaptureMonitor(
+        harness=harness,
+        point_cloud_topics=["/camera/depth/points"],
+        imu_topics=[],
+        topic_cameras={"/camera/depth/points": "camera"},
+        output_root=tmp_path,
+        save_count=0,
+        active=False,
+    )
+    resubscribe_events = []
+
+    ok, snapshot, _message = module.capture_sensor_artifacts(
+        harness=harness,
+        point_cloud_topics=["/camera/depth/points"],
+        imu_topics=[],
+        topic_cameras={"/camera/depth/points": "camera"},
+        output_root=tmp_path,
+        save_count=0,
+        timeout=1,
+        monitor=monitor,
+        resubscribe_after_seconds=0,
+        on_resubscribe=lambda topics, elapsed: resubscribe_events.append(
+            (list(topics), elapsed)
+        ),
+    )
+
+    assert ok
+    assert snapshot[0]["valid_message_count"] == 1
+    assert resubscribe_events[0][0] == ["/camera/depth/points"]
+    assert monitor.resubscribed_point_cloud_topics == ["/camera/depth/points"]
+    assert harness.create_count == 2
+    assert harness.destroy_count == 1
+
+    monitor.close()
+    assert harness.destroy_count == 2
+
+
 def test_sensor_paths_use_stable_stream_names_and_continue_indices(tmp_path):
     module = load_helper()
     existing = tmp_path / "camera" / "point_cloud_depth" / "image_0003.png"

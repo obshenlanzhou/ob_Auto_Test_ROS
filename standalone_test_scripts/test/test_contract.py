@@ -862,6 +862,300 @@ def test_restart_stress_image_monitors_reuse_subscriptions_across_cycles(
     assert harness.destroy_count == 1
 
 
+@pytest.mark.parametrize(
+    "test_id",
+    ["export_load", "launch_param_load", "launch_restart", "preset_upgrade"],
+)
+def test_restart_stress_image_monitors_recreate_only_missing_subscription(
+    tmp_path, test_id
+):
+    module = load_script(SCRIPTS[test_id])
+    color_topic = "/camera/color/image_raw"
+    depth_topic = "/camera/depth/image_raw"
+
+    class Harness:
+        ros_version = "1"
+
+        def __init__(self):
+            self.callbacks = {}
+            self.create_count = 0
+            self.destroy_count = 0
+
+        def resolve_image_topic_kind(self, _topic):
+            return "raw"
+
+        def create_image_subscription(self, topic, callback, topic_kind=None):
+            assert topic_kind == "raw"
+            self.create_count += 1
+            subscription = (topic, self.create_count)
+            self.callbacks[topic] = (subscription, callback)
+            return subscription
+
+        def create_subscription(self, topic, callback, topic_kind=None):
+            return self.create_image_subscription(
+                topic, callback, topic_kind=topic_kind
+            )
+
+        def destroy_subscription(self, subscription):
+            self.destroy_count += 1
+            topic = subscription[0]
+            if self.callbacks.get(topic, (None,))[0] == subscription:
+                self.callbacks.pop(topic, None)
+
+    harness = Harness()
+    common = {
+        "harness": harness,
+        "topics": [color_topic, depth_topic],
+        "output_root": tmp_path / test_id,
+        "active": False,
+    }
+    if test_id == "export_load":
+        monitor = module.ImageSaver(
+            **common,
+            topic_cameras={color_topic: "camera", depth_topic: "camera"},
+            count_per_topic=1,
+        )
+    elif test_id == "launch_param_load":
+        monitor = module.ImageCaptureMonitor(
+            **common,
+            camera_name="camera",
+            save_images_count=1,
+        )
+    elif test_id == "preset_upgrade":
+        monitor = module.ImageCaptureMonitor(
+            **common,
+            topic_cameras={color_topic: "camera", depth_topic: "camera"},
+            save_images_count=1,
+        )
+    else:
+        monitor = module.ImageSaver(**common, count=1)
+
+    try:
+        monitor.begin_capture(skip_frames=0)
+        harness.callbacks[depth_topic][1](
+            SimpleNamespace(width=1, height=1, data=b"depth", encoding="mono8")
+        )
+        candidates = monitor.image_recovery_candidates(
+            elapsed=3.0,
+            peer_wait_seconds=0.0,
+            startup_grace_seconds=10.0,
+            excluded_topics=[],
+        )
+        assert candidates == [color_topic]
+        assert monitor.recreate_image_subscriptions(candidates) == [color_topic]
+        harness.callbacks[color_topic][1](
+            SimpleNamespace(width=1, height=1, data=b"color", encoding="mono8")
+        )
+
+        state = monitor.metadata if test_id == "export_load" else monitor.state
+        first_key = "first_at" if test_id == "launch_param_load" else "first_message_at"
+        assert state[color_topic][first_key] is not None
+        assert state[depth_topic][first_key] is not None
+        assert monitor.resubscribed_image_topics == [color_topic]
+        assert harness.create_count == 3
+        assert harness.destroy_count == 1
+    finally:
+        monitor.end_capture()
+        monitor.close()
+
+    assert harness.destroy_count == 3
+
+
+@pytest.mark.parametrize("test_id", ["export_load", "launch_restart", "preset_upgrade"])
+def test_restart_image_wait_recovers_after_subscription_recreation(tmp_path, test_id):
+    module = load_script(SCRIPTS[test_id])
+    color_topic = "/camera/color/image_raw"
+    depth_topic = "/camera/depth/image_raw"
+
+    class Harness:
+        ros_version = "1"
+        queue_size = 10
+
+        def __init__(self):
+            self.callbacks = {}
+            self.create_counts = {color_topic: 0, depth_topic: 0}
+
+        def resolve_image_topic_kind(self, _topic):
+            return "raw"
+
+        def create_image_subscription(self, topic, callback, topic_kind=None):
+            assert topic_kind == "raw"
+            self.create_counts[topic] += 1
+            subscription = (topic, self.create_counts[topic])
+            self.callbacks[topic] = (subscription, callback)
+            return subscription
+
+        def destroy_subscription(self, subscription):
+            topic = subscription[0]
+            if self.callbacks.get(topic, (None,))[0] == subscription:
+                self.callbacks.pop(topic, None)
+
+        def spin_once(self, _timeout):
+            message = SimpleNamespace(
+                width=1, height=1, data=b"image", encoding="mono8"
+            )
+            self.callbacks[depth_topic][1](message)
+            if self.create_counts[color_topic] >= 2:
+                self.callbacks[color_topic][1](message)
+
+    class Session:
+        def assert_running(self):
+            return None
+
+    harness = Harness()
+    topics = [color_topic, depth_topic]
+    topic_cameras = {color_topic: "camera", depth_topic: "camera"}
+    if test_id == "export_load":
+        monitor = module.ImageSaver(
+            harness=harness,
+            topics=topics,
+            topic_cameras=topic_cameras,
+            output_root=tmp_path,
+            count_per_topic=0,
+            active=False,
+        )
+        wait = lambda callback: module.wait_for_stable_streams(
+            sessions=[Session()],
+            harness=harness,
+            topics=topics,
+            stable_seconds=0,
+            timeout=1,
+            max_gap_seconds=1,
+            emit=lambda _message: None,
+            monitor=monitor,
+            recovery_peer_wait_seconds=0,
+            recovery_startup_grace_seconds=10,
+            on_resubscribe=callback,
+        )
+    elif test_id == "launch_restart":
+        monitor = module.ImageSaver(
+            harness=harness,
+            topics=topics,
+            output_root=tmp_path,
+            count=0,
+            active=False,
+        )
+        wait = lambda callback: module.wait_for_stable_streams(
+            session=Session(),
+            harness=harness,
+            topics=topics,
+            stable_seconds=0,
+            timeout=1,
+            max_gap_seconds=1,
+            emit=lambda _message: None,
+            monitor=monitor,
+            recovery_peer_wait_seconds=0,
+            recovery_startup_grace_seconds=10,
+            on_resubscribe=callback,
+        )
+    else:
+        monitor = module.ImageCaptureMonitor(
+            harness=harness,
+            topics=topics,
+            topic_cameras=topic_cameras,
+            output_root=tmp_path,
+            save_images_count=0,
+            active=False,
+        )
+        wait = lambda callback: module.wait_for_images(
+            sessions=[Session()],
+            harness=harness,
+            topics=topics,
+            topic_cameras=topic_cameras,
+            output_root=tmp_path,
+            save_images_count=0,
+            timeout=1,
+            monitor=monitor,
+            recovery_peer_wait_seconds=0,
+            recovery_startup_grace_seconds=10,
+            on_resubscribe=callback,
+        )
+
+    recovery_events = []
+    try:
+        ok, snapshot, _message = wait(
+            lambda topics, elapsed: recovery_events.append((list(topics), elapsed))
+        )
+    finally:
+        monitor.close()
+
+    assert ok
+    assert len(snapshot) == 2
+    assert recovery_events[0][0] == [color_topic]
+
+
+def test_launch_param_image_save_recovers_after_subscription_recreation(
+    monkeypatch, tmp_path
+):
+    module = load_script(SCRIPTS["launch_param_load"])
+    monkeypatch.setattr(module, "IMAGE_RESUBSCRIBE_AFTER_PEER_SECONDS", 0.0)
+    color_topic = "/camera/color/image_raw"
+    depth_topic = "/camera/depth/image_raw"
+
+    class Harness:
+        ros_version = "1"
+
+        def __init__(self):
+            self.callbacks = {}
+            self.create_counts = {color_topic: 0, depth_topic: 0}
+
+        def resolve_image_topic_kind(self, _topic):
+            return "raw"
+
+        def create_subscription(self, topic, callback, topic_kind=None):
+            assert topic_kind == "raw"
+            self.create_counts[topic] += 1
+            subscription = (topic, self.create_counts[topic])
+            self.callbacks[topic] = (subscription, callback)
+            return subscription
+
+        def destroy_subscription(self, subscription):
+            topic = subscription[0]
+            if self.callbacks.get(topic, (None,))[0] == subscription:
+                self.callbacks.pop(topic, None)
+
+        def spin_once(self, _timeout):
+            message = SimpleNamespace(
+                width=1, height=1, data=b"image", encoding="mono8"
+            )
+            self.callbacks[depth_topic][1](message)
+            if self.create_counts[color_topic] >= 2:
+                self.callbacks[color_topic][1](message)
+
+    harness = Harness()
+    monitor = module.ImageCaptureMonitor(
+        harness=harness,
+        camera_name="camera",
+        topics=[color_topic, depth_topic],
+        output_root=tmp_path,
+        save_images_count=1,
+        active=False,
+    )
+    monkeypatch.setattr(monitor, "_write_image", lambda *_args: None)
+    emitted = []
+    try:
+        saved, topics, error = module.save_topic_images(
+            ros_version="1",
+            camera_name="camera",
+            image_topic_templates=[color_topic, depth_topic],
+            output_root=tmp_path,
+            save_images_count=1,
+            timeout=1,
+            emit=emitted.append,
+            harness=harness,
+            monitor=monitor,
+        )
+    finally:
+        monitor.close()
+
+    assert not error
+    assert topics == [color_topic, depth_topic]
+    assert len(saved) == 2
+    assert monitor.resubscribed_image_topics == [color_topic]
+    assert any("recreated subscription" in message for message in emitted)
+    assert any("recovered after subscription recreation" in message for message in emitted)
+
+
 def test_restart_stress_callers_pass_persistent_monitors():
     image_monitor_arguments = {
         "export_load": "saver=image_monitor",
@@ -875,6 +1169,9 @@ def test_restart_stress_callers_pass_persistent_monitors():
         assert "persistent image subscriptions are ready" in source
         assert "monitor=sensor_monitor" in source
         assert "persistent point cloud/IMU subscriptions are ready" in source
+        assert "recreate-image-subscription" in source
+        if test_id != "stream_toggle":
+            assert "resubscribe_after_seconds=POINT_CLOUD_RESUBSCRIBE_AFTER_SECONDS" in source
 
 
 def test_stream_toggle_image_writer_submit_is_non_blocking(monkeypatch, tmp_path):
@@ -1634,6 +1931,35 @@ def test_launch_restart_summary_reports_no_failed_attempts():
 
     assert "- Failed restarts: 0" in summary
     assert "## Failed Attempts\n\n- None" in summary
+
+
+def test_launch_restart_summary_records_recovered_point_cloud_warning():
+    module = load_script(SCRIPTS["launch_restart"])
+
+    summary = module.build_summary(
+        {
+            "status": "passed",
+            "tool_version": "2.1.3",
+            "successful_restarts": 1,
+            "launch_attempts": 1,
+            "attempts": [{"attempt": 1, "status": "passed"}],
+            "warnings": [
+                {
+                    "attempt": 1,
+                    "action": "recreate-point-cloud-subscription",
+                    "topics": ["/camera_02/depth/points"],
+                    "message": (
+                        "point cloud recovered after subscription recreation; "
+                        "attempt accepted"
+                    ),
+                }
+            ],
+        }
+    )
+
+    assert "## Warnings" in summary
+    assert "attempt `1`, topics `/camera_02/depth/points`" in summary
+    assert "point cloud recovered after subscription recreation" in summary
 
 
 def test_launch_restart_emits_failed_attempt_event_for_ui_counter():

@@ -491,19 +491,15 @@ class SensorCaptureMonitor:
             thread_name_prefix="sensor-writer",
         )
         self.subscriptions: List[Any] = []
+        self.point_cloud_subscriptions: Dict[str, Any] = {}
+        self.resubscribed_point_cloud_topics: List[str] = []
         self.state: Dict[str, Dict[str, Any]] = self._new_state()
         self.active = bool(active)
 
         for topic in self.point_cloud_topics:
-            self.subscriptions.append(
-                harness.create_sensor_subscription(
-                    topic,
-                    "point_cloud",
-                    lambda message, topic_name=topic: self._on_point_cloud(
-                        topic_name, message
-                    ),
-                )
-            )
+            subscription = self._create_point_cloud_subscription(topic)
+            self.point_cloud_subscriptions[topic] = subscription
+            self.subscriptions.append(subscription)
         for topic in self.imu_topics:
             self.subscriptions.append(
                 harness.create_sensor_subscription(
@@ -543,6 +539,39 @@ class SensorCaptureMonitor:
             }
         return state
 
+    def _create_point_cloud_subscription(self, topic: str) -> Any:
+        return self.harness.create_sensor_subscription(
+            topic,
+            "point_cloud",
+            lambda message, topic_name=topic: self._on_point_cloud(
+                topic_name, message
+            ),
+        )
+
+    def point_cloud_topics_without_messages(self) -> List[str]:
+        with self._state_lock:
+            return [
+                topic
+                for topic in self.point_cloud_topics
+                if self.state[topic]["message_count"] == 0
+            ]
+
+    def recreate_point_cloud_subscriptions(self, topics: Sequence[str]) -> List[str]:
+        recreated: List[str] = []
+        for topic in topics:
+            old_subscription = self.point_cloud_subscriptions.get(topic)
+            if old_subscription is None:
+                continue
+            self.harness.destroy_subscription(old_subscription)
+            if old_subscription in self.subscriptions:
+                self.subscriptions.remove(old_subscription)
+            new_subscription = self._create_point_cloud_subscription(topic)
+            self.point_cloud_subscriptions[topic] = new_subscription
+            self.subscriptions.append(new_subscription)
+            recreated.append(topic)
+        self.resubscribed_point_cloud_topics.extend(recreated)
+        return recreated
+
     def begin_capture(self, skip_frames: Optional[int] = None) -> None:
         with self._state_changed:
             while any(item["pending_outputs"] for item in self.state.values()):
@@ -550,6 +579,7 @@ class SensorCaptureMonitor:
             if skip_frames is not None:
                 self.skip_frames = max(int(skip_frames), 0)
             self.state = self._new_state()
+            self.resubscribed_point_cloud_topics = []
             self.active = True
 
     def end_capture(self) -> None:
@@ -738,6 +768,7 @@ class SensorCaptureMonitor:
         for subscription in list(self.subscriptions):
             self.harness.destroy_subscription(subscription)
         self.subscriptions = []
+        self.point_cloud_subscriptions = {}
         self._writer.shutdown(wait=True, cancel_futures=True)
 
 
@@ -754,6 +785,8 @@ def capture_sensor_artifacts(
     ensure_running: Optional[Callable[[], None]] = None,
     monitor: Optional[SensorCaptureMonitor] = None,
     path_sequence: Optional[SensorArtifactPathSequence] = None,
+    resubscribe_after_seconds: Optional[float] = None,
+    on_resubscribe: Optional[Callable[[Sequence[str], float], None]] = None,
 ) -> Tuple[bool, List[Dict[str, Any]], str]:
     if not point_cloud_topics and not imu_topics:
         return True, [], "no point cloud or IMU topics selected"
@@ -778,13 +811,28 @@ def capture_sensor_artifacts(
         for _ in range(max(32, queue_depth * max(len(configured_topics), 1) * 2)):
             harness.spin_once(0.0)
     monitor.begin_capture(skip_frames=skip_frames)
-    deadline = time.monotonic() + max(float(timeout), 0.0)
+    capture_started_at = time.monotonic()
+    deadline = capture_started_at + max(float(timeout), 0.0)
+    resubscribe_attempted = False
     try:
         while time.monotonic() < deadline:
             if ensure_running is not None:
                 ensure_running()
             harness.spin_once(0.1)
             monitor.wait_for_pending_output(0.01)
+            elapsed = time.monotonic() - capture_started_at
+            if (
+                not resubscribe_attempted
+                and resubscribe_after_seconds is not None
+                and elapsed >= max(float(resubscribe_after_seconds), 0.0)
+            ):
+                resubscribe_attempted = True
+                missing_topics = monitor.point_cloud_topics_without_messages()
+                recreated_topics = monitor.recreate_point_cloud_subscriptions(
+                    missing_topics
+                )
+                if recreated_topics and on_resubscribe is not None:
+                    on_resubscribe(recreated_topics, elapsed)
             if monitor.first_error():
                 return False, monitor.snapshot(), monitor.first_error()
             if monitor.complete():
