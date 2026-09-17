@@ -1282,12 +1282,12 @@ def stop_launch_attempt(session, attempt, result, emit) -> bool:
         if attempt is not None and "stop_seconds" not in attempt:
             attempt["stop_seconds"] = elapsed
             attempt["ended_at"] = datetime.now().isoformat(timespec="seconds")
-            status = "failed" if elapsed > 10.0 else "warning" if elapsed > 5.0 else "passed"
+            status = "failed" if elapsed > 5.0 else "passed"
             attempt["stop_status"] = status
-            message = f"launch stop took {elapsed:.3f}s ({status}; warning >5s, failure >10s)"
+            message = f"launch stop took {elapsed:.3f}s ({status}; failure >5s)"
             emit(
                 f"[LAUNCH_STOP][{status.upper()}] attempt {attempt['attempt']}: {message}",
-                event="warning" if status == "warning" else "log",
+                event="log",
                 attempt=attempt["attempt"],
             )
             if status == "failed":
@@ -1298,10 +1298,6 @@ def stop_launch_attempt(session, attempt, result, emit) -> bool:
                 )
                 result["status"] = "failed"
                 result.setdefault("errors", []).append(message)
-            elif status == "warning":
-                warning = {"attempt": attempt["attempt"], "message": message}
-                attempt.setdefault("warnings", []).append(warning)
-                result.setdefault("warnings", []).append(warning)
     return attempt is None or attempt.get("stop_status") != "failed"
 
 
@@ -1921,8 +1917,7 @@ def run(args) -> int:
                     attempt["status"] = attempt["stop_status"]
                     result["successful_restarts"] += 1
                     emit(
-                        f"attempt {attempt_index}: "
-                        + ("warning" if attempt.get("stop_status") == "warning" else "passed"),
+                        f"attempt {attempt_index}: passed",
                         event="progress",
                         current=attempt_index,
                         total=run_count,
