@@ -46,7 +46,7 @@ DEFAULT_CAMERA_LAUNCH = {
 }
 ENV_READY_VAR = "LAUNCH_RESTART_STREAM_CHECK_ENV_READY"
 INTERRUPTED = False
-TOOL_VERSION = "2.2.1"
+TOOL_VERSION = "2.2.2"
 TEST_ID = "launch_restart_stream_check"
 POINT_CLOUD_RESUBSCRIBE_AFTER_SECONDS = 2.0
 IMAGE_RESUBSCRIBE_AFTER_PEER_SECONDS = 2.0
@@ -292,7 +292,7 @@ class LaunchSession:
         if code is not None:
             raise RuntimeError(f"launch process exited unexpectedly with code {code}")
 
-    def stop(self, timeout: float = 10.0) -> None:
+    def stop(self, timeout: float = 20.0) -> None:
         if self.process is None:
             self._close_log()
             return
@@ -1271,6 +1271,36 @@ def emit_failure_details(emit: StatusLogger, details: Sequence[Dict[str, str]]) 
         )
 
 
+def stop_launch_attempt(session, attempt, result, emit) -> bool:
+    """Stop launch and record shutdown timing without clearing earlier failures."""
+    started = time.monotonic()
+    try:
+        session.stop()
+    finally:
+        elapsed = time.monotonic() - started
+        # A cleanup retry must not replace the original shutdown measurement.
+        if attempt is not None and "stop_seconds" not in attempt:
+            attempt["stop_seconds"] = elapsed
+            attempt["ended_at"] = datetime.now().isoformat(timespec="seconds")
+            status = "failed" if elapsed > 10.0 else "warning" if elapsed > 5.0 else "passed"
+            attempt["stop_status"] = status
+            message = f"launch stop took {elapsed:.3f}s ({status}; warning >5s, failure >10s)"
+            emit(f"[LAUNCH_STOP][{status.upper()}] attempt {attempt['attempt']}: {message}")
+            if status == "failed":
+                attempt["status"] = "failed"
+                attempt["message"] = "; ".join(filter(None, [attempt.get("message"), message]))
+                attempt.setdefault("failure_details", []).append(
+                    {"camera": "launch", "topic": "launch shutdown", "reason": message}
+                )
+                result["status"] = "failed"
+                result.setdefault("errors", []).append(message)
+            elif status == "warning":
+                warning = {"attempt": attempt["attempt"], "message": message}
+                attempt.setdefault("warnings", []).append(warning)
+                result.setdefault("warnings", []).append(warning)
+    return attempt is None or attempt.get("stop_status") != "failed"
+
+
 def build_summary(result: Dict[str, Any]) -> str:
     command = result.get("command", [])
     command_text = " ".join(shlex.quote(str(item)) for item in command) if command else ""
@@ -1730,7 +1760,7 @@ def run(args) -> int:
                         run_count=run_count,
                     )
                     if args.continue_on_failure:
-                        session.stop()
+                        stop_launch_attempt(session, attempt, result, emit)
                         active_session = None
                         current_attempt = None
                         if deadline is None:
@@ -1870,7 +1900,7 @@ def run(args) -> int:
                         run_count=run_count,
                     )
                     if args.continue_on_failure:
-                        session.stop()
+                        stop_launch_attempt(session, attempt, result, emit)
                         active_session = None
                         current_attempt = None
                         continue
@@ -1879,19 +1909,30 @@ def run(args) -> int:
                     f"{message}; {image_message}; {sensor_message}"
                 )
 
-                attempt["status"] = "passed"
-                attempt["ended_at"] = datetime.now().isoformat(timespec="seconds")
-                result["successful_restarts"] += 1
-                emit(
-                    f"attempt {attempt_index}: passed, stop launch",
-                    event="progress",
-                    current=attempt_index,
-                    total=run_count,
-                    phase="completed-cycle",
-                )
-                session.stop()
+                emit(f"attempt {attempt_index}: stream checks passed, stopping launch")
+                stop_ok = stop_launch_attempt(session, attempt, result, emit)
                 active_session = None
                 current_attempt = None
+                if stop_ok:
+                    attempt["status"] = attempt["stop_status"]
+                    result["successful_restarts"] += 1
+                    emit(
+                        f"attempt {attempt_index}: "
+                        + ("warning" if attempt.get("stop_status") == "warning" else "passed"),
+                        event="progress",
+                        current=attempt_index,
+                        total=run_count,
+                        phase="completed-cycle",
+                    )
+                else:
+                    emit_failed_attempt(
+                        emit,
+                        f"attempt {attempt_index}: {attempt['message']}",
+                        attempt_index=attempt_index,
+                        run_count=run_count,
+                    )
+                    if not args.continue_on_failure:
+                        break
 
                 if deadline is not None and time.monotonic() >= deadline:
                     break
@@ -1938,7 +1979,7 @@ def run(args) -> int:
     finally:
         if active_session is not None and not keep_launch_running:
             emit("stop launch")
-            active_session.stop()
+            stop_launch_attempt(active_session, current_attempt, result, emit)
         result["elapsed_seconds"] = time.monotonic() - test_start_monotonic
         for attempt in result.get("attempts", []):
             if not attempt.get("ended_at"):
