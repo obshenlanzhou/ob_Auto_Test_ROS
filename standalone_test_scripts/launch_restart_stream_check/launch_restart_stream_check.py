@@ -1285,7 +1285,11 @@ def stop_launch_attempt(session, attempt, result, emit) -> bool:
             status = "failed" if elapsed > 10.0 else "warning" if elapsed > 5.0 else "passed"
             attempt["stop_status"] = status
             message = f"launch stop took {elapsed:.3f}s ({status}; warning >5s, failure >10s)"
-            emit(f"[LAUNCH_STOP][{status.upper()}] attempt {attempt['attempt']}: {message}")
+            emit(
+                f"[LAUNCH_STOP][{status.upper()}] attempt {attempt['attempt']}: {message}",
+                event="warning" if status == "warning" else "log",
+                attempt=attempt["attempt"],
+            )
             if status == "failed":
                 attempt["status"] = "failed"
                 attempt["message"] = "; ".join(filter(None, [attempt.get("message"), message]))

@@ -732,6 +732,7 @@ def test_standalone_snapshot_reports_initial_and_current_round(tmp_path):
         "total": 10,
         "successes": 0,
         "failures": 0,
+        "warnings": 0,
     }
 
     events = [
@@ -751,6 +752,7 @@ def test_standalone_snapshot_reports_initial_and_current_round(tmp_path):
         "total": 10,
         "successes": 0,
         "failures": 0,
+        "warnings": 0,
     }
     assert set(current["performance"]) == {"elapsed_seconds"}
     assert current["restart"] == {"available": False}
@@ -774,6 +776,7 @@ def test_standalone_snapshot_marks_rounds_not_applicable(tmp_path):
         "total": None,
         "successes": 0,
         "failures": 0,
+        "warnings": 0,
     }
 
 
@@ -810,6 +813,7 @@ def test_standalone_progress_counts_completed_and_failed_rounds_from_result():
         "total": 10,
         "successes": 2,
         "failures": 1,
+        "warnings": 0,
     }
 
 
@@ -1163,3 +1167,31 @@ def test_dynamic_fields_use_direct_placeholders_without_example_prefix():
     assert '"serial-number": "CV2R1610002F"' in script
     assert '"device-ip": "192.168.1.10"' in script
     assert "例如：" not in script
+
+
+def test_warning_events_accumulate_once_and_survive_result_loading(tmp_path):
+    job = _TestJob(
+        run_id="warning-run", mode="standalone:example", run_root=tmp_path,
+        command_lines=[], shell="bash", runner_type="standalone",
+        test_id="example", standalone_rounds_supported=True,
+    )
+    path = tmp_path / "events.jsonl"
+    path.write_text(json.dumps({"event": "warning", "attempt": 1}) + "\n")
+    assert job.snapshot()["standalone"]["progress"]["warnings"] == 1
+    assert job.snapshot()["standalone"]["progress"]["warnings"] == 1
+    with path.open("a") as stream:
+        stream.write(json.dumps({"event": "warning", "attempt": 2}) + "\n")
+    assert job.snapshot()["standalone"]["progress"]["warnings"] == 2
+    progress = _build_standalone_progress(
+        [], supported=True, requested_total=3,
+        event_counts={"successes": 2, "failures": 1, "warnings": 2},
+        result={"warnings": [{"message": "slow shutdown"}] * 2,
+                "details": {"attempts": [{"status": "warning"},
+                                          {"status": "warning"},
+                                          {"status": "failed"}]}},
+    )
+    assert progress["warnings"] == 2
+    assert progress["successes"] == 2
+    assert progress["failures"] == 1
+    path.write_text("")
+    assert job.snapshot()["standalone"]["progress"]["warnings"] == 0

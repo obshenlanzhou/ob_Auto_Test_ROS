@@ -349,9 +349,18 @@ def _build_standalone_progress(
         successes = max(0, int(event_counts.get("successes", 0)))
         failures = max(0, int(event_counts.get("failures", 0)))
 
+    warnings = (
+        sum(event.get("event") == "warning" for event in events)
+        if event_counts is None
+        else max(0, int(event_counts.get("warnings", 0)))
+    )
     result_details = result.get("details") if isinstance(result, dict) else None
     if not isinstance(result_details, dict):
         result_details = result if isinstance(result, dict) else {}
+    if isinstance(result, dict) and isinstance(result.get("warnings"), list):
+        warnings = len(result["warnings"])
+    elif isinstance(result_details.get("warnings"), list):
+        warnings = len(result_details["warnings"])
     for collection_name in ("cycles", "attempts", "tests", "runs"):
         records = result_details.get(collection_name)
         if not isinstance(records, list):
@@ -362,11 +371,11 @@ def _build_standalone_progress(
             if isinstance(record, dict)
         ]
         if not any(
-            status in {"passed", "failed", "interrupted"}
+            status in {"passed", "warning", "failed", "interrupted"}
             for status in status_values
         ):
             continue
-        successes = sum(status == "passed" for status in status_values)
+        successes = sum(status in {"passed", "warning"} for status in status_values)
         failures = sum(status == "failed" for status in status_values)
         break
     else:
@@ -387,6 +396,7 @@ def _build_standalone_progress(
             "total": None,
             "successes": successes,
             "failures": failures,
+            "warnings": warnings,
         }
 
     for event in reversed(events):
@@ -410,6 +420,7 @@ def _build_standalone_progress(
         "total": total,
         "successes": successes,
         "failures": failures,
+        "warnings": warnings,
     }
 
 
@@ -1203,6 +1214,7 @@ class TestJob:
     standalone_event_remainder: bytes = field(default=b"", init=False)
     standalone_successes: int = field(default=0, init=False)
     standalone_failures: int = field(default=0, init=False)
+    standalone_warnings: int = field(default=0, init=False)
 
     def add_command_line(self, command_line: str) -> None:
         with self.lock:
@@ -1214,7 +1226,7 @@ class TestJob:
 
     def _update_standalone_event_counts(self) -> Dict[str, int]:
         if self.runner_type != "standalone":
-            return {"successes": 0, "failures": 0}
+            return {"successes": 0, "failures": 0, "warnings": 0}
         path = self.run_root / "events.jsonl"
         try:
             size = path.stat().st_size
@@ -1224,6 +1236,7 @@ class TestJob:
                     self.standalone_event_remainder = b""
                     self.standalone_successes = 0
                     self.standalone_failures = 0
+                    self.standalone_warnings = 0
                 with path.open("rb") as stream:
                     stream.seek(self.standalone_event_byte_offset)
                     chunk = stream.read()
@@ -1250,15 +1263,19 @@ class TestJob:
                             and event.get("phase") in {"failed-cycle", "failed"}
                         ):
                             self.standalone_failures += 1
+                        elif event.get("event") == "warning":
+                            self.standalone_warnings += 1
                 return {
                     "successes": self.standalone_successes,
                     "failures": self.standalone_failures,
+                    "warnings": self.standalone_warnings,
                 }
         except OSError:
             with self.lock:
                 return {
                     "successes": self.standalone_successes,
                     "failures": self.standalone_failures,
+                    "warnings": self.standalone_warnings,
                 }
 
     def add_log(self, line: str) -> None:

@@ -1455,7 +1455,7 @@ function standaloneResultHighlights(result = {}, snapshot = {}, warnings = []) {
   ];
 
   const summaryWarnings = firstSummaryValue(summary, STANDALONE_SUMMARY_ALIASES.warnings);
-  const warningCount = summaryWarnings ?? warnings.length;
+  const warningCount = summaryWarnings ?? progress.warnings ?? warnings.length;
   if ((Number(warningCount) || 0) > 0) {
     highlights.push(["警告次数", warningCount]);
   }
@@ -1762,6 +1762,10 @@ function renderMonitor(payload = {}) {
     $("standaloneSuccesses").textContent = formatStandaloneCount(
       payload.standalone?.progress,
       "successes"
+    );
+    $("standaloneWarnings").textContent = formatStandaloneCount(
+      { warnings: 0, ...payload.standalone?.progress },
+      "warnings"
     );
     $("standaloneFailures").textContent = formatStandaloneCount(
       payload.standalone?.progress,
