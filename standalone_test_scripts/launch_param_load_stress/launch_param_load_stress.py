@@ -49,7 +49,7 @@ else:
 
 ENV_READY_VAR = "LAUNCH_PARAM_LOAD_STRESS_ENV_READY"
 INTERRUPTED = False
-TOOL_VERSION = "2.2.1"
+TOOL_VERSION = "2.2.2"
 TEST_ID = "launch_param_load_stress"
 POINT_CLOUD_RESUBSCRIBE_AFTER_SECONDS = 2.0
 IMAGE_RESUBSCRIBE_AFTER_PEER_SECONDS = 2.0
@@ -601,6 +601,16 @@ def bulk_query_params(
     return False, {}, "failed to parse param dump output"
 
 
+def param_timeout_message(exc: subprocess.TimeoutExpired) -> str:
+    message = str(exc)
+    output = exc.stdout
+    if isinstance(output, bytes):
+        output = output.decode("utf-8", errors="replace")
+    if output and output.strip():
+        message += f"; output: {output.strip()}"
+    return message
+
+
 def check_params(
     *,
     yaml_params: Dict[str, Any],
@@ -611,13 +621,38 @@ def check_params(
     env: Dict[str, str],
     timeout: float,
     emit: StatusLogger,
+    warnings: Optional[List[Dict[str, Any]]] = None,
 ) -> List[Dict[str, Any]]:
-    bulk_ok, all_params, bulk_err = bulk_query_params(
-        ros_version=ros_version,
-        camera_name=camera_name,
-        env=env,
-        timeout=timeout,
-    )
+    # A new CLI client can race DDS service discovery. Retry a timed-out
+    # bulk query once; preserve evidence even if the subsequent query passes.
+    for attempt in range(1, 3):
+        try:
+            bulk_ok, all_params, bulk_err = bulk_query_params(
+                ros_version=ros_version,
+                camera_name=camera_name,
+                env=env,
+                timeout=timeout,
+            )
+            if bulk_ok and attempt > 1:
+                emit(f"[PARAM][WARN] camera={camera_name}: bulk query recovered on retry")
+            break
+        except subprocess.TimeoutExpired as exc:
+            bulk_ok, all_params, bulk_err = False, {}, param_timeout_message(exc)
+            message = (
+                f"camera={camera_name}: bulk query attempt {attempt}/2 timed out: "
+                f"{bulk_err}; "
+                + ("retrying in 1s" if attempt == 1 else "falling back to per-param queries")
+            )
+            emit(f"[PARAM][WARN] {message}")
+            if warnings is not None:
+                warnings.append({
+                    "camera": camera_name,
+                    "action": "param-bulk-timeout",
+                    "attempt": attempt,
+                    "message": message,
+                })
+            if attempt == 1:
+                time.sleep(1.0)
     if not bulk_ok:
         emit(f"[PARAM] bulk query failed ({bulk_err}), falling back to per-param queries")
 
@@ -636,13 +671,16 @@ def check_params(
             else:
                 ok, actual, message = False, None, "parameter not found"
         else:
-            ok, actual, message = _query_param_single(
-                ros_version=ros_version,
-                camera_name=camera_name,
-                param_name=key,
-                env=env,
-                timeout=timeout,
-            )
+            try:
+                ok, actual, message = _query_param_single(
+                    ros_version=ros_version,
+                    camera_name=camera_name,
+                    param_name=key,
+                    env=env,
+                    timeout=timeout,
+                )
+            except subprocess.TimeoutExpired as exc:
+                ok, actual, message = False, None, param_timeout_message(exc)
         row["actual"] = actual
         if not ok:
             row["status"] = "failed"
@@ -1817,6 +1855,7 @@ def _check_one_camera(
         env=runtime_env,
         timeout=service_timeout,
         emit=emit,
+        warnings=cam.setdefault("warnings", []),
     )
     if skip_topic_check:
         pass
@@ -2106,6 +2145,10 @@ def run(args) -> int:
                         emit=emit,
                     )
                     run_result["cameras"].append(cam)
+                    for camera_warning in cam.get("warnings", []):
+                        warning = {**camera_warning, "run": run_index}
+                        run_result.setdefault("warnings", []).append(warning)
+                        result.setdefault("warnings", []).append(warning)
                     if cam.get("resubscribed_image_topics"):
                         recovered_topics = list(cam["resubscribed_image_topics"])
                         recovered = cam["image_save_status"] == "passed"

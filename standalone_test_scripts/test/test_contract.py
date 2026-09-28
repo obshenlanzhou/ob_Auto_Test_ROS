@@ -1662,6 +1662,45 @@ def test_stress_scripts_capture_images_before_stability_validation():
     assert all(save < stable for save, stable in zip(save_lines, stable_lines))
 
 
+@pytest.mark.parametrize("mode", ["retry", "fallback", "single_timeout", "mismatch"])
+def test_launch_param_timeout_recovery_preserves_failures(monkeypatch, mode):
+    module = load_script(SCRIPTS["launch_param_load"])
+    calls, messages, warnings = [], [], []
+    sleeps = []
+    monkeypatch.setattr(module.time, "sleep", sleeps.append)
+
+    def command(args, **kwargs):
+        calls.append(args)
+        if args[2] == "dump":
+            if len(calls) == 1 or mode in {"fallback", "single_timeout"}:
+                raise subprocess.TimeoutExpired(args, kwargs["timeout"], output=b"waiting for service")
+            value = 99 if mode == "mismatch" else 15
+            return subprocess.CompletedProcess(
+                args, 0, f"/camera/camera:\n  ros__parameters:\n    color_fps: {value}\n    depth_fps: 15\n"
+            )
+        if mode == "single_timeout" and args[-1] == "color_fps":
+            raise subprocess.TimeoutExpired(args, kwargs["timeout"])
+        return subprocess.CompletedProcess(args, 0, "Integer value is: 15")
+
+    module.run_command = command
+    rows = module.check_params(
+        yaml_params={"color_fps": 15, "depth_fps": 15},
+        supported_params=set(), declaration_filter_enabled=False,
+        ros_version="2", camera_name="camera", env={}, timeout=15,
+        emit=messages.append, warnings=warnings,
+    )
+    assert sleeps == [1.0]
+    assert len(calls) == (4 if mode in {"fallback", "single_timeout"} else 2)
+    assert len(warnings) == (2 if mode in {"fallback", "single_timeout"} else 1)
+    assert "waiting for service" in warnings[0]["message"]
+    assert rows[1]["status"] == "passed"
+    assert rows[0]["status"] == ("failed" if mode in {"single_timeout", "mismatch"} else "passed")
+    if mode == "single_timeout":
+        assert "timed out" in rows[0]["message"]
+    if mode == "mismatch":
+        assert "expected 15, got 99" in rows[0]["message"]
+
+
 def test_launch_param_saves_images_before_other_camera_checks():
     module = load_script(SCRIPTS["launch_param_load"])
     calls = []

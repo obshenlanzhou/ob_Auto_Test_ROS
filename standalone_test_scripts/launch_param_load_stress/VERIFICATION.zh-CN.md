@@ -11,6 +11,11 @@ YAML 顶层的每个 key 都会和启动后的驱动参数做比较。
 - ROS 2：`ros2 param dump /<camera_name>/<camera_name>`（批量查询，失败时退回逐个查询）
 - ROS 1：`rosparam get /<camera_name>/<camera_name>`（批量查询，失败时退回逐个查询）
 
+批量查询超时后等待 1 秒重试一次，仍失败则退回逐项查询。每次命令仍受
+`--service-timeout` 限制。超时及命令已产生的输出保留在日志和结果的 warnings 中；
+重试或回退查询成功且参数匹配时允许通过，但不代表底层通信异常已修复。
+逐项查询超时会记录为该参数失败，继续检查其他参数；参数值不一致仍判失败。
+
 比较前会统一 bool 和数字字符串类型，`true` 和 `"true"` 视为相同。
 
 如果脚本能解析到 launch 文件，YAML 中未在该 launch 声明的 key 会标记为 `skipped`。

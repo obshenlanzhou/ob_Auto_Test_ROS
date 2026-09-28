@@ -12,6 +12,13 @@ Every top-level YAML key is compared against the launched driver parameter.
 - ROS 2: `ros2 param dump /<camera_name>/<camera_name>` (bulk, falls back to per-param)
 - ROS 1: `rosparam get /<camera_name>/<camera_name>` (bulk, falls back to per-param)
 
+A bulk query timeout triggers one retry after 1 second, then per-parameter fallback
+if the bulk query still fails. Each command retains the `--service-timeout` limit.
+Timeouts and captured command output remain in logs and result warnings, including
+when recovery succeeds. Matching values after recovery can pass; this does not mean
+the underlying communication fault is fixed. A per-parameter timeout fails that
+parameter and allows remaining checks to continue. Value mismatches still fail.
+
 Booleans and numeric strings are normalized before comparing, so `true` and
 `"true"` are treated as equal.
 
