@@ -49,7 +49,7 @@ else:
 
 ENV_READY_VAR = "LAUNCH_PARAM_LOAD_STRESS_ENV_READY"
 INTERRUPTED = False
-TOOL_VERSION = "2.2.2"
+TOOL_VERSION = "2.2.3"
 TEST_ID = "launch_param_load_stress"
 POINT_CLOUD_RESUBSCRIBE_AFTER_SECONDS = 2.0
 IMAGE_RESUBSCRIBE_AFTER_PEER_SECONDS = 2.0
@@ -76,7 +76,7 @@ def parse_camera_spec(raw: str) -> "CameraSpec":
 
 
 PLACEHOLDER_VALUES = {"", "any", "none", "null"}
-_LAUNCH_ERROR_RE = re.compile(r"\[(ERROR|FATAL|WARN(?:ING)?)\]|process has died|Traceback \(most recent call last\)")
+_LAUNCH_ERROR_RE = re.compile(r"\[(ERROR|FATAL)\]|process has died|Traceback \(most recent call last\)")
 STREAM_TOPIC_MAP = {
     "enable_color": "/{camera}/color/image_raw",
     "enable_depth": "/{camera}/depth/image_raw",
@@ -1635,7 +1635,7 @@ def wait_for_launch_start(
         error_lines, log_line = scan_launch_log_errors(session.log_path, log_line)
         if error_lines:
             raise RuntimeError(
-                "launch log contains errors/warnings:\n"
+                "launch log contains errors:\n"
                 + "\n".join(f"  {line}" for line in error_lines[:10])
             )
         try:

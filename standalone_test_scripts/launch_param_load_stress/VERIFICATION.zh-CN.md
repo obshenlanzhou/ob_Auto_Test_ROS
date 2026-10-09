@@ -1,5 +1,7 @@
 # 验证映射说明
 
+启动日志中的 `WARN`/`WARNING` 保留在 launch 日志附件中，不单独判定该轮失败。`ERROR`/`FATAL`、异常堆栈、进程异常退出、启动超时及实际功能检查失败仍判失败。队列溢出警告仍表示发生了丢帧；参数测试通过不代表无丢帧出流。
+
 English: [VERIFICATION.md](VERIFICATION.md)
 
 该工具通过三层逻辑判断 `config_file_path` YAML 设置是否生效。不同参数的验证方式不同。

@@ -1,5 +1,7 @@
 # Verification Map
 
+Startup log warnings (`WARN`/`WARNING`) remain in the launch-log artifacts and do not by themselves fail a run. `ERROR`/`FATAL`, tracebacks, abnormal process exits, startup timeouts and failed functional checks still fail the run. A queue-overflow warning still indicates dropped frames; passing this parameter test does not establish lossless streaming.
+
 中文文档: [VERIFICATION.zh-CN.md](VERIFICATION.zh-CN.md)
 
 This tool checks whether `config_file_path` YAML settings take effect in three

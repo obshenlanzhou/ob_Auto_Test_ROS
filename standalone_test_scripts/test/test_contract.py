@@ -2314,3 +2314,46 @@ def test_image_receive_failures_are_deduplicated_and_counted():
 
     assert core.status == "failed"
     assert core.failure_snapshot()[0]["count"] == 2
+
+
+def test_launch_param_startup_warning_does_not_fail(tmp_path):
+    module = load_script(SCRIPTS["launch_param_load"])
+    log = tmp_path / "camera.launch.log"
+    text = ("[WARN] Color frame queue overflow: queue=color count=1 capacity_frames=1\n"
+            "[WARNING] startup warning\nInitialize device cost: 100 ms\n")
+    log.write_text(text)
+    session = SimpleNamespace(log_path=log, assert_running=lambda: None)
+    messages = []
+    module.wait_for_launch_start(session, 1, emit=messages.append)
+    assert messages[-1] == "all cameras startup confirmed"
+    assert log.read_text() == text
+    assert module.scan_launch_log_errors(log, 0) == ([], 3)
+
+
+@pytest.mark.parametrize("error", ["[ERROR] failed", "[FATAL] failed",
+                                      "process has died", "Traceback (most recent call last)"])
+def test_launch_param_startup_real_errors_still_fail(tmp_path, error):
+    module = load_script(SCRIPTS["launch_param_load"])
+    log = tmp_path / "camera.launch.log"
+    log.write_text("[WARN] warning\n" + error + "\nInitialize device cost: 100 ms\n")
+    session = SimpleNamespace(log_path=log, assert_running=lambda: None)
+    with pytest.raises(RuntimeError, match="launch log contains errors:"):
+        module.wait_for_launch_start(session, 1, emit=lambda _: None)
+    assert module.scan_launch_log_errors(log, 3) == ([], 3)
+
+
+def test_launch_param_warning_does_not_bypass_readiness_or_process_check(tmp_path):
+    module = load_script(SCRIPTS["launch_param_load"])
+    log = tmp_path / "camera.launch.log"
+    log.write_text("[WARN] warning\n")
+    session = SimpleNamespace(log_path=log, assert_running=lambda: None)
+    with pytest.raises(RuntimeError, match="launch did not become ready"):
+        module.wait_for_launch_start(session, 0, emit=lambda _: None)
+
+    def died():
+        raise RuntimeError("child exited abnormally")
+
+    session.assert_running = died
+    log.write_text("[WARN] warning\nInitialize device cost: 100 ms\n")
+    with pytest.raises(RuntimeError, match="child exited abnormally"):
+        module.wait_for_launch_start(session, 1, emit=lambda _: None)
