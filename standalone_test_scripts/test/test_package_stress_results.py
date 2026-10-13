@@ -192,3 +192,70 @@ def test_rejects_running_or_unknown_results(tmp_path):
     )
     with pytest.raises(MODULE.PackagingError, match="unsupported"):
         MODULE.package_results(unknown)
+
+
+@pytest.mark.parametrize("existing", [False, True])
+def test_failed_package_does_not_publish_partial_archive(tmp_path, monkeypatch, existing):
+    root = tmp_path / "run"
+    write_result(root, "stream_toggle_stress_test", [])
+    output = root / "result.tar.gz"
+    if existing:
+        output.write_bytes(b"previous archive")
+    original_add = tarfile.TarFile.addfile
+
+    def fail_after_write(archive, *args, **kwargs):
+        original_add(archive, *args, **kwargs)
+        raise OSError("disk full")
+
+    monkeypatch.setattr(tarfile.TarFile, "addfile", fail_after_write)
+    with pytest.raises(MODULE.PackagingError, match="disk full"):
+        MODULE.package_results(root, output)
+
+    if existing:
+        assert output.read_bytes() == b"previous archive"
+    else:
+        assert not output.exists()
+    assert not list(root.glob(".package-*"))
+
+
+def test_archive_extracts_all_bytes_and_has_valid_gzip_footer(tmp_path):
+    import gzip
+
+    root = tmp_path / "run"
+    write_result(root, "stream_toggle_stress_test", [])
+    log = write_file(root / "logs" / "camera.log", "camera output\n" * 100000)
+    output = root / "result.tar.gz"
+    MODULE.package_results(root, output)
+    with gzip.open(output, "rb") as stream:
+        while stream.read(1024 * 1024):
+            pass
+    with tarfile.open(output, "r:gz") as archive:
+        assert archive.extractfile("run/logs/camera.log").read() == log.read_bytes()
+        assert archive.extractfile("run/result.json").read() == (root / "result.json").read_bytes()
+
+
+def test_byte_progress_updates_inside_large_file_and_completes_after_publish(tmp_path, monkeypatch):
+    root = tmp_path / "run"
+    write_result(root, "stream_toggle_stress_test", [])
+    write_file(root / "logs" / "camera.log", "log line\n" * 400000)
+    output = root / "result.tar.gz"
+    updates = []
+    ticks = iter(range(1000))
+    monkeypatch.setattr(MODULE.time, "monotonic", lambda: next(ticks))
+
+    def progress(value):
+        updates.append(value)
+        if value["status"] == "completed":
+            assert output.is_file()
+            archive_names(output)
+        else:
+            assert not output.exists()
+
+    MODULE.package_results(root, output, progress)
+    inside_file = [p for p in updates if p["current_file"] == "logs/camera.log"]
+    assert len({p["processed_bytes"] for p in inside_file}) >= 3
+    processed = [p["processed_bytes"] for p in updates]
+    assert processed == sorted(processed)
+    assert updates[-2]["status"] == "finalizing"
+    assert updates[-1]["status"] == "completed"
+    assert updates[-1]["processed_bytes"] == updates[-1]["total_bytes"]

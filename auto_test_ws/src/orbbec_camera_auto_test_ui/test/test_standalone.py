@@ -159,6 +159,9 @@ def test_ui_packages_standalone_result_and_opens_run_directory(tmp_path, monkeyp
     assert payload["directory"] == str(run_dir)
     assert payload["opened"] is True
     assert opened == [run_dir]
+    progress = ui_server.get_package_progress(run_id)
+    assert progress["status"] == "completed"
+    assert progress["processed_bytes"] == progress["total_bytes"] > 0
 
 
 def test_ui_rejects_packaging_for_image_receive_stats(tmp_path, monkeypatch):
@@ -1163,3 +1166,21 @@ def test_dynamic_fields_use_direct_placeholders_without_example_prefix():
     assert '"serial-number": "CV2R1610002F"' in script
     assert '"device-ip": "192.168.1.10"' in script
     assert "例如：" not in script
+
+
+def test_package_progress_prevents_duplicate_work_and_reports_failure(monkeypatch):
+    run_id = "progress-test"
+    monkeypatch.setattr(ui_server, "PACKAGE_PROGRESS", {})
+
+    def package(_run_id):
+        assert ui_server.get_package_progress(run_id)["status"] == "preparing"
+        duplicate, status = ui_server.package_run_results(run_id)
+        assert status == 409
+        assert "already running" in duplicate["error"]
+        return {"error": "disk full"}, 500
+
+    monkeypatch.setattr(ui_server, "_package_run_results", package)
+    assert ui_server.get_package_progress(run_id) == {"status": "idle"}
+    _, status = ui_server.package_run_results(run_id)
+    assert status == 500
+    assert ui_server.get_package_progress(run_id) == {"status": "failed", "error": "disk full"}

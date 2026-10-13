@@ -7,8 +7,10 @@ import argparse
 import json
 import sys
 import tarfile
+import tempfile
+import time
 from pathlib import Path
-from typing import Any, Dict, Iterable, NamedTuple, Optional, Sequence, Set
+from typing import Any, Callable, Dict, Iterable, NamedTuple, Optional, Sequence, Set
 
 
 class PackagingError(RuntimeError):
@@ -151,7 +153,22 @@ def _collect_files(root: Path, details: Dict[str, Any], spec: TestSpec) -> Set[P
     return files
 
 
-def package_results(result_directory: Path, output: Optional[Path] = None) -> Path:
+class ProgressReader:
+    def __init__(self, source, advance):
+        self.source = source
+        self.advance = advance
+
+    def read(self, size=-1):
+        data = self.source.read(size)
+        self.advance(len(data))
+        return data
+
+
+def package_results(
+    result_directory: Path,
+    output: Optional[Path] = None,
+    progress: Optional[Callable[[Dict[str, Any]], None]] = None,
+) -> Path:
     root = result_directory.expanduser().resolve()
     if not root.is_dir():
         raise PackagingError(f"result directory not found: {root}")
@@ -162,11 +179,47 @@ def package_results(result_directory: Path, output: Optional[Path] = None) -> Pa
         if output is not None
         else root.with_name(root.name + ".tar.gz")
     )
-    output_path.parent.mkdir(parents=True, exist_ok=True)
     try:
-        with tarfile.open(output_path, "w:gz") as archive:
-            for path in sorted(files):
-                archive.add(path, arcname=f"{root.name}/{path.relative_to(root)}")
+        paths = sorted(files - {output_path})
+        total_bytes = sum(path.stat().st_size for path in paths)
+        processed_bytes = 0
+        current_file = ""
+        last_update = 0.0
+
+        def report(status="running", force=False):
+            nonlocal last_update
+            now = time.monotonic()
+            if progress and (force or now - last_update >= 0.2):
+                progress({"status": status, "processed_bytes": processed_bytes,
+                          "total_bytes": total_bytes, "current_file": current_file})
+                last_update = now
+
+        def advance(size):
+            nonlocal processed_bytes
+            processed_bytes += size
+            report()
+
+        report(force=True)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        # Publish only after gzip has written its footer. Keep the temporary
+        # archive on the same filesystem so replacement is atomic.
+        with tempfile.TemporaryDirectory(
+            prefix=".package-", dir=output_path.parent
+        ) as temporary_directory:
+            temporary_path = Path(temporary_directory) / "archive.tar.gz"
+            with tarfile.open(temporary_path, "w:gz", compresslevel=1) as archive:
+                archive.copybufsize = 1024 * 1024
+                for path in paths:
+                    current_file = str(path.relative_to(root))
+                    report(force=True)
+                    with path.open("rb") as source:
+                        info = archive.gettarinfo(
+                            arcname=f"{root.name}/{current_file}", fileobj=source
+                        )
+                        archive.addfile(info, ProgressReader(source, advance))
+                report("finalizing", force=True)
+            temporary_path.replace(output_path)
+        report("completed", force=True)
     except (OSError, tarfile.TarError) as exc:
         raise PackagingError(f"failed to create archive: {exc}") from exc
     return output_path
@@ -178,13 +231,16 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     )
     parser.add_argument("result_directory", type=Path)
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--progress-json", action="store_true",
+                        help="Emit byte progress as JSON lines on stdout")
     return parser.parse_args(argv)
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     args = parse_args(argv)
     try:
-        output = package_results(args.result_directory, args.output)
+        progress = (lambda value: print(json.dumps(value), flush=True)) if args.progress_json else None
+        output = package_results(args.result_directory, args.output, progress)
     except PackagingError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
