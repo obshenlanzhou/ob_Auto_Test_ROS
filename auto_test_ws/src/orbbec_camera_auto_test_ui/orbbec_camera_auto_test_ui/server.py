@@ -350,8 +350,7 @@ def _package_run_results(run_id: str) -> tuple[Dict[str, Any], HTTPStatus]:
     root = UI_RESULTS_ROOT.resolve()
     if run_dir == root or root not in [run_dir, *run_dir.parents] or not run_dir.is_dir():
         raise FileNotFoundError(run_id)
-    if MANAGER.is_active_run(run_id):
-        return {"error": "cannot package a running test"}, HTTPStatus.CONFLICT
+    snapshot = MANAGER.is_active_run(run_id)
 
     ui_status = read_json(run_dir / "ui_status.json", {})
     ui_request = read_json(run_dir / "ui_request.json", {})
@@ -365,10 +364,14 @@ def _package_run_results(run_id: str) -> tuple[Dict[str, Any], HTTPStatus]:
         }, HTTPStatus.BAD_REQUEST
 
     script = STANDALONE_ROOT / "package_stress_results.py"
-    archive = run_dir / f"{run_dir.name}.tar.gz"
+    suffix = "_snapshot.tar.gz" if snapshot else ".tar.gz"
+    archive = run_dir / f"{run_dir.name}{suffix}"
+    command = [sys.executable, str(script), str(run_dir), "--output", str(archive), "--progress-json"]
+    if snapshot:
+        command.extend(["--snapshot", "--test-id", test_id])
     errors = []
     with subprocess.Popen(
-        [sys.executable, str(script), str(run_dir), "--output", str(archive), "--progress-json"],
+        command,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
@@ -393,6 +396,7 @@ def _package_run_results(run_id: str) -> tuple[Dict[str, Any], HTTPStatus]:
 
     response: Dict[str, Any] = {
         "archive": str(archive),
+        "snapshot": snapshot,
         "progress": get_package_progress(run_id),
         "directory": str(run_dir),
         "opened": False,

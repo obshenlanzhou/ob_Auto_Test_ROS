@@ -1184,3 +1184,27 @@ def test_package_progress_prevents_duplicate_work_and_reports_failure(monkeypatc
     _, status = ui_server.package_run_results(run_id)
     assert status == 500
     assert ui_server.get_package_progress(run_id) == {"status": "failed", "error": "disk full"}
+
+
+def test_ui_packages_live_failure_snapshot_without_stopping_test(tmp_path, monkeypatch):
+    run_id = "live-failure"
+    run_dir = tmp_path / run_id
+    run_dir.mkdir()
+    (run_dir / "ui_status.json").write_text(json.dumps({
+        "runner_type": "standalone", "test_id": "firmware_update_stress_test", "status": "running",
+    }))
+    (run_dir / "events.jsonl").write_text(
+        '{"current": 1, "phase": "failed-cycle"}\n'
+        '{"current": 2, "phase": "completed-cycle"}\n'
+        '{"current": 3, "phase": "updating"}\n'
+    )
+    monkeypatch.setattr(ui_server, "UI_RESULTS_ROOT", tmp_path)
+    monkeypatch.setattr(ui_server.MANAGER, "is_active_run", lambda _: True)
+    monkeypatch.setattr(ui_server, "_open_directory", lambda _: True)
+    payload, status = ui_server.package_run_results(run_id)
+    assert status == 200
+    assert payload["snapshot"] is True
+    assert Path(payload["archive"]).is_file()
+    assert payload["archive"].endswith("_snapshot.tar.gz")
+    assert ui_server.MANAGER.is_active_run(run_id)
+    assert not (run_dir / "result.json").exists()

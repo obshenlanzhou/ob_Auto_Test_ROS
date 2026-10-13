@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Package the last five rounds of a standalone stress-test result."""
+"""Package failure windows or the last five rounds of a standalone stress test."""
 
 from __future__ import annotations
 
@@ -76,7 +76,7 @@ def _read_result(root: Path) -> tuple[Dict[str, Any], TestSpec]:
     return details, TEST_SPECS[test_id]
 
 
-def _last_five_rounds(details: Dict[str, Any], spec: TestSpec) -> list[Dict[str, Any]]:
+def _selected_rounds(details: Dict[str, Any], spec: TestSpec) -> list[Dict[str, Any]]:
     rounds = details.get(spec.rounds_key)
     if not isinstance(rounds, list):
         raise PackagingError(f"invalid result: {spec.rounds_key} must be an array")
@@ -85,7 +85,13 @@ def _last_five_rounds(details: Dict[str, Any], spec: TestSpec) -> list[Dict[str,
         for item in rounds
         if isinstance(item, dict) and item.get("status") != "running"
     ]
-    return finished[-5:]
+    failures = [index for index, item in enumerate(finished) if item.get("status") == "failed"]
+    if not failures:
+        return finished[-5:]
+    indices = set()
+    for index in failures:
+        indices.update(range(max(0, index - 5), min(len(finished), index + 6)))
+    return [item for index, item in enumerate(finished) if index in indices]
 
 
 def _strings(value: Any) -> Iterable[str]:
@@ -131,7 +137,7 @@ def _round_id(item: Dict[str, Any], key: str) -> Optional[int]:
 
 def _collect_files(root: Path, details: Dict[str, Any], spec: TestSpec) -> Set[Path]:
     files: Set[Path] = set()
-    rounds = _last_five_rounds(details, spec)
+    rounds = _selected_rounds(details, spec)
 
     for name in ROOT_FILES:
         _add_path(root, root / name, files)
@@ -153,6 +159,55 @@ def _collect_files(root: Path, details: Dict[str, Any], spec: TestSpec) -> Set[P
     return files
 
 
+def _snapshot_details(root: Path, test_id: str, destination: Path):
+    if test_id not in TEST_SPECS:
+        raise PackagingError(f"unsupported standalone stress result: {test_id!r}")
+    spec = TEST_SPECS[test_id]
+    events_path = root / "events.jsonl"
+    if not events_path.is_file():
+        raise PackagingError("尚无事件记录，请等待失败轮次结束后再打包")
+    rounds = {}
+    highest_round = 0
+    # Freeze the event prefix before inspecting it; ignore an unfinished last line.
+    with events_path.open("rb") as source, destination.open("wb") as target:
+        remaining = events_path.stat().st_size
+        while remaining:
+            line = source.readline(remaining)
+            if not line:
+                break
+            remaining -= len(line)
+            if not line.endswith(b"\n"):
+                break
+            try:
+                event = json.loads(line)
+            except (ValueError, UnicodeError) as exc:
+                raise PackagingError("事件记录损坏，无法确定失败轮次") from exc
+            target.write(line)
+            if not isinstance(event, dict):
+                continue
+            round_id = _round_id(event, "current")
+            if round_id is None:
+                continue
+            highest_round = max(highest_round, round_id)
+            phase = event.get("phase")
+            if phase in {"completed-cycle", "failed-cycle"}:
+                previous = rounds.get(round_id, {})
+                status = "failed" if phase == "failed-cycle" else "passed"
+                if previous.get("status") == "failed":
+                    status = "failed"
+                rounds[round_id] = {
+                    spec.round_id_key: round_id, "status": status,
+                    "ended_at": event.get("time", ""),
+                }
+    # A failed-cycle event may be emitted before the remaining work in that
+    # cycle finishes (notably stream toggle). Wait for the next round to start.
+    finished = [item for number, item in sorted(rounds.items())
+                if number < highest_round or item["status"] == "passed"]
+    if not any(item["status"] == "failed" for item in finished):
+        raise PackagingError("尚无已结束的失败轮次；若当前轮刚失败，请等下一轮开始后重试")
+    return {spec.rounds_key: finished}, spec
+
+
 class ProgressReader:
     def __init__(self, source, advance):
         self.source = source
@@ -168,20 +223,59 @@ def package_results(
     result_directory: Path,
     output: Optional[Path] = None,
     progress: Optional[Callable[[Dict[str, Any]], None]] = None,
+    *,
+    snapshot: bool = False,
+    test_id: Optional[str] = None,
 ) -> Path:
+    with tempfile.TemporaryDirectory(prefix="stress-snapshot-") as directory:
+        return _package_results(result_directory, output, progress, snapshot, test_id, Path(directory))
+
+
+def _package_results(result_directory, output, progress, snapshot, test_id, staging) -> Path:
     root = result_directory.expanduser().resolve()
     if not root.is_dir():
         raise PackagingError(f"result directory not found: {root}")
-    details, spec = _read_result(root)
+    if snapshot:
+        details, spec = _snapshot_details(root, test_id, staging / "events.jsonl")
+    else:
+        details, spec = _read_result(root)
     files = _collect_files(root, details, spec)
+    replacements = {}
+    if snapshot:
+        # Final reports may appear while packaging; the snapshot has its own
+        # round inventory instead of claiming to be a completed test result.
+        files -= {root / "result.json", root / "summary.md"}
+        replacements[root / "events.jsonl"] = staging / "events.jsonl"
+        selected = _selected_rounds(details, spec)
+        metadata = {
+            "snapshot": True,
+            "test_id": test_id,
+            "created_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+            "selection": "failed rounds and up to five completed rounds before/after",
+            "selected_rounds": [item[spec.round_id_key] for item in selected],
+            "failed_rounds": [item[spec.round_id_key] for item in selected if item["status"] == "failed"],
+            "details": details,
+            "shared_log_scope": "Shared logs contain their full captured prefix, not only selected rounds.",
+        }
+        metadata_path = staging / "packaging_snapshot.json"
+        metadata_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
+        replacements[root / "packaging_snapshot.json"] = metadata_path
+        files.update(replacements)
+        for name in ROOT_FILES:
+            source = root / name
+            if source in files and source not in replacements and source.suffix == ".json":
+                target = staging / name
+                target.write_bytes(source.read_bytes())
+                replacements[source] = target
     output_path = (
         output.expanduser().resolve()
         if output is not None
-        else root.with_name(root.name + ".tar.gz")
+        else root.with_name(root.name + ("_snapshot.tar.gz" if snapshot else ".tar.gz"))
     )
     try:
         paths = sorted(files - {output_path})
-        total_bytes = sum(path.stat().st_size for path in paths)
+        sizes = {path: replacements.get(path, path).stat().st_size for path in paths}
+        total_bytes = sum(sizes.values())
         processed_bytes = 0
         current_file = ""
         last_update = 0.0
@@ -207,15 +301,18 @@ def package_results(
             prefix=".package-", dir=output_path.parent
         ) as temporary_directory:
             temporary_path = Path(temporary_directory) / "archive.tar.gz"
-            with tarfile.open(temporary_path, "w:gz", compresslevel=1) as archive:
+            with tarfile.open(temporary_path, "w:gz", compresslevel=1, dereference=True) as archive:
                 archive.copybufsize = 1024 * 1024
                 for path in paths:
                     current_file = str(path.relative_to(root))
                     report(force=True)
-                    with path.open("rb") as source:
+                    with replacements.get(path, path).open("rb") as source:
                         info = archive.gettarinfo(
                             arcname=f"{root.name}/{current_file}", fileobj=source
                         )
+                        # Appending logs cannot extend the snapshot or prevent
+                        # completion. A truncated source fails without publishing.
+                        info.size = sizes[path]
                         archive.addfile(info, ProgressReader(source, advance))
                 report("finalizing", force=True)
             temporary_path.replace(output_path)
@@ -227,20 +324,28 @@ def package_results(
 
 def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Package the last five rounds of a standalone stress-test result."
+        description="Package failure windows or the last five rounds of a standalone stress test."
     )
     parser.add_argument("result_directory", type=Path)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--progress-json", action="store_true",
                         help="Emit byte progress as JSON lines on stdout")
-    return parser.parse_args(argv)
+    parser.add_argument("--snapshot", action="store_true",
+                        help="Package completed failure windows while the test keeps running")
+    parser.add_argument("--test-id", choices=sorted(TEST_SPECS),
+                        help="Required with --snapshot")
+    args = parser.parse_args(argv)
+    if args.snapshot and not args.test_id:
+        parser.error("--snapshot requires --test-id")
+    return args
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     args = parse_args(argv)
     try:
         progress = (lambda value: print(json.dumps(value), flush=True)) if args.progress_json else None
-        output = package_results(args.result_directory, args.output, progress)
+        output = package_results(args.result_directory, args.output, progress,
+                                 snapshot=args.snapshot, test_id=args.test_id)
     except PackagingError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

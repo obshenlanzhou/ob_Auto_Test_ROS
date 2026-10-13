@@ -73,6 +73,19 @@ python3 ./package_stress_results.py /path/to/result \
   --output /path/to/camera_stress_result.tar.gz
 ```
 
+When failures exist, packaging includes each failed round and up to five completed rounds before and after it, merging overlapping windows. Runs without failures retain the last five rounds.
+
+While a standalone stress test is running, the UI package button creates a separate `_snapshot.tar.gz` without stopping the test. The equivalent CLI command is:
+
+```bash
+python3 ./package_stress_results.py /path/to/result \
+  --snapshot --test-id stream_toggle_stress_test
+```
+
+Live snapshots identify completed rounds from `events.jsonl`, without requiring the final `result.json`. A failed round is included once the next round starts. If fewer than five following rounds have completed, only those available are included. If no finished failure exists, retry later. `packaging_snapshot.json` lists the selected rounds. Repeated packaging replaces the snapshot, leaving the final archive separate.
+
+Per-round logs are limited to selected rounds. Shared events, terminal output, and continuous camera/SDK logs (including stream toggle logs) retain their full captured prefix, rather than an exact round slice. Appended data does not extend the archive being written.
+
 ## Environment
 
 Most scripts that launch the camera driver can source ROS and camera driver

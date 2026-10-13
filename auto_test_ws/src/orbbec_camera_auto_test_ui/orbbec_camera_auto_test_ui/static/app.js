@@ -2157,7 +2157,7 @@ async function packageRun(runId, button) {
     const payload = await request;
     job.progress = {...job.progress, ...payload.progress, status: "completed"};
     if (job.progress.total_bytes !== undefined) job.progress.processed_bytes = job.progress.total_bytes;
-    appendLogs([`[UI] 结果已打包: ${payload.archive}`]);
+    appendLogs([`[UI] ${payload.snapshot ? "运行中快照已打包（仅含已完成的失败窗口，共享日志保留已写入内容）" : "结果已打包"}: ${payload.archive}`]);
     if (payload.warning) appendLogs([`[UI] ${payload.warning}`]);
   } catch (error) {
     job.progress = {...job.progress, status: "failed", error: error.message};
@@ -2326,9 +2326,9 @@ function runItem(run) {
   packageButton.type = "button";
   packageButton.className = "ghost package-button";
   packageButton.textContent = "打包";
-  packageButton.title = "打包最后五轮结果并打开实际目录";
-  packageButton.disabled = !TERMINAL_RUN_STATUSES.has(run.status);
-  if (packageButton.disabled) packageButton.title = "测试结束后才能打包";
+  packageButton.title = "打包失败轮次及前后各五轮；运行中仅收集已完成轮次，共享日志保留快照";
+  packageButton.disabled = !TERMINAL_RUN_STATUSES.has(run.status) && !ACTIVE_RUN_STATUSES.has(run.status);
+  if (packageButton.disabled) packageButton.title = "当前任务状态不支持打包";
   packageButton.addEventListener("click", () => packageRun(run.run_id, packageButton));
 
   const deleteButton = document.createElement("button");
