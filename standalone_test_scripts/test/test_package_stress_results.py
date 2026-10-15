@@ -276,7 +276,7 @@ def test_packages_failure_windows_instead_of_only_tail(tmp_path, test_id):
     with tarfile.open(output) as archive:
         names = archive.getnames()
     # Overlapping windows merge; each log is archived once. No unrelated tail.
-    selected = set(range(1, 21))
+    selected = set(range(1, 5)) | set(range(10, 18))
     assert {int(Path(name).stem) for name in names if "/rounds/" in name} == selected
     assert len(names) == len(set(names))
 
@@ -303,12 +303,12 @@ def test_live_snapshot_selects_completed_failure_window_without_result_json(tmp_
     assert output.name.endswith("_snapshot.tar.gz")
     with tarfile.open(output) as archive:
         metadata = json.load(archive.extractfile(f"{root.name}/packaging_snapshot.json"))
-        assert metadata["selected_rounds"] == list(range(5, 16))
+        assert metadata["selected_rounds"] == list(range(8, 13))
         assert metadata["failed_rounds"] == [10]
         names = set(archive.getnames())
         for number in range(1, 20):
             for template in spec.round_dirs:
-                assert (f"{root.name}/{template.format(number)}/round.log" in names) == (5 <= number <= 15)
+                assert (f"{root.name}/{template.format(number)}/round.log" in names) == (8 <= number <= 12)
         if spec.shared_dirs:
             assert archive.extractfile(f"{root.name}/logs/camera.launch.log").read() == shared.read_bytes()
         events = archive.extractfile(f"{root.name}/events.jsonl").read()
@@ -321,11 +321,11 @@ def test_snapshot_waits_for_failed_round_to_finish_and_keeps_available_following
     write_events(root, completed=10, failure=10, active=10)
     with pytest.raises(MODULE.PackagingError, match="尚无已结束"):
         MODULE.package_results(root, snapshot=True, test_id="stream_toggle_stress_test")
-    write_events(root, completed=12, failure=10, active=13)
+    write_events(root, completed=11, failure=10, active=12)
     output = MODULE.package_results(root, snapshot=True, test_id="stream_toggle_stress_test")
     with tarfile.open(output) as archive:
         metadata = json.load(archive.extractfile("run/packaging_snapshot.json"))
-        assert metadata["selected_rounds"] == list(range(5, 13))
+        assert metadata["selected_rounds"] == list(range(8, 12))
 
 
 def test_snapshot_caps_growing_logs_at_captured_size(tmp_path):

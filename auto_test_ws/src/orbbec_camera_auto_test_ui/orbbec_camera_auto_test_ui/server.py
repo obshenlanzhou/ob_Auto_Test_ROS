@@ -218,11 +218,14 @@ def _aggregate_status(run_dir: Path, ui_status: Dict[str, Any]) -> str:
 def list_runs() -> Dict[str, Any]:
     ensure_dir(UI_RESULTS_ROOT)
     packageable_ids = packageable_test_ids(STANDALONE_ROOT)
+    current_run = MANAGER.current_run_info()
     runs = []
     for run_dir in sorted(UI_RESULTS_ROOT.iterdir(), reverse=True):
         if not run_dir.is_dir():
             continue
         ui_status = read_json(run_dir / "ui_status.json", {})
+        if run_dir.name == current_run.get("run_id"):
+            ui_status = {**ui_status, **current_run}
         request = read_json(run_dir / "ui_request.json", {})
         runner_type = ui_status.get("runner_type") or request.get(
             "runner_type", "framework"

@@ -1391,6 +1391,22 @@ class RunManager:
             return {"status": "idle", "logs": [], "log_offset": 0}
         return job.snapshot(log_offset=log_offset)
 
+    def current_run_info(self) -> Dict[str, Any]:
+        """Return history metadata without reading logs or computing metrics."""
+        with self._lock:
+            job = self._current
+            if job is None:
+                return {}
+            return {
+                "run_id": job.run_id,
+                "mode": job.mode,
+                "runner_type": job.runner_type,
+                "test_id": job.test_id,
+                "status": job.status,
+                "started_at": job.started_at,
+                "ended_at": job.ended_at,
+            }
+
     def is_active_run(self, run_id: str) -> bool:
         with self._lock:
             job = self._current

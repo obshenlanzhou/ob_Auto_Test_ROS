@@ -69,7 +69,7 @@ python3 ./package_stress_results.py /path/to/result \
   --output /path/to/camera_stress_result.tar.gz
 ```
 
-打包时若有失败轮次，会收集每个失败轮次及其前后各 5 个已完成轮次，重叠窗口合并去重；没有失败时保留最后 5 轮。
+打包时若有失败轮次，会收集每个失败轮次及其前后各 2 个已完成轮次，重叠窗口合并去重；没有失败时保留最后 5 轮。
 
 UI 中运行中的独立压测也可以点击“打包”，生成单独的 `_snapshot.tar.gz`，测试继续运行。也可以在命令行生成运行中快照：
 
@@ -78,7 +78,7 @@ python3 ./package_stress_results.py /path/to/result \
   --snapshot --test-id stream_toggle_stress_test
 ```
 
-运行中快照根据 `events.jsonl` 识别已完成轮次，不需要等待最终的 `result.json`。失败轮次需等下一轮开始后才纳入；后续不足 5 轮时仅收集已有的已完成轮次，无已结束失败轮次时会提示稍后重试。`packaging_snapshot.json` 记录实际选中的轮次。再次点击会更新快照包，不会覆盖最终结果包。
+运行中快照根据 `events.jsonl` 识别已完成轮次，不需要等待最终的 `result.json`。失败轮次需等下一轮开始后才纳入；后续不足 2 轮时仅收集已有的已完成轮次，无已结束失败轮次时会提示稍后重试。`packaging_snapshot.json` 记录实际选中的轮次。再次点击会更新快照包，不会覆盖最终结果包。
 
 按轮次存放的日志只收集选中轮次。`events.jsonl`、终端输出以及开关流脚本的连续相机/SDK 日志属于共享日志，保留快照时已有的完整前缀，并非精确裁剪到这几个轮次。日志新增内容不会持续扩充正在生成的压缩包。
 

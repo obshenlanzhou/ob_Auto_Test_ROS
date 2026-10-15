@@ -1226,3 +1226,45 @@ def test_launch_file_is_required_before_building_stress_command(tmp_path):
             args, _ = build_command(manifest, {"ros_version": ros_version, "run_count": "1",
                                               "launch_file": launch_file}, tmp_path)
             assert args[args.index("--launch-file") + 1] == launch_file
+
+
+def test_run_history_uses_live_status_before_final_status_file_exists(tmp_path, monkeypatch):
+    run_id = "live-launch-restart"
+    root = tmp_path / run_id
+    root.mkdir()
+    (root / "ui_request.json").write_text(json.dumps({
+        "runner_type": "standalone", "test_id": "launch_restart_stream_check",
+        "mode": "standalone:launch_restart_stream_check",
+    }))
+    manager = RunManager()
+    job = _TestJob(
+        run_id=run_id, mode="standalone:launch_restart_stream_check", run_root=root,
+        command_lines=[], shell="bash", runner_type="standalone",
+        test_id="launch_restart_stream_check",
+    )
+    manager._current = job
+    monkeypatch.setattr(ui_server, "MANAGER", manager)
+    monkeypatch.setattr(ui_server, "UI_RESULTS_ROOT", tmp_path)
+    for status in ("starting", "running", "stopping", "failed"):
+        job.status = status
+        run = ui_server.list_runs()["runs"][0]
+        assert run["status"] == status
+        assert run["started_at"] == job.started_at
+        assert run["package_supported"] is True
+    assert not (root / "ui_status.json").exists()
+
+    # Even a stale on-disk status must not hide the live state.
+    (root / "ui_status.json").write_text(json.dumps({"status": "unknown"}))
+    job.status = "running"
+    assert ui_server.list_runs()["runs"][0]["status"] == "running"
+    (root / "events.jsonl").write_text(
+        '{"current": 1, "phase": "failed-cycle"}\n'
+        '{"current": 2, "phase": "completed-cycle"}\n'
+        '{"current": 3, "phase": "launching"}\n'
+    )
+    monkeypatch.setattr(ui_server, "_open_directory", lambda _: True)
+    payload, status = ui_server.package_run_results(run_id)
+    assert status == 200
+    assert payload["snapshot"] is True
+    assert Path(payload["archive"]).is_file()
+    assert job.status == "running"

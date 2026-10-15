@@ -90,7 +90,7 @@ def _selected_rounds(details: Dict[str, Any], spec: TestSpec) -> list[Dict[str, 
         return finished[-5:]
     indices = set()
     for index in failures:
-        indices.update(range(max(0, index - 5), min(len(finished), index + 6)))
+        indices.update(range(max(0, index - 2), min(len(finished), index + 3)))
     return [item for index, item in enumerate(finished) if index in indices]
 
 
@@ -251,7 +251,7 @@ def _package_results(result_directory, output, progress, snapshot, test_id, stag
             "snapshot": True,
             "test_id": test_id,
             "created_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
-            "selection": "failed rounds and up to five completed rounds before/after",
+            "selection": "failed rounds and up to two completed rounds before/after",
             "selected_rounds": [item[spec.round_id_key] for item in selected],
             "failed_rounds": [item[spec.round_id_key] for item in selected if item["status"] == "failed"],
             "details": details,

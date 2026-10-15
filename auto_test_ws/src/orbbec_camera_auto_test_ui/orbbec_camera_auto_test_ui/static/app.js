@@ -1991,8 +1991,10 @@ async function pollStatus() {
     appendLogs(payload.logs || []);
     state.logOffset = payload.log_offset || state.logOffset;
     await updateResultSummary(payload);
-    if (TERMINAL_RUN_STATUSES.has(payload.status)) {
+    const historyRunKey = `${payload.run_id || ""}:${payload.status || "idle"}`;
+    if (historyRunKey !== state.historyRunKey || TERMINAL_RUN_STATUSES.has(payload.status)) {
       await loadRuns();
+      state.historyRunKey = historyRunKey;
     }
   } catch (error) {
     appendLogs([`[UI] status poll failed: ${error.message}`]);
@@ -2336,7 +2338,7 @@ function runItem(run) {
   packageButton.type = "button";
   packageButton.className = "ghost package-button";
   packageButton.textContent = "打包";
-  packageButton.title = "打包失败轮次及前后各五轮；运行中仅收集已完成轮次，共享日志保留快照";
+  packageButton.title = "打包失败轮次及前后各两轮；运行中仅收集已完成轮次，共享日志保留快照";
   packageButton.disabled = !TERMINAL_RUN_STATUSES.has(run.status) && !ACTIVE_RUN_STATUSES.has(run.status);
   if (packageButton.disabled) packageButton.title = "当前任务状态不支持打包";
   packageButton.addEventListener("click", () => packageRun(run.run_id, packageButton));
