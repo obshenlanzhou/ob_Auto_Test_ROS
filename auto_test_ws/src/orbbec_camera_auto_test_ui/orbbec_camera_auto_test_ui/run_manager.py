@@ -26,6 +26,7 @@ from .standalone import (
 
 DEFAULT_ROS_SETUP = "/opt/ros/humble/setup.bash"
 DEFAULT_ROS1_SETUP = "/opt/ros/one/setup.bash"
+ROS_INSTALL_ROOT = Path("/opt/ros")
 MAX_BUFFERED_LOG_LINES = 2000
 
 
@@ -71,8 +72,43 @@ STREAM_LAUNCH_ARGS = {
 }
 
 
+def _installed_ros_version(prefix: Path) -> str:
+    for directory in ("environment", "catkin_env_hook"):
+        hook = prefix / "share" / "ros_environment" / directory / "1.ros_version.sh"
+        try:
+            content = hook.read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            continue
+        match = re.search(r"(?m)^\s*export\s+ROS_VERSION=['\"]?([12])['\"]?\s*$", content)
+        if match:
+            return match.group(1)
+    return ""
+
+
 def _default_ros_setup_for_version(ros_version: str) -> str:
-    return DEFAULT_ROS1_SETUP if str(ros_version) == "1" else DEFAULT_ROS_SETUP
+    candidates = []
+    prefixes = set(ROS_INSTALL_ROOT.iterdir()) if ROS_INSTALL_ROOT.is_dir() else set()
+    for variable in ("AMENT_PREFIX_PATH", "CMAKE_PREFIX_PATH"):
+        prefixes.update(Path(value) for value in os.environ.get(variable, "").split(os.pathsep) if value)
+    for prefix in sorted(prefixes):
+        if _installed_ros_version(prefix) != str(ros_version):
+            continue
+        setup = prefix / "setup.bash"
+        if setup.is_file():
+            candidates.append(setup)
+    active_distro = os.environ.get("ROS_DISTRO", "").strip()
+    active = ROS_INSTALL_ROOT / active_distro / "setup.bash"
+    if active_distro and active in candidates:
+        return str(active)
+    return str(candidates[0]) if len(candidates) == 1 else ""
+
+
+def _saved_or_detected_ros_setup(saved: Any, ros_version: str) -> str:
+    value = str(saved or "").strip()
+    # Migrate only missing historical UI defaults; preserve custom paths.
+    if value in {DEFAULT_ROS_SETUP, DEFAULT_ROS1_SETUP} and not Path(value).is_file():
+        value = ""
+    return value or _default_ros_setup_for_version(ros_version)
 
 
 def _default_camera_setup_for_version(ros_version: str) -> str:
@@ -159,11 +195,11 @@ DEFAULT_ROS1_CAMERA_SETUP = DEFAULT_ROS1_CAMERA_SETUP or _discover_sibling_drive
 def setup_defaults() -> Dict[str, Dict[str, str]]:
     return {
         "2": {
-            "ros_setup": DEFAULT_ROS_SETUP,
+            "ros_setup": _default_ros_setup_for_version("2"),
             "driver_setup": DEFAULT_CAMERA_SETUP,
         },
         "1": {
-            "ros_setup": DEFAULT_ROS1_SETUP,
+            "ros_setup": _default_ros_setup_for_version("1"),
             "driver_setup": DEFAULT_ROS1_CAMERA_SETUP,
         },
     }
@@ -734,7 +770,7 @@ def load_config() -> Dict[str, Any]:
         "ros_version": ros_version,
         "ros_domain_id": ros_domain_id,
         "ros_localhost_only": _bool_value(config.get("ros_localhost_only", True)),
-        "ros_setup": config.get("ros_setup") or _default_ros_setup_for_version(ros_version),
+        "ros_setup": _saved_or_detected_ros_setup(config.get("ros_setup"), ros_version),
         "camera_setup": config.get("camera_setup") or _default_camera_setup_for_version(ros_version),
         "host": config.get("host") or "127.0.0.1",
         "port": int(config.get("port") or 8000),
@@ -1455,6 +1491,13 @@ class RunManager:
             return 400, {"errors": ["high-risk confirmation is required"]}
 
         values, errors = validate_standalone_request(manifest, payload.get("values"))
+        raw_values = payload.get("values")
+        raw_values = raw_values if isinstance(raw_values, dict) else {}
+        values["ros_setup"] = _saved_or_detected_ros_setup(
+            raw_values.get("ros_setup"), str(values.get("ros_version") or "2")
+        )
+        if not values["ros_setup"]:
+            errors.append("未识别到唯一 ROS 环境，请填写 ROS 环境脚本路径")
         try:
             ros_domain_id = normalize_ros_domain_id(payload.get("ros_domain_id"))
         except ValueError as exc:

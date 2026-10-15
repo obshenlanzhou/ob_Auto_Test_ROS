@@ -256,3 +256,44 @@ class RunConfigurationTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_ros_setup_detection_uses_installed_versions_and_active_environment(tmp_path, monkeypatch):
+    monkeypatch.setattr(run_manager, "ROS_INSTALL_ROOT", tmp_path)
+    for name in ("ROS_DISTRO", "AMENT_PREFIX_PATH", "CMAKE_PREFIX_PATH"):
+        monkeypatch.delenv(name, raising=False)
+
+    def install(distro, version):
+        prefix = tmp_path / distro
+        directory = "environment" if version == "2" else "catkin_env_hook"
+        hook = prefix / "share" / "ros_environment" / directory / "1.ros_version.sh"
+        hook.parent.mkdir(parents=True)
+        hook.write_text(f"export ROS_VERSION={version}\n")
+        setup = prefix / "setup.bash"
+        setup.write_text("# setup\n")
+        return str(setup)
+
+    assert run_manager._default_ros_setup_for_version("2") == ""
+    jazzy = install("jazzy", "2")
+    one = install("one", "1")
+    assert run_manager.setup_defaults()["2"]["ros_setup"] == jazzy
+    assert run_manager.setup_defaults()["1"]["ros_setup"] == one
+    humble = install("humble", "2")
+    assert run_manager._default_ros_setup_for_version("2") == ""
+    monkeypatch.setenv("ROS_DISTRO", "humble")
+    assert run_manager._default_ros_setup_for_version("2") == humble
+    assert run_manager._default_ros_setup_for_version("1") == one
+    monkeypatch.setenv("ROS_DISTRO", "jazzy")
+    assert run_manager._default_ros_setup_for_version("2") == jazzy
+    (tmp_path / "jazzy" / "setup.bash").unlink()
+    assert run_manager._default_ros_setup_for_version("2") == humble
+
+
+def test_saved_custom_ros_setup_is_preserved_and_missing_old_default_is_migrated(tmp_path, monkeypatch):
+    old = str(tmp_path / "old" / "setup.bash")
+    custom = str(tmp_path / "custom" / "setup.bash")
+    monkeypatch.setattr(run_manager, "DEFAULT_ROS_SETUP", old)
+    monkeypatch.setattr(run_manager, "_default_ros_setup_for_version", lambda _: "/detected/setup.bash")
+    assert run_manager._saved_or_detected_ros_setup(old, "2") == "/detected/setup.bash"
+    assert run_manager._saved_or_detected_ros_setup(custom, "2") == custom
+    assert run_manager._saved_or_detected_ros_setup("", "2") == "/detected/setup.bash"

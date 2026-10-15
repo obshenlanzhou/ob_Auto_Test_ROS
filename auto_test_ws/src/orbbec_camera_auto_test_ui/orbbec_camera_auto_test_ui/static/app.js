@@ -600,7 +600,9 @@ function createStandaloneField(field, value) {
     if (field.min !== undefined) control.min = String(field.min);
     if (field.max !== undefined) control.max = String(field.max);
     control.value = String(value ?? "");
-    if (field.placeholder) {
+    if (field.name === "ros_setup") {
+      control.placeholder = "自动识别 ROS 环境；未识别时请填写 setup.bash 路径";
+    } else if (field.placeholder) {
       control.placeholder = field.placeholder;
     } else if (field.type === "duration") {
       control.placeholder = "300 / 15m / 2h";
@@ -713,10 +715,19 @@ function setupDefaultsForVersion(rosVersion) {
   const fallback = DEFAULT_SETUPS[rosVersion] || DEFAULT_SETUPS["2"];
   const configured = state.setupDefaults?.[rosVersion] || {};
   return {
-    ros: configured.ros_setup || fallback.ros,
+    ros: configured.ros_setup ?? fallback.ros,
     camera: configured.driver_setup || fallback.camera,
     cameraPlaceholder: fallback.cameraPlaceholder,
   };
+}
+
+function applyRosSetupDefault(control, defaults) {
+  const known = [
+    ...Object.values(DEFAULT_SETUPS).map(item => item.ros),
+    ...Object.values(state.setupDefaults || {}).map(item => item.ros_setup),
+  ];
+  if (!control.value.trim() || known.includes(control.value.trim())) control.value = defaults.ros;
+  control.placeholder = defaults.ros || "未识别到唯一 ROS 环境，请填写 setup.bash 路径";
 }
 
 function launchFileForRosVersion(launchFile, rosVersion) {
@@ -742,8 +753,7 @@ function updateStandaloneRosVersion(rosVersion) {
     '[data-standalone-input="launch_file"]'
   );
   if (rosSetup) {
-    rosSetup.value = defaults.ros;
-    rosSetup.placeholder = defaults.ros;
+    applyRosSetupDefault(rosSetup, defaults);
   }
   if (driverSetup) {
     driverSetup.value = defaults.camera;
@@ -1034,7 +1044,7 @@ function validateStandaloneForm() {
         ? control.checked
         : control.value.trim();
     const empty = value === "" || value === false || (Array.isArray(value) && !value.length);
-    if (field.required && empty) {
+    if ((field.required || field.name === "ros_setup") && empty) {
       errors.push(validationIssue(control, `${label}为必填项`));
       continue;
     }
@@ -1805,7 +1815,7 @@ function updateSpecialConfigControls() {
 
 function updateRosVersionControls({ fillBlank = false } = {}) {
   const defaults = setupDefaultsForVersion($("rosVersion").value);
-  $("rosSetup").placeholder = defaults.ros;
+  $("rosSetup").placeholder = defaults.ros || "未识别到唯一 ROS 环境，请填写 setup.bash 路径";
   $("cameraSetup").placeholder = defaults.cameraPlaceholder || defaults.camera;
   const domainEnabled = $("rosVersion").value === "2";
   $("rosDomainId").disabled = !domainEnabled;
@@ -2718,7 +2728,7 @@ async function init() {
   });
   $("rosVersion").addEventListener("change", () => {
     const defaults = setupDefaultsForVersion($("rosVersion").value);
-    $("rosSetup").value = defaults.ros;
+    applyRosSetupDefault($("rosSetup"), defaults);
     $("cameraSetup").value = defaults.camera;
     updateRosVersionControls();
     loadLaunchFiles();

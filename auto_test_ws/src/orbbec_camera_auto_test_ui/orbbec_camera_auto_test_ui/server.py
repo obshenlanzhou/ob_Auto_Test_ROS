@@ -28,6 +28,7 @@ from .run_manager import (
     read_json,
     save_config,
     setup_defaults,
+    _saved_or_detected_ros_setup,
 )
 from .standalone import (
     default_values,
@@ -141,6 +142,8 @@ def list_standalone_tests() -> Dict[str, Any]:
         }
         if not saved_ros_setup or saved_ros_setup in known_ros_setups:
             values["ros_setup"] = selected_defaults["ros_setup"]
+        else:
+            values["ros_setup"] = _saved_or_detected_ros_setup(saved_ros_setup, ros_version)
         if not str(saved_values.get("driver_setup") or "").strip():
             values["driver_setup"] = selected_defaults["driver_setup"]
         launch_file = str(values.get("launch_file") or "").strip()
