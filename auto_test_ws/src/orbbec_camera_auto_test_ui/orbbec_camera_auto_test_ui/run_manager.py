@@ -86,18 +86,30 @@ def _installed_ros_version(prefix: Path) -> str:
 
 
 def _default_ros_setup_for_version(ros_version: str) -> str:
-    candidates = []
-    prefixes = set(ROS_INSTALL_ROOT.iterdir()) if ROS_INSTALL_ROOT.is_dir() else set()
-    for variable in ("AMENT_PREFIX_PATH", "CMAKE_PREFIX_PATH"):
-        prefixes.update(Path(value) for value in os.environ.get(variable, "").split(os.pathsep) if value)
-    for prefix in sorted(prefixes):
-        if _installed_ros_version(prefix) != str(ros_version):
-            continue
-        setup = prefix / "setup.bash"
-        if setup.is_file():
-            candidates.append(setup)
+    ros_version = str(ros_version)
+    # Preserve overlay/underlay order from the sourced environment. Sorting all
+    # prefixes together would prefer a system install over an active custom one.
+    variables = ("AMENT_PREFIX_PATH", "CMAKE_PREFIX_PATH") if ros_version == "2" else ("CMAKE_PREFIX_PATH", "AMENT_PREFIX_PATH")
+    active_prefixes = list(dict.fromkeys(
+        Path(value).expanduser().resolve()
+        for variable in variables
+        for value in os.environ.get(variable, "").split(os.pathsep) if value
+    ))
+    prefixes = list(active_prefixes)
+    if ROS_INSTALL_ROOT.is_dir():
+        prefixes.extend(sorted(ROS_INSTALL_ROOT.iterdir()))
+    candidates = list(dict.fromkeys(
+        (prefix / "setup.bash").resolve()
+        for prefix in prefixes
+        if _installed_ros_version(prefix) == ros_version and (prefix / "setup.bash").is_file()
+    ))
+    if os.environ.get("ROS_VERSION", ros_version) == ros_version:
+        for prefix in active_prefixes:
+            setup = (prefix / "setup.bash").resolve()
+            if setup in candidates:
+                return str(setup)
     active_distro = os.environ.get("ROS_DISTRO", "").strip()
-    active = ROS_INSTALL_ROOT / active_distro / "setup.bash"
+    active = (ROS_INSTALL_ROOT / active_distro / "setup.bash").resolve()
     if active_distro and active in candidates:
         return str(active)
     return str(candidates[0]) if len(candidates) == 1 else ""

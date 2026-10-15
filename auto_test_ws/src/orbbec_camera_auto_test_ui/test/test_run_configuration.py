@@ -297,3 +297,38 @@ def test_saved_custom_ros_setup_is_preserved_and_missing_old_default_is_migrated
     assert run_manager._saved_or_detected_ros_setup(old, "2") == "/detected/setup.bash"
     assert run_manager._saved_or_detected_ros_setup(custom, "2") == custom
     assert run_manager._saved_or_detected_ros_setup("", "2") == "/detected/setup.bash"
+
+
+def test_ros_setup_prefers_active_custom_prefix_and_preserves_overlay_order(tmp_path, monkeypatch):
+    installs = tmp_path / "opt" / "ros"
+    monkeypatch.setattr(run_manager, "ROS_INSTALL_ROOT", installs)
+    monkeypatch.setenv("ROS_VERSION", "2")
+    monkeypatch.setenv("ROS_DISTRO", "jazzy")
+
+    def install(prefix, version):
+        directory = "environment" if version == "2" else "catkin_env_hook"
+        hook = prefix / "share" / "ros_environment" / directory / "1.ros_version.sh"
+        hook.parent.mkdir(parents=True)
+        hook.write_text(f"export ROS_VERSION={version}\n")
+        setup = prefix / "setup.bash"
+        setup.write_text("# setup\n")
+        return str(setup)
+
+    system = install(installs / "jazzy", "2")
+    custom = install(tmp_path / "custom" / "install", "2")
+    ros1 = install(installs / "one", "1")
+    overlay = tmp_path / "camera_overlay"
+    overlay.mkdir()
+    (overlay / "setup.bash").write_text("# No ros_environment package\n")
+    monkeypatch.setenv("AMENT_PREFIX_PATH", os.pathsep.join((str(overlay), str(Path(custom).parent), str(Path(system).parent))))
+    monkeypatch.setenv("CMAKE_PREFIX_PATH", str(Path(ros1).parent))
+    assert run_manager._default_ros_setup_for_version("2") == custom
+    assert run_manager._default_ros_setup_for_version("1") == ros1
+    monkeypatch.setenv("AMENT_PREFIX_PATH", os.pathsep.join((str(Path(system).parent), str(Path(custom).parent))))
+    assert run_manager._default_ros_setup_for_version("2") == system
+
+    # An alias of the same install must not create multiple candidates.
+    alias = tmp_path / "alias"
+    alias.symlink_to(Path(custom).parent, target_is_directory=True)
+    monkeypatch.setenv("AMENT_PREFIX_PATH", os.pathsep.join((str(alias), str(Path(custom).parent))))
+    assert run_manager._default_ros_setup_for_version("2") == custom

@@ -721,12 +721,18 @@ function setupDefaultsForVersion(rosVersion) {
   };
 }
 
-function applyRosSetupDefault(control, defaults) {
-  const known = [
-    ...Object.values(DEFAULT_SETUPS).map(item => item.ros),
-    ...Object.values(state.setupDefaults || {}).map(item => item.ros_setup),
-  ];
-  if (!control.value.trim() || known.includes(control.value.trim())) control.value = defaults.ros;
+function initializeRosSetupVersions(control, rosVersion) {
+  control.rosSetupVersion = String(rosVersion);
+  control.rosSetupsByVersion = {[String(rosVersion)]: control.value.trim()};
+}
+
+function applyRosSetupDefault(control, defaults, rosVersion) {
+  const nextVersion = String(rosVersion);
+  const paths = control.rosSetupsByVersion || {};
+  if (control.rosSetupVersion) paths[control.rosSetupVersion] = control.value.trim();
+  control.value = paths[nextVersion] ?? defaults.ros;
+  control.rosSetupsByVersion = paths;
+  control.rosSetupVersion = nextVersion;
   control.placeholder = defaults.ros || "未识别到唯一 ROS 环境，请填写 setup.bash 路径";
 }
 
@@ -753,7 +759,7 @@ function updateStandaloneRosVersion(rosVersion) {
     '[data-standalone-input="launch_file"]'
   );
   if (rosSetup) {
-    applyRosSetupDefault(rosSetup, defaults);
+    applyRosSetupDefault(rosSetup, defaults, rosVersion);
   }
   if (driverSetup) {
     driverSetup.value = defaults.camera;
@@ -820,6 +826,9 @@ function renderStandaloneForm(testId = "") {
   for (const field of test.fields || []) {
     const group = groups[field.group] || groups.configuration;
     const fieldNode = createStandaloneField(field, test.values?.[field.name]);
+    if (field.name === "ros_setup") {
+      initializeRosSetupVersions(fieldNode.querySelector("[data-standalone-input]"), test.values?.ros_version || "2");
+    }
     group.fields.appendChild(fieldNode);
     if (field.type === "camera-list") {
       const cameraActions = fieldNode.querySelector(".camera-editor-header");
@@ -1931,6 +1940,7 @@ async function loadConfig() {
   $("rosLocalhostOnly").checked = truthy(config.ros_localhost_only);
   $("standaloneRosLocalhostOnly").checked = truthy(config.ros_localhost_only);
   $("rosSetup").value = config.ros_setup || "";
+  initializeRosSetupVersions($("rosSetup"), $("rosVersion").value);
   $("cameraSetup").value = config.camera_setup || "";
   $("mode").value = config.mode || "functional";
   state.activeMode = $("mode").value;
@@ -2136,48 +2146,104 @@ function renderPackageProgress(item, job) {
   }
 }
 
-async function packageRun(runId, button) {
-  if (packageJobs.get(runId)?.active) return;
-  const job = {active: true, progress: {status: "preparing"}};
-  packageJobs.set(runId, job);
-  const render = () => {
-    document.querySelectorAll(".run-item").forEach(item => {
-      if (item.dataset.runId === runId) renderPackageProgress(item, job);
-    });
-  };
-  button.disabled = true;
-  render();
-  let timer;
+const ACTIVE_PACKAGE_STATUSES = new Set(["preparing", "running", "finalizing"]);
+
+function renderPackageJob(runId, job) {
+  document.querySelectorAll(".run-item").forEach(item => {
+    if (item.dataset.runId === runId) renderPackageProgress(item, job);
+  });
+}
+
+function finishPackageJob(runId, job, progress) {
+  job.progress = progress;
+  job.active = false;
+  window.clearTimeout(job.timer);
+  if (!job.notified) {
+    job.notified = true;
+    if (progress.status === "completed") {
+      appendLogs([`[UI] ${progress.snapshot ? "运行中快照已打包（仅含已完成的失败窗口，共享日志保留已写入内容）" : "结果已打包"}: ${progress.archive || ""}`]);
+      if (progress.warning) appendLogs([`[UI] ${progress.warning}`]);
+    } else {
+      appendLogs([`[UI] package failed: ${progress.error || "打包状态丢失，请检查结果目录"}`]);
+    }
+  }
+  renderPackageJob(runId, job);
+}
+
+function trackPackageJob(runId, job) {
+  if (job.polling || !job.active) return;
+  job.polling = true;
   const poll = async () => {
+    if (packageJobs.get(runId) !== job || !job.active) {
+      job.polling = false;
+      return;
+    }
     try {
       const progress = await api(`/api/runs/${encodeURIComponent(runId)}/package-progress`);
-      if (job.active && ["preparing", "running", "finalizing"].includes(progress.status)) {
-        job.progress = progress;
-        render();
+      if (packageJobs.get(runId) === job && job.active) {
+        const terminal = !ACTIVE_PACKAGE_STATUSES.has(progress.status);
+        if (!job.postPending && progress.package_id && job.packageId && progress.package_id !== job.packageId) {
+          restorePackageJob(runId, progress);
+          job.polling = false;
+          return;
+        }
+        // While POST is pending, a terminal GET may describe the previous archive.
+        if ((!job.postPending || !terminal) && (!job.packageId || progress.package_id === job.packageId || progress.status === "idle")) {
+          job.packageId = progress.package_id;
+          if (terminal) {
+            finishPackageJob(runId, job, progress.status === "idle"
+              ? {status: "failed", error: "打包状态丢失，请检查结果目录或重新打包"} : progress);
+          } else {
+            job.progress = progress;
+            renderPackageJob(runId, job);
+          }
+        }
       }
     } catch (_) {
-      // The POST below remains authoritative for success or failure.
+      // Keep following an existing task through temporary network failures.
     }
-    if (job.active) timer = window.setTimeout(poll, 500);
+    if (job.active && packageJobs.get(runId) === job) job.timer = window.setTimeout(poll, 500);
+    else job.polling = false;
   };
+  job.timer = window.setTimeout(poll, 250);
+}
+
+function restorePackageJob(runId, progress) {
+  if (!progress || progress.status === "idle") return;
+  const existing = packageJobs.get(runId);
+  if (existing?.postPending) return;
+  if (existing && existing.packageId === progress.package_id) return;
+  if (existing) window.clearTimeout(existing.timer);
+  const active = ACTIVE_PACKAGE_STATUSES.has(progress.status);
+  const job = {active, progress, packageId: progress.package_id, notified: !active};
+  packageJobs.set(runId, job);
+  if (active) trackPackageJob(runId, job);
+}
+
+async function packageRun(runId, button) {
+  if (packageJobs.get(runId)?.active) return;
+  const job = {active: true, postPending: true, progress: {status: "preparing"}};
+  packageJobs.set(runId, job);
+  button.disabled = true;
+  renderPackageJob(runId, job);
+  trackPackageJob(runId, job);
   try {
-    const request = api(`/api/runs/${encodeURIComponent(runId)}/package`, {
+    const payload = await api(`/api/runs/${encodeURIComponent(runId)}/package`, {
       method: "POST",
       body: "{}",
     });
-    timer = window.setTimeout(poll, 250);
-    const payload = await request;
-    job.progress = {...job.progress, ...payload.progress, status: "completed"};
-    if (job.progress.total_bytes !== undefined) job.progress.processed_bytes = job.progress.total_bytes;
-    appendLogs([`[UI] ${payload.snapshot ? "运行中快照已打包（仅含已完成的失败窗口，共享日志保留已写入内容）" : "结果已打包"}: ${payload.archive}`]);
-    if (payload.warning) appendLogs([`[UI] ${payload.warning}`]);
+    job.packageId = payload.progress?.package_id;
+    finishPackageJob(runId, job, {...job.progress, ...payload.progress, ...payload, status: "completed"});
   } catch (error) {
-    job.progress = {...job.progress, status: "failed", error: error.message};
-    appendLogs([`[UI] package failed: ${error.message}`]);
+    if (error.payload?.code === "packaging_in_progress") {
+      job.packageId = error.payload.progress.package_id;
+      job.progress = error.payload.progress;
+      renderPackageJob(runId, job);
+    } else {
+      finishPackageJob(runId, job, {...job.progress, status: "failed", error: error.message});
+    }
   } finally {
-    job.active = false;
-    window.clearTimeout(timer);
-    render();
+    job.postPending = false;
   }
 }
 
@@ -2375,6 +2441,7 @@ async function loadRuns() {
     [...state.selectedRunIds].filter((runId) => availableRunIds.has(runId))
   );
   for (const run of runs) {
+    restorePackageJob(run.run_id, run.package_progress);
     list.appendChild(runItem(run));
   }
   if (!list.children.length) {
@@ -2730,7 +2797,7 @@ async function init() {
   });
   $("rosVersion").addEventListener("change", () => {
     const defaults = setupDefaultsForVersion($("rosVersion").value);
-    applyRosSetupDefault($("rosSetup"), defaults);
+    applyRosSetupDefault($("rosSetup"), defaults, $("rosVersion").value);
     $("cameraSetup").value = defaults.camera;
     updateRosVersionControls();
     loadLaunchFiles();

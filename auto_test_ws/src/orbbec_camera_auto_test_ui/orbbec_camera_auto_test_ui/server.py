@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import uuid
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -241,6 +242,7 @@ def list_runs() -> Dict[str, Any]:
                     runner_type == "standalone" and test_id in packageable_ids
                 ),
                 "status": _aggregate_status(run_dir, ui_status),
+                "package_progress": get_package_progress(run_dir.name),
                 "started_at": ui_status.get("started_at", ""),
                 "ended_at": ui_status.get("ended_at", ""),
                 "results_dir": str(run_dir),
@@ -334,13 +336,17 @@ def get_package_progress(run_id: str) -> Dict[str, Any]:
 def package_run_results(run_id: str) -> tuple[Dict[str, Any], HTTPStatus]:
     with PACKAGE_LOCK:
         if PACKAGE_PROGRESS.get(run_id, {}).get("status") in {"preparing", "running", "finalizing"}:
-            return {"error": "result packaging is already running"}, HTTPStatus.CONFLICT
-        PACKAGE_PROGRESS[run_id] = {"status": "preparing"}
+            return {
+                "error": "result packaging is already running",
+                "code": "packaging_in_progress",
+                "progress": dict(PACKAGE_PROGRESS[run_id]),
+            }, HTTPStatus.CONFLICT
+        PACKAGE_PROGRESS[run_id] = {"status": "preparing", "package_id": uuid.uuid4().hex}
     try:
         response, status = _package_run_results(run_id)
     except Exception as exc:
         with PACKAGE_LOCK:
-            PACKAGE_PROGRESS[run_id] = {"status": "failed", "error": str(exc)}
+            PACKAGE_PROGRESS[run_id] = {**PACKAGE_PROGRESS[run_id], "status": "failed", "error": str(exc)}
         raise
     with PACKAGE_LOCK:
         PACKAGE_PROGRESS[run_id] = {
@@ -393,6 +399,7 @@ def _package_run_results(run_id: str) -> tuple[Dict[str, Any], HTTPStatus]:
                 with PACKAGE_LOCK:
                     # Success is published only once the subprocess exits cleanly.
                     PACKAGE_PROGRESS[run_id] = {
+                        **PACKAGE_PROGRESS[run_id],
                         **progress,
                         "status": "finalizing" if progress["status"] == "completed" else progress["status"],
                     }

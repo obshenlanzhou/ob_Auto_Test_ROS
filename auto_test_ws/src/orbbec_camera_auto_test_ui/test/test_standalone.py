@@ -1182,13 +1182,21 @@ def test_package_progress_prevents_duplicate_work_and_reports_failure(monkeypatc
         duplicate, status = ui_server.package_run_results(run_id)
         assert status == 409
         assert "already running" in duplicate["error"]
+        assert duplicate["code"] == "packaging_in_progress"
+        assert duplicate["progress"] == ui_server.get_package_progress(run_id)
+        assert duplicate["progress"]["package_id"]
         return {"error": "disk full"}, 500
 
     monkeypatch.setattr(ui_server, "_package_run_results", package)
     assert ui_server.get_package_progress(run_id) == {"status": "idle"}
     _, status = ui_server.package_run_results(run_id)
     assert status == 500
-    assert ui_server.get_package_progress(run_id) == {"status": "failed", "error": "disk full"}
+    progress = ui_server.get_package_progress(run_id)
+    assert progress["status"] == "failed"
+    assert progress["error"] == "disk full"
+    previous_id = progress["package_id"]
+    ui_server.package_run_results(run_id)
+    assert ui_server.get_package_progress(run_id)["package_id"] != previous_id
 
 
 @pytest.mark.parametrize("test_id", [
@@ -1274,3 +1282,11 @@ def test_run_history_uses_live_status_before_final_status_file_exists(tmp_path, 
     assert payload["snapshot"] is True
     assert Path(payload["archive"]).is_file()
     assert job.status == "running"
+
+
+def test_run_history_exposes_existing_package_task_for_page_reload(tmp_path, monkeypatch):
+    (tmp_path / "run").mkdir()
+    progress = {"status": "running", "package_id": "task-1", "processed_bytes": 50, "total_bytes": 100}
+    monkeypatch.setattr(ui_server, "UI_RESULTS_ROOT", tmp_path)
+    monkeypatch.setattr(ui_server, "PACKAGE_PROGRESS", {"run": progress})
+    assert ui_server.list_runs()["runs"][0]["package_progress"] == progress
