@@ -59,7 +59,7 @@ standalone_test_scripts/
 
 ```bash
 python3 ./package_stress_results.py \
-  ./stream_toggle_stress_test/results/20260824_150213_stream_toggle_v1.9.7
+  ./stream_toggle_stress_test/results/20260824_150213_stream_toggle_v2.3.0
 ```
 
 默认在结果目录同级生成 `<结果目录名>.tar.gz`。指定输出路径：
