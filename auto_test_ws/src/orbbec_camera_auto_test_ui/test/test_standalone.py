@@ -301,6 +301,7 @@ def test_camera_fields_build_launch_style_specs(tmp_path):
         {
             "ros_version": "2",
             "run_count": "1",
+            "launch_file": "camera.launch.py",
             "cameras": [
                 {
                     "name": "camera_01",
@@ -326,6 +327,7 @@ def test_network_camera_defaults_device_port(tmp_path):
         manifest,
         {
             "run_count": "1",
+            "launch_file": "camera.launch.py",
             "cameras": [
                 {
                     "name": "camera_01",
@@ -350,6 +352,7 @@ def test_network_camera_preserves_explicit_device_port(tmp_path):
         manifest,
         {
             "run_count": "1",
+            "launch_file": "camera.launch.py",
             "cameras": [
                 {
                     "device-ip": "192.168.1.10",
@@ -399,10 +402,10 @@ def test_stream_toggle_manifest_requires_duration_or_run_count(tmp_path):
     assert values["run_count"] == ""
     assert "压测时间和压测次数至少填写一项" in errors
 
-    duration_args, _ = build_command(manifest, {"duration": "15m"}, tmp_path)
-    count_args, _ = build_command(manifest, {"run_count": "10"}, tmp_path)
+    duration_args, _ = build_command(manifest, {"launch_file": "camera.launch.py", "duration": "15m"}, tmp_path)
+    count_args, _ = build_command(manifest, {"launch_file": "camera.launch.py", "run_count": "10"}, tmp_path)
     both_args, _ = build_command(
-        manifest, {"duration": "1h", "run_count": "20"}, tmp_path
+        manifest, {"launch_file": "camera.launch.py", "duration": "1h", "run_count": "20"}, tmp_path
     )
 
     assert duration_args[duration_args.index("--duration") + 1] == "15m"
@@ -416,10 +419,10 @@ def test_stream_toggle_manifest_defaults_mode_by_ros_version(tmp_path):
     manifest = manifest_catalog(STANDALONE_ROOT)["stream_toggle_stress_test"]
 
     ros2_args, ros2_values = build_command(
-        manifest, {"ros_version": "2", "run_count": "1"}, tmp_path
+        manifest, {"ros_version": "2", "launch_file": "camera.launch.py", "run_count": "1"}, tmp_path
     )
     ros1_args, ros1_values = build_command(
-        manifest, {"ros_version": "1", "run_count": "1"}, tmp_path
+        manifest, {"ros_version": "1", "launch_file": "camera.launch", "run_count": "1"}, tmp_path
     )
 
     assert ros2_values["toggle_mode"] == "all"
@@ -1208,3 +1211,18 @@ def test_ui_packages_live_failure_snapshot_without_stopping_test(tmp_path, monke
     assert payload["archive"].endswith("_snapshot.tar.gz")
     assert ui_server.MANAGER.is_active_run(run_id)
     assert not (run_dir / "result.json").exists()
+
+
+def test_launch_file_is_required_before_building_stress_command(tmp_path):
+    import pytest
+
+    for test_id in ("launch_restart_stream_check", "stream_toggle_stress_test"):
+        manifest = manifest_catalog(STANDALONE_ROOT)[test_id]
+        for ros_version, launch_file in (("1", "camera.launch"), ("2", "camera.launch.py")):
+            for blank in ("", "   "):
+                with pytest.raises(ValueError, match="Launch 文件 is required"):
+                    build_command(manifest, {"ros_version": ros_version, "run_count": "1",
+                                             "launch_file": blank}, tmp_path)
+            args, _ = build_command(manifest, {"ros_version": ros_version, "run_count": "1",
+                                              "launch_file": launch_file}, tmp_path)
+            assert args[args.index("--launch-file") + 1] == launch_file
