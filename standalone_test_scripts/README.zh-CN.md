@@ -69,6 +69,8 @@ python3 ./package_stress_results.py /path/to/result \
   --output /path/to/camera_stress_result.tar.gz
 ```
 
+支持参数导入导出、固件升级、Launch 参数加载、Launch 重启出流检查、Preset 升级和开关流这 6 个独立压测脚本，均支持结束后打包和运行中失败快照；图像接收统计不支持此类轮次打包。Preset 按实际测试序号 `test_index` 选择前后各 2 次测试，与日志目录对应，不使用可能包含多个 Preset 的外层循环编号。运行中快照也兼容旧版 Preset 事件中的 `test_XXXX` 标识。Launch 参数加载同时兼容当前 `logs/test_XXXX` 和旧版 `test_XXXX` 日志目录。
+
 打包时若有失败轮次，会收集每个失败轮次及其前后各 2 个已完成轮次，重叠窗口合并去重；没有失败时保留最后 5 轮。
 
 UI 中运行中的独立压测也可以点击“打包”，生成单独的 `_snapshot.tar.gz`，测试继续运行。也可以在命令行生成运行中快照：

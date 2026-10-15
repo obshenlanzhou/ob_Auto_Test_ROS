@@ -73,6 +73,8 @@ python3 ./package_stress_results.py /path/to/result \
   --output /path/to/camera_stress_result.tar.gz
 ```
 
+Both completed-run archives and live failure snapshots support all six standalone stress scripts: export/load, firmware update, launch parameter load, launch restart, preset upgrade, and stream toggle. Image receive statistics is not a round-based packaging target. Preset windows use the actual `test_index` matching each log directory, not the outer loop that can contain multiple presets. Live snapshots also recognize `test_XXXX` identifiers in older preset events. Launch parameter packaging supports both the current `logs/test_XXXX` directory and the legacy `test_XXXX` layout.
+
 When failures exist, packaging includes each failed round and up to two completed rounds before and after it, merging overlapping windows. Runs without failures retain the last five rounds.
 
 While a standalone stress test is running, the UI package button creates a separate `_snapshot.tar.gz` without stopping the test. The equivalent CLI command is:

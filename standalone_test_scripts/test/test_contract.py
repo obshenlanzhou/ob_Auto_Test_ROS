@@ -2357,3 +2357,64 @@ def test_launch_param_warning_does_not_bypass_readiness_or_process_check(tmp_pat
     log.write_text("[WARN] warning\nInitialize device cost: 100 ms\n")
     with pytest.raises(RuntimeError, match="child exited abnormally"):
         module.wait_for_launch_start(session, 1, emit=lambda _: None)
+
+
+@pytest.mark.parametrize("legacy_events", [False, True])
+def test_preset_snapshot_uses_test_indices_across_multiple_presets(tmp_path, legacy_events):
+    preset = load_script(SCRIPTS["preset_upgrade"])
+    packager = load_script(ROOT / "package_stress_results.py")
+    events = preset.EventWriter(tmp_path / "events.jsonl")
+    logger = lambda message, **fields: events.emit(fields.pop("event"), message, **fields)
+    for index in range(1, 13):
+        # Three different presets in each outer loop: current repeats.
+        outer_round = (index - 1) // 3 + 1
+        identity = {} if legacy_events else {"test_index": index}
+        events.emit("progress", f"test_{index:04d}: upgrade preset for camera",
+                    current=outer_round, phase="updating", **identity)
+        log_dir = tmp_path / "logs" / f"test_{index:04d}" / "camera" / "sdk"
+        log_dir.mkdir(parents=True)
+        (log_dir / "camera.log").write_text(f"test {index}")
+        if index < 12:
+            preset.emit_cycle_outcome(
+                logger, f"test_{index:04d}: outcome", current=outer_round, total=4,
+                status="failed" if index in {4, 8} else "passed", **identity,
+            )
+    archive_path = packager.package_results(tmp_path, snapshot=True,
+                                            test_id="preset_upgrade_stress_test")
+    import tarfile
+    with tarfile.open(archive_path) as archive:
+        metadata = json.load(archive.extractfile(f"{tmp_path.name}/packaging_snapshot.json"))
+        assert metadata["failed_rounds"] == [4, 8]
+        assert metadata["selected_rounds"] == list(range(2, 11))
+        selected = {int(Path(name).parts[-4].removeprefix("test_"))
+                    for name in archive.getnames() if name.endswith("/sdk/camera.log")}
+        assert selected == set(range(2, 11))
+
+
+@pytest.mark.parametrize("snapshot", [False, True])
+def test_launch_param_package_includes_current_sdk_log_directory(tmp_path, snapshot):
+    launch = load_script(SCRIPTS["launch_param_load"])
+    packager = load_script(ROOT / "package_stress_results.py")
+    events = launch.EventWriter(tmp_path / "events.jsonl")
+    logger = lambda message, **fields: events.emit(fields.pop("event"), message, **fields)
+    rounds = []
+    for index in range(1, 9):
+        log_dir = launch.run_log_directory(tmp_path, index) / "sdk"
+        log_dir.mkdir(parents=True)
+        (log_dir / "camera.log").write_text(f"test {index}")
+        status = "failed" if index == 4 else "passed"
+        launch.emit_cycle_outcome(logger, f"run {index}: {status}", current=index,
+                                  total=10, status=status)
+        rounds.append({"run": index, "status": status})
+    if not snapshot:
+        (tmp_path / "result.json").write_text(json.dumps({
+            "test_id": "launch_param_load_stress", "status": "failed",
+            "details": {"runs": rounds},
+        }))
+    output = packager.package_results(tmp_path, snapshot=snapshot,
+                                     test_id="launch_param_load_stress")
+    import tarfile
+    with tarfile.open(output) as archive:
+        selected = {int(Path(name).parts[-3].removeprefix("test_"))
+                    for name in archive.getnames() if name.endswith("/sdk/camera.log")}
+        assert selected == {2, 3, 4, 5, 6}

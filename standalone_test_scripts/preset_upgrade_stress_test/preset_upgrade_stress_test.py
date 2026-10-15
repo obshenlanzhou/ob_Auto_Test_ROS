@@ -290,6 +290,7 @@ def emit_cycle_outcome(
     current: int,
     total: Optional[int],
     status: str,
+    test_index: Optional[int] = None,
 ) -> None:
     """Emit one terminal event for a completed or failed preset test."""
     if status not in {"passed", "failed"}:
@@ -301,6 +302,7 @@ def emit_cycle_outcome(
         current=current,
         total=total,
         phase="completed-cycle" if status == "passed" else "failed-cycle",
+        **({"test_index": test_index} if test_index is not None else {}),
     )
 
 
@@ -1558,6 +1560,7 @@ def run(args) -> int:
                             f"{test_name}: upgrade {preset.name} for {camera.name}",
                             event="progress",
                             current=round_index,
+                            test_index=test_index,
                             total=run_count,
                             phase="updating",
                         )
@@ -1603,6 +1606,7 @@ def run(args) -> int:
                                     emit,
                                     f"{test_name}: {message}; continuing with next preset",
                                     current=round_index,
+                                    test_index=test_index,
                                     total=run_count,
                                     status="failed",
                                 )
@@ -1702,6 +1706,7 @@ def run(args) -> int:
                                     f"{test_name}: {failure_message}; continuing with "
                                     "next preset after cleanup",
                                     current=round_index,
+                                    test_index=test_index,
                                     total=run_count,
                                     status="failed",
                                 )
@@ -1929,6 +1934,7 @@ def run(args) -> int:
                                 f"{test_name}: {sensor_message}; continuing with next "
                                 "preset after cleanup",
                                 current=round_index,
+                                test_index=test_index,
                                 total=run_count,
                                 status="failed",
                             )
@@ -1950,6 +1956,7 @@ def run(args) -> int:
                         emit,
                         f"{test_name}: passed, preset={preset.name}",
                         current=round_index,
+                        test_index=test_index,
                         total=run_count,
                         status="passed",
                     )
@@ -1987,6 +1994,7 @@ def run(args) -> int:
                     emit,
                     f"test_{test_index:04d}: failed",
                     current=round_index,
+                    test_index=test_index,
                     total=run_count,
                     status="failed",
                 )

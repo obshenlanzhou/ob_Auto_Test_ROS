@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import tarfile
 import tempfile
@@ -34,7 +35,7 @@ TEST_SPECS = {
         "tests", "test_index", ("logs/test_{:04d}",)
     ),
     "launch_param_load_stress": TestSpec(
-        "runs", "run", ("test_{:04d}", "images/test_{:04d}")
+        "runs", "run", ("logs/test_{:04d}", "test_{:04d}", "images/test_{:04d}")
     ),
     "launch_restart_stream_check": TestSpec(
         "attempts", "attempt", ("logs/test_{:04d}", "images/test_{:04d}")
@@ -185,7 +186,17 @@ def _snapshot_details(root: Path, test_id: str, destination: Path):
             target.write(line)
             if not isinstance(event, dict):
                 continue
-            round_id = _round_id(event, "current")
+            if test_id == "preset_upgrade_stress_test":
+                # current is the outer preset loop, not the test_XXXX log ID.
+                round_id = _round_id(event, "test_index")
+                if round_id is None:
+                    # Existing running scripts predate the structured test ID.
+                    match = re.match(r"^test_(\d+):", str(event.get("message", "")))
+                    round_id = int(match.group(1)) if match else None
+                if round_id is None and event.get("phase") in {"completed-cycle", "failed-cycle"}:
+                    raise PackagingError("Preset 事件缺少测试序号，无法确定对应日志目录")
+            else:
+                round_id = _round_id(event, "current")
             if round_id is None:
                 continue
             highest_round = max(highest_round, round_id)

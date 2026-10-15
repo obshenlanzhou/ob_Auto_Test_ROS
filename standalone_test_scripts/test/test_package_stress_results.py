@@ -282,9 +282,9 @@ def test_packages_failure_windows_instead_of_only_tail(tmp_path, test_id):
 
 
 def write_events(root, completed=18, failure=10, active=19):
-    events = [{"current": number, "phase": "failed-cycle" if number == failure else "completed-cycle"}
+    events = [{"current": number, "test_index": number, "phase": "failed-cycle" if number == failure else "completed-cycle"}
               for number in range(1, completed + 1)]
-    events.append({"current": active, "phase": "running"})
+    events.append({"current": active, "test_index": active, "phase": "running"})
     write_file(root / "events.jsonl", "".join(json.dumps(event) + "\n" for event in events))
 
 

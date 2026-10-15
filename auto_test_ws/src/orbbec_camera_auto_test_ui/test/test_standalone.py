@@ -6,6 +6,8 @@ import signal
 import subprocess
 import sys
 
+import pytest
+
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 REPOSITORY_ROOT = Path(__file__).resolve().parents[4]
@@ -1189,17 +1191,21 @@ def test_package_progress_prevents_duplicate_work_and_reports_failure(monkeypatc
     assert ui_server.get_package_progress(run_id) == {"status": "failed", "error": "disk full"}
 
 
-def test_ui_packages_live_failure_snapshot_without_stopping_test(tmp_path, monkeypatch):
+@pytest.mark.parametrize("test_id", [
+    "export_load_stress_test", "firmware_update_stress_test", "launch_param_load_stress",
+    "launch_restart_stream_check", "preset_upgrade_stress_test", "stream_toggle_stress_test",
+])
+def test_ui_packages_live_failure_snapshot_without_stopping_test(tmp_path, monkeypatch, test_id):
     run_id = "live-failure"
     run_dir = tmp_path / run_id
     run_dir.mkdir()
     (run_dir / "ui_status.json").write_text(json.dumps({
-        "runner_type": "standalone", "test_id": "firmware_update_stress_test", "status": "running",
+        "runner_type": "standalone", "test_id": test_id, "status": "running",
     }))
     (run_dir / "events.jsonl").write_text(
-        '{"current": 1, "phase": "failed-cycle"}\n'
-        '{"current": 2, "phase": "completed-cycle"}\n'
-        '{"current": 3, "phase": "updating"}\n'
+        '{"current": 1, "test_index": 1, "phase": "failed-cycle"}\n'
+        '{"current": 2, "test_index": 2, "phase": "completed-cycle"}\n'
+        '{"current": 3, "test_index": 3, "phase": "updating"}\n'
     )
     monkeypatch.setattr(ui_server, "UI_RESULTS_ROOT", tmp_path)
     monkeypatch.setattr(ui_server.MANAGER, "is_active_run", lambda _: True)
