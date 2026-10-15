@@ -2764,3 +2764,17 @@ button.ghost {
 #runResultMessage {
   white-space: pre-line;
 }
+
+.package-progress {
+  grid-column: 2 / -1;
+  min-width: 0;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.package-progress progress {
+  display: block;
+  width: 100%;
+  height: 10px;
+  margin-bottom: 6px;
+  accent-color: var(--accent, #168cbe);
+}

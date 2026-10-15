@@ -159,6 +159,9 @@ def test_ui_packages_standalone_result_and_opens_run_directory(tmp_path, monkeyp
     assert payload["directory"] == str(run_dir)
     assert payload["opened"] is True
     assert opened == [run_dir]
+    progress = ui_server.get_package_progress(run_id)
+    assert progress["status"] == "completed"
+    assert progress["processed_bytes"] == progress["total_bytes"] > 0
 
 
 def test_ui_rejects_packaging_for_image_receive_stats(tmp_path, monkeypatch):
@@ -298,6 +301,7 @@ def test_camera_fields_build_launch_style_specs(tmp_path):
         {
             "ros_version": "2",
             "run_count": "1",
+            "launch_file": "camera.launch.py",
             "cameras": [
                 {
                     "name": "camera_01",
@@ -323,6 +327,7 @@ def test_network_camera_defaults_device_port(tmp_path):
         manifest,
         {
             "run_count": "1",
+            "launch_file": "camera.launch.py",
             "cameras": [
                 {
                     "name": "camera_01",
@@ -347,6 +352,7 @@ def test_network_camera_preserves_explicit_device_port(tmp_path):
         manifest,
         {
             "run_count": "1",
+            "launch_file": "camera.launch.py",
             "cameras": [
                 {
                     "device-ip": "192.168.1.10",
@@ -396,10 +402,10 @@ def test_stream_toggle_manifest_requires_duration_or_run_count(tmp_path):
     assert values["run_count"] == ""
     assert "压测时间和压测次数至少填写一项" in errors
 
-    duration_args, _ = build_command(manifest, {"duration": "15m"}, tmp_path)
-    count_args, _ = build_command(manifest, {"run_count": "10"}, tmp_path)
+    duration_args, _ = build_command(manifest, {"launch_file": "camera.launch.py", "duration": "15m"}, tmp_path)
+    count_args, _ = build_command(manifest, {"launch_file": "camera.launch.py", "run_count": "10"}, tmp_path)
     both_args, _ = build_command(
-        manifest, {"duration": "1h", "run_count": "20"}, tmp_path
+        manifest, {"launch_file": "camera.launch.py", "duration": "1h", "run_count": "20"}, tmp_path
     )
 
     assert duration_args[duration_args.index("--duration") + 1] == "15m"
@@ -413,10 +419,10 @@ def test_stream_toggle_manifest_defaults_mode_by_ros_version(tmp_path):
     manifest = manifest_catalog(STANDALONE_ROOT)["stream_toggle_stress_test"]
 
     ros2_args, ros2_values = build_command(
-        manifest, {"ros_version": "2", "run_count": "1"}, tmp_path
+        manifest, {"ros_version": "2", "launch_file": "camera.launch.py", "run_count": "1"}, tmp_path
     )
     ros1_args, ros1_values = build_command(
-        manifest, {"ros_version": "1", "run_count": "1"}, tmp_path
+        manifest, {"ros_version": "1", "launch_file": "camera.launch", "run_count": "1"}, tmp_path
     )
 
     assert ros2_values["toggle_mode"] == "all"
@@ -1163,3 +1169,102 @@ def test_dynamic_fields_use_direct_placeholders_without_example_prefix():
     assert '"serial-number": "CV2R1610002F"' in script
     assert '"device-ip": "192.168.1.10"' in script
     assert "例如：" not in script
+
+
+def test_package_progress_prevents_duplicate_work_and_reports_failure(monkeypatch):
+    run_id = "progress-test"
+    monkeypatch.setattr(ui_server, "PACKAGE_PROGRESS", {})
+
+    def package(_run_id):
+        assert ui_server.get_package_progress(run_id)["status"] == "preparing"
+        duplicate, status = ui_server.package_run_results(run_id)
+        assert status == 409
+        assert "already running" in duplicate["error"]
+        return {"error": "disk full"}, 500
+
+    monkeypatch.setattr(ui_server, "_package_run_results", package)
+    assert ui_server.get_package_progress(run_id) == {"status": "idle"}
+    _, status = ui_server.package_run_results(run_id)
+    assert status == 500
+    assert ui_server.get_package_progress(run_id) == {"status": "failed", "error": "disk full"}
+
+
+def test_ui_packages_live_failure_snapshot_without_stopping_test(tmp_path, monkeypatch):
+    run_id = "live-failure"
+    run_dir = tmp_path / run_id
+    run_dir.mkdir()
+    (run_dir / "ui_status.json").write_text(json.dumps({
+        "runner_type": "standalone", "test_id": "firmware_update_stress_test", "status": "running",
+    }))
+    (run_dir / "events.jsonl").write_text(
+        '{"current": 1, "phase": "failed-cycle"}\n'
+        '{"current": 2, "phase": "completed-cycle"}\n'
+        '{"current": 3, "phase": "updating"}\n'
+    )
+    monkeypatch.setattr(ui_server, "UI_RESULTS_ROOT", tmp_path)
+    monkeypatch.setattr(ui_server.MANAGER, "is_active_run", lambda _: True)
+    monkeypatch.setattr(ui_server, "_open_directory", lambda _: True)
+    payload, status = ui_server.package_run_results(run_id)
+    assert status == 200
+    assert payload["snapshot"] is True
+    assert Path(payload["archive"]).is_file()
+    assert payload["archive"].endswith("_snapshot.tar.gz")
+    assert ui_server.MANAGER.is_active_run(run_id)
+    assert not (run_dir / "result.json").exists()
+
+
+def test_launch_file_is_required_before_building_stress_command(tmp_path):
+    import pytest
+
+    for test_id in ("launch_restart_stream_check", "stream_toggle_stress_test"):
+        manifest = manifest_catalog(STANDALONE_ROOT)[test_id]
+        for ros_version, launch_file in (("1", "camera.launch"), ("2", "camera.launch.py")):
+            for blank in ("", "   "):
+                with pytest.raises(ValueError, match="Launch 文件 is required"):
+                    build_command(manifest, {"ros_version": ros_version, "run_count": "1",
+                                             "launch_file": blank}, tmp_path)
+            args, _ = build_command(manifest, {"ros_version": ros_version, "run_count": "1",
+                                              "launch_file": launch_file}, tmp_path)
+            assert args[args.index("--launch-file") + 1] == launch_file
+
+
+def test_run_history_uses_live_status_before_final_status_file_exists(tmp_path, monkeypatch):
+    run_id = "live-launch-restart"
+    root = tmp_path / run_id
+    root.mkdir()
+    (root / "ui_request.json").write_text(json.dumps({
+        "runner_type": "standalone", "test_id": "launch_restart_stream_check",
+        "mode": "standalone:launch_restart_stream_check",
+    }))
+    manager = RunManager()
+    job = _TestJob(
+        run_id=run_id, mode="standalone:launch_restart_stream_check", run_root=root,
+        command_lines=[], shell="bash", runner_type="standalone",
+        test_id="launch_restart_stream_check",
+    )
+    manager._current = job
+    monkeypatch.setattr(ui_server, "MANAGER", manager)
+    monkeypatch.setattr(ui_server, "UI_RESULTS_ROOT", tmp_path)
+    for status in ("starting", "running", "stopping", "failed"):
+        job.status = status
+        run = ui_server.list_runs()["runs"][0]
+        assert run["status"] == status
+        assert run["started_at"] == job.started_at
+        assert run["package_supported"] is True
+    assert not (root / "ui_status.json").exists()
+
+    # Even a stale on-disk status must not hide the live state.
+    (root / "ui_status.json").write_text(json.dumps({"status": "unknown"}))
+    job.status = "running"
+    assert ui_server.list_runs()["runs"][0]["status"] == "running"
+    (root / "events.jsonl").write_text(
+        '{"current": 1, "phase": "failed-cycle"}\n'
+        '{"current": 2, "phase": "completed-cycle"}\n'
+        '{"current": 3, "phase": "launching"}\n'
+    )
+    monkeypatch.setattr(ui_server, "_open_directory", lambda _: True)
+    payload, status = ui_server.package_run_results(run_id)
+    assert status == 200
+    assert payload["snapshot"] is True
+    assert Path(payload["archive"]).is_file()
+    assert job.status == "running"

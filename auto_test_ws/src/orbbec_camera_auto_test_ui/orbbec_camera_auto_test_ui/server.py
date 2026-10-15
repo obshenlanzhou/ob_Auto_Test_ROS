@@ -7,6 +7,7 @@ import signal
 import shutil
 import subprocess
 import sys
+import threading
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -27,6 +28,7 @@ from .run_manager import (
     read_json,
     save_config,
     setup_defaults,
+    _saved_or_detected_ros_setup,
 )
 from .standalone import (
     default_values,
@@ -37,6 +39,8 @@ from .standalone import (
 
 
 MANAGER = RunManager()
+PACKAGE_PROGRESS: Dict[str, Dict[str, Any]] = {}
+PACKAGE_LOCK = threading.Lock()
 UI_PACKAGE_DIR = Path(__file__).resolve().parent
 RUNTIME_CONFIG: Dict[str, Any] = load_config()
 
@@ -138,6 +142,8 @@ def list_standalone_tests() -> Dict[str, Any]:
         }
         if not saved_ros_setup or saved_ros_setup in known_ros_setups:
             values["ros_setup"] = selected_defaults["ros_setup"]
+        else:
+            values["ros_setup"] = _saved_or_detected_ros_setup(saved_ros_setup, ros_version)
         if not str(saved_values.get("driver_setup") or "").strip():
             values["driver_setup"] = selected_defaults["driver_setup"]
         launch_file = str(values.get("launch_file") or "").strip()
@@ -212,11 +218,14 @@ def _aggregate_status(run_dir: Path, ui_status: Dict[str, Any]) -> str:
 def list_runs() -> Dict[str, Any]:
     ensure_dir(UI_RESULTS_ROOT)
     packageable_ids = packageable_test_ids(STANDALONE_ROOT)
+    current_run = MANAGER.current_run_info()
     runs = []
     for run_dir in sorted(UI_RESULTS_ROOT.iterdir(), reverse=True):
         if not run_dir.is_dir():
             continue
         ui_status = read_json(run_dir / "ui_status.json", {})
+        if run_dir.name == current_run.get("run_id"):
+            ui_status = {**ui_status, **current_run}
         request = read_json(run_dir / "ui_request.json", {})
         runner_type = ui_status.get("runner_type") or request.get(
             "runner_type", "framework"
@@ -317,13 +326,37 @@ def open_run_directory(run_id: str) -> tuple[Dict[str, Any], HTTPStatus]:
     return {"directory": str(run_dir), "opened": True}, HTTPStatus.OK
 
 
+def get_package_progress(run_id: str) -> Dict[str, Any]:
+    with PACKAGE_LOCK:
+        return dict(PACKAGE_PROGRESS.get(run_id, {"status": "idle"}))
+
+
 def package_run_results(run_id: str) -> tuple[Dict[str, Any], HTTPStatus]:
+    with PACKAGE_LOCK:
+        if PACKAGE_PROGRESS.get(run_id, {}).get("status") in {"preparing", "running", "finalizing"}:
+            return {"error": "result packaging is already running"}, HTTPStatus.CONFLICT
+        PACKAGE_PROGRESS[run_id] = {"status": "preparing"}
+    try:
+        response, status = _package_run_results(run_id)
+    except Exception as exc:
+        with PACKAGE_LOCK:
+            PACKAGE_PROGRESS[run_id] = {"status": "failed", "error": str(exc)}
+        raise
+    with PACKAGE_LOCK:
+        PACKAGE_PROGRESS[run_id] = {
+            **PACKAGE_PROGRESS[run_id],
+            "status": "completed" if status == HTTPStatus.OK else "failed",
+            **response,
+        }
+    return response, status
+
+
+def _package_run_results(run_id: str) -> tuple[Dict[str, Any], HTTPStatus]:
     run_dir = (UI_RESULTS_ROOT / run_id).resolve()
     root = UI_RESULTS_ROOT.resolve()
     if run_dir == root or root not in [run_dir, *run_dir.parents] or not run_dir.is_dir():
         raise FileNotFoundError(run_id)
-    if MANAGER.is_active_run(run_id):
-        return {"error": "cannot package a running test"}, HTTPStatus.CONFLICT
+    snapshot = MANAGER.is_active_run(run_id)
 
     ui_status = read_json(run_dir / "ui_status.json", {})
     ui_request = read_json(run_dir / "ui_request.json", {})
@@ -337,20 +370,40 @@ def package_run_results(run_id: str) -> tuple[Dict[str, Any], HTTPStatus]:
         }, HTTPStatus.BAD_REQUEST
 
     script = STANDALONE_ROOT / "package_stress_results.py"
-    archive = run_dir / f"{run_dir.name}.tar.gz"
-    completed = subprocess.run(
-        [sys.executable, str(script), str(run_dir), "--output", str(archive)],
-        capture_output=True,
+    suffix = "_snapshot.tar.gz" if snapshot else ".tar.gz"
+    archive = run_dir / f"{run_dir.name}{suffix}"
+    command = [sys.executable, str(script), str(run_dir), "--output", str(archive), "--progress-json"]
+    if snapshot:
+        command.extend(["--snapshot", "--test-id", test_id])
+    errors = []
+    with subprocess.Popen(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
         text=True,
-        timeout=300,
-        check=False,
-    )
-    if completed.returncode != 0:
-        message = completed.stderr.strip() or completed.stdout.strip() or "packaging failed"
-        return {"error": message}, HTTPStatus.INTERNAL_SERVER_ERROR
+    ) as process:
+        for line in process.stdout:
+            try:
+                progress = json.loads(line)
+            except json.JSONDecodeError:
+                errors.append(line.strip())
+                errors = errors[-20:]
+                continue
+            if isinstance(progress, dict) and "processed_bytes" in progress:
+                with PACKAGE_LOCK:
+                    # Success is published only once the subprocess exits cleanly.
+                    PACKAGE_PROGRESS[run_id] = {
+                        **progress,
+                        "status": "finalizing" if progress["status"] == "completed" else progress["status"],
+                    }
+        returncode = process.wait()
+    if returncode != 0:
+        return {"error": "\n".join(errors) or "packaging failed"}, HTTPStatus.INTERNAL_SERVER_ERROR
 
     response: Dict[str, Any] = {
         "archive": str(archive),
+        "snapshot": snapshot,
+        "progress": get_package_progress(run_id),
         "directory": str(run_dir),
         "opened": False,
     }
@@ -444,6 +497,9 @@ class UiHandler(BaseHTTPRequestHandler):
                 self._send_json(MANAGER.current_snapshot(log_offset=offset))
             elif path == "/api/runs":
                 self._send_json(list_runs())
+            elif path.startswith("/api/runs/") and path.endswith("/package-progress"):
+                run_id = unquote(path.removeprefix("/api/runs/").removesuffix("/package-progress"))
+                self._send_json(get_package_progress(run_id))
             elif path.startswith("/api/runs/"):
                 run_id = unquote(path.removeprefix("/api/runs/"))
                 self._send_json(get_run(run_id))

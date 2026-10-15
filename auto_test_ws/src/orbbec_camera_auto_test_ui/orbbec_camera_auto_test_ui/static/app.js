@@ -600,7 +600,9 @@ function createStandaloneField(field, value) {
     if (field.min !== undefined) control.min = String(field.min);
     if (field.max !== undefined) control.max = String(field.max);
     control.value = String(value ?? "");
-    if (field.placeholder) {
+    if (field.name === "ros_setup") {
+      control.placeholder = "自动识别 ROS 环境；未识别时请填写 setup.bash 路径";
+    } else if (field.placeholder) {
       control.placeholder = field.placeholder;
     } else if (field.type === "duration") {
       control.placeholder = "300 / 15m / 2h";
@@ -713,10 +715,19 @@ function setupDefaultsForVersion(rosVersion) {
   const fallback = DEFAULT_SETUPS[rosVersion] || DEFAULT_SETUPS["2"];
   const configured = state.setupDefaults?.[rosVersion] || {};
   return {
-    ros: configured.ros_setup || fallback.ros,
+    ros: configured.ros_setup ?? fallback.ros,
     camera: configured.driver_setup || fallback.camera,
     cameraPlaceholder: fallback.cameraPlaceholder,
   };
+}
+
+function applyRosSetupDefault(control, defaults) {
+  const known = [
+    ...Object.values(DEFAULT_SETUPS).map(item => item.ros),
+    ...Object.values(state.setupDefaults || {}).map(item => item.ros_setup),
+  ];
+  if (!control.value.trim() || known.includes(control.value.trim())) control.value = defaults.ros;
+  control.placeholder = defaults.ros || "未识别到唯一 ROS 环境，请填写 setup.bash 路径";
 }
 
 function launchFileForRosVersion(launchFile, rosVersion) {
@@ -742,8 +753,7 @@ function updateStandaloneRosVersion(rosVersion) {
     '[data-standalone-input="launch_file"]'
   );
   if (rosSetup) {
-    rosSetup.value = defaults.ros;
-    rosSetup.placeholder = defaults.ros;
+    applyRosSetupDefault(rosSetup, defaults);
   }
   if (driverSetup) {
     driverSetup.value = defaults.camera;
@@ -1034,7 +1044,7 @@ function validateStandaloneForm() {
         ? control.checked
         : control.value.trim();
     const empty = value === "" || value === false || (Array.isArray(value) && !value.length);
-    if (field.required && empty) {
+    if ((field.required || field.name === "ros_setup") && empty) {
       errors.push(validationIssue(control, `${label}为必填项`));
       continue;
     }
@@ -1805,7 +1815,7 @@ function updateSpecialConfigControls() {
 
 function updateRosVersionControls({ fillBlank = false } = {}) {
   const defaults = setupDefaultsForVersion($("rosVersion").value);
-  $("rosSetup").placeholder = defaults.ros;
+  $("rosSetup").placeholder = defaults.ros || "未识别到唯一 ROS 环境，请填写 setup.bash 路径";
   $("cameraSetup").placeholder = defaults.cameraPlaceholder || defaults.camera;
   const domainEnabled = $("rosVersion").value === "2";
   $("rosDomainId").disabled = !domainEnabled;
@@ -1981,8 +1991,10 @@ async function pollStatus() {
     appendLogs(payload.logs || []);
     state.logOffset = payload.log_offset || state.logOffset;
     await updateResultSummary(payload);
-    if (TERMINAL_RUN_STATUSES.has(payload.status)) {
+    const historyRunKey = `${payload.run_id || ""}:${payload.status || "idle"}`;
+    if (historyRunKey !== state.historyRunKey || TERMINAL_RUN_STATUSES.has(payload.status)) {
       await loadRuns();
+      state.historyRunKey = historyRunKey;
     }
   } catch (error) {
     appendLogs([`[UI] status poll failed: ${error.message}`]);
@@ -2088,26 +2100,84 @@ async function stopRun() {
   }
 }
 
+const packageJobs = new Map();
+
+function packageSize(bytes) {
+  const value = Math.max(0, Number(bytes) || 0);
+  if (value >= 1024 ** 3) return `${(value / 1024 ** 3).toFixed(2)} GB`;
+  if (value >= 1024 ** 2) return `${(value / 1024 ** 2).toFixed(1)} MB`;
+  return `${(value / 1024).toFixed(1)} KB`;
+}
+
+function renderPackageProgress(item, job) {
+  let panel = item.querySelector(".package-progress");
+  if (!panel) {
+    panel = document.createElement("div");
+    panel.className = "package-progress";
+    const bar = document.createElement("progress");
+    bar.max = 100;
+    bar.setAttribute("aria-label", "结果打包进度");
+    const label = document.createElement("div");
+    label.setAttribute("role", "status");
+    panel.append(bar, label);
+    item.append(panel);
+  }
+  const [bar, label] = panel.children;
+  const p = job.progress;
+  const percent = p.status === "completed" ? 100 : Math.min(99, Math.floor(100 * (p.processed_bytes || 0) / (p.total_bytes || 1)));
+  if (["preparing", "idle"].includes(p.status)) bar.removeAttribute("value");
+  else bar.value = percent;
+  const stages = {preparing: "正在准备打包…", idle: "正在准备打包…", finalizing: "正在完成压缩包…", completed: "打包完成 100%", failed: "打包失败"};
+  label.textContent = `${stages[p.status] || `正在打包 ${percent}%`}${p.total_bytes !== undefined ? ` · ${packageSize(p.processed_bytes)} / ${packageSize(p.total_bytes)}` : ""}${p.current_file ? ` · ${p.current_file}` : ""}${p.error ? ` · ${p.error}` : ""}`;
+  const button = item.querySelector(".package-button");
+  if (button) {
+    button.disabled = job.active;
+    button.textContent = job.active ? "打包中…" : "打包";
+  }
+}
+
 async function packageRun(runId, button) {
-  const originalText = button.textContent;
+  if (packageJobs.get(runId)?.active) return;
+  const job = {active: true, progress: {status: "preparing"}};
+  packageJobs.set(runId, job);
+  const render = () => {
+    document.querySelectorAll(".run-item").forEach(item => {
+      if (item.dataset.runId === runId) renderPackageProgress(item, job);
+    });
+  };
   button.disabled = true;
-  button.textContent = "打包中…";
+  render();
+  let timer;
+  const poll = async () => {
+    try {
+      const progress = await api(`/api/runs/${encodeURIComponent(runId)}/package-progress`);
+      if (job.active && ["preparing", "running", "finalizing"].includes(progress.status)) {
+        job.progress = progress;
+        render();
+      }
+    } catch (_) {
+      // The POST below remains authoritative for success or failure.
+    }
+    if (job.active) timer = window.setTimeout(poll, 500);
+  };
   try {
-    const payload = await api(`/api/runs/${encodeURIComponent(runId)}/package`, {
+    const request = api(`/api/runs/${encodeURIComponent(runId)}/package`, {
       method: "POST",
       body: "{}",
     });
-    button.textContent = "已打包";
-    appendLogs([`[UI] 结果已打包: ${payload.archive}`]);
+    timer = window.setTimeout(poll, 250);
+    const payload = await request;
+    job.progress = {...job.progress, ...payload.progress, status: "completed"};
+    if (job.progress.total_bytes !== undefined) job.progress.processed_bytes = job.progress.total_bytes;
+    appendLogs([`[UI] ${payload.snapshot ? "运行中快照已打包（仅含已完成的失败窗口，共享日志保留已写入内容）" : "结果已打包"}: ${payload.archive}`]);
     if (payload.warning) appendLogs([`[UI] ${payload.warning}`]);
   } catch (error) {
-    button.textContent = "打包失败";
+    job.progress = {...job.progress, status: "failed", error: error.message};
     appendLogs([`[UI] package failed: ${error.message}`]);
   } finally {
-    window.setTimeout(() => {
-      button.textContent = originalText;
-      button.disabled = false;
-    }, 1500);
+    job.active = false;
+    window.clearTimeout(timer);
+    render();
   }
 }
 
@@ -2266,11 +2336,11 @@ function runItem(run) {
 
   const packageButton = document.createElement("button");
   packageButton.type = "button";
-  packageButton.className = "ghost";
+  packageButton.className = "ghost package-button";
   packageButton.textContent = "打包";
-  packageButton.title = "打包最后五轮结果并打开实际目录";
-  packageButton.disabled = !TERMINAL_RUN_STATUSES.has(run.status);
-  if (packageButton.disabled) packageButton.title = "测试结束后才能打包";
+  packageButton.title = "打包失败轮次及前后各两轮；运行中仅收集已完成轮次，共享日志保留快照";
+  packageButton.disabled = !TERMINAL_RUN_STATUSES.has(run.status) && !ACTIVE_RUN_STATUSES.has(run.status);
+  if (packageButton.disabled) packageButton.title = "当前任务状态不支持打包";
   packageButton.addEventListener("click", () => packageRun(run.run_id, packageButton));
 
   const deleteButton = document.createElement("button");
@@ -2287,6 +2357,7 @@ function runItem(run) {
   if (run.package_supported) actions.append(packageButton);
   actions.append(deleteButton);
   item.append(checkbox, title, actions, subtitle);
+  if (packageJobs.has(run.run_id)) renderPackageProgress(item, packageJobs.get(run.run_id));
   return item;
 }
 
@@ -2659,7 +2730,7 @@ async function init() {
   });
   $("rosVersion").addEventListener("change", () => {
     const defaults = setupDefaultsForVersion($("rosVersion").value);
-    $("rosSetup").value = defaults.ros;
+    applyRosSetupDefault($("rosSetup"), defaults);
     $("cameraSetup").value = defaults.camera;
     updateRosVersionControls();
     loadLaunchFiles();
