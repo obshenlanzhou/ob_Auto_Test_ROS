@@ -62,7 +62,7 @@ After a stress run finishes, package one standalone result directory into a comp
 
 ```bash
 python3 ./package_stress_results.py \
-  ./stream_toggle_stress_test/results/20260824_150213_stream_toggle_v1.9.7
+  ./stream_toggle_stress_test/results/20260824_150213_stream_toggle_v2.3.0
 ```
 
 The default output is `<result-directory>.tar.gz` next to the source directory.
