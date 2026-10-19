@@ -8,7 +8,7 @@ STATIC_ROOT = PACKAGE_ROOT / "orbbec_camera_auto_test_ui" / "static"
 def test_report_summaries_use_safe_markdown_renderer():
     script = (STATIC_ROOT / "app.js").read_text(encoding="utf-8")
     renderer = script.split("function renderMarkdown(source)", 1)[1].split(
-        "function renderJsonSummary", 1
+        "async function loadRunDetail", 1
     )[0]
 
     assert "renderMarkdown(text)" in script

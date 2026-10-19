@@ -2664,44 +2664,6 @@ function renderMarkdown(source) {
   return container;
 }
 
-function renderJsonSummary(results = {}) {
-  const blocks = [];
-  for (const [name, result] of Object.entries(results)) {
-    if (result?.schema_version && result?.test_id) {
-      const summaryLines = Object.entries(result.summary || {}).map(
-        ([key, value]) => `${key}: ${typeof value === "object" ? JSON.stringify(value) : value}`
-      );
-      const lines = [
-        `test: ${result.test_id}`,
-        `status: ${result.status || "unknown"}`,
-        `duration: ${formatNumber(result.duration_seconds, 1)} s`,
-        `started: ${result.started_at || ""}`,
-        `ended: ${result.ended_at || ""}`,
-        ...summaryLines,
-      ];
-      if (result.warnings?.length) lines.push(`warnings: ${JSON.stringify(result.warnings)}`);
-      if (result.error) lines.push(`error: ${JSON.stringify(result.error)}`);
-      const failureDetails = resultFailureDetails(result);
-      if (failureDetails.length) {
-        lines.push("failure details:");
-        lines.push(...formatResultFailureDetails(failureDetails).map((line) => `- ${line}`));
-      }
-      blocks.push({ title: `${name} · ${result.test_id}`, text: lines.join("\n") });
-      continue;
-    }
-    const lines = [
-      `${name}: ${result.status || "unknown"}`,
-      `profile: ${result.profile_name || ""}`,
-      `launch: ${result.launch_file || ""}`,
-    ];
-    if (Array.isArray(result.scenarios)) {
-      lines.push(`scenarios: ${result.scenarios.map((item) => `${item.name}:${item.status}`).join(", ")}`);
-    }
-    blocks.push({ title: `${name} result`, text: lines.join("\n") });
-  }
-  return blocks;
-}
-
 async function loadRunDetail(runId) {
   const payload = await api(`/api/runs/${encodeURIComponent(runId)}`);
   state.selectedRunId = runId;
@@ -2713,15 +2675,6 @@ async function loadRunDetail(runId) {
   const view = $("reportView");
   view.innerHTML = "";
 
-  for (const block of renderJsonSummary(payload.results)) {
-    const section = document.createElement("section");
-    section.className = "summary-block";
-    section.innerHTML = `<h3></h3><pre></pre>`;
-    section.querySelector("h3").textContent = block.title;
-    section.querySelector("pre").textContent = block.text;
-    view.appendChild(section);
-  }
-
   for (const [name, text] of Object.entries(payload.summaries || {})) {
     const section = document.createElement("section");
     section.className = "summary-block";
@@ -2731,19 +2684,8 @@ async function loadRunDetail(runId) {
     view.appendChild(section);
   }
 
-  if (payload.events?.length) {
-    const section = document.createElement("section");
-    section.className = "summary-block";
-    section.innerHTML = `<h3></h3><pre></pre>`;
-    section.querySelector("h3").textContent = "events.jsonl";
-    section.querySelector("pre").textContent = payload.events
-      .map((event) => `${event.time || ""}  ${event.message || event.event || ""}`)
-      .join("\n");
-    view.appendChild(section);
-  }
-
   if (!view.children.length) {
-    view.textContent = "这条记录还没有可展示的报告。";
+    view.textContent = "这条记录还没有可展示的 summary.md 报告。";
   }
 }
 
