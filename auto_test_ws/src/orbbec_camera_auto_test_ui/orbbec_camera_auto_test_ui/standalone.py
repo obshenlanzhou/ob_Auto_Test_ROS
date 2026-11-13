@@ -6,6 +6,8 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List
 
+from .file_preview import read_event_tail, read_result_preview
+
 
 MANIFEST_SCHEMA_VERSION = 1
 RESULT_SCHEMA_VERSION = 1
@@ -372,10 +374,10 @@ def validate_result_contract(
 ) -> tuple[Dict[str, Any], List[str]]:
     errors = []
     try:
-        payload = json.loads(result_path.read_text(encoding="utf-8"))
+        payload = read_result_preview(result_path)
     except FileNotFoundError:
         return {}, ["result.json is missing"]
-    except (OSError, json.JSONDecodeError) as exc:
+    except (OSError, ValueError, UnicodeError) as exc:
         return {}, [f"result.json is invalid: {exc}"]
     if not isinstance(payload, dict):
         return {}, ["result.json root must be an object"]
@@ -419,18 +421,4 @@ def validate_result_contract(
 
 
 def last_events(path: Path, limit: int = 25) -> List[Dict[str, Any]]:
-    if not path.is_file():
-        return []
-    events = []
-    try:
-        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()[-limit:]
-    except OSError:
-        return []
-    for line in lines:
-        try:
-            payload = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(payload, dict):
-            events.append(payload)
-    return events
+    return read_event_tail(path, limit)

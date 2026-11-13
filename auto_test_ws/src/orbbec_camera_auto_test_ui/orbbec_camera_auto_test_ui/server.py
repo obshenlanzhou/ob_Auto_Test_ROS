@@ -9,6 +9,7 @@ import subprocess
 import sys
 import threading
 import uuid
+from collections import deque
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -17,6 +18,13 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 from orbbec_camera_auto_test.profile.merger import load_merged_profile_data
 from .device_info import DeviceQueryError, query_camera_devices
+from .file_preview import (
+    PREVIEW_BYTES,
+    read_event_tail,
+    read_text_head,
+    read_text_tail,
+    result_preview_or_default,
+)
 from .run_manager import (
     AUTO_TEST_WS,
     CONFIG_PATH,
@@ -167,7 +175,7 @@ def _find_result_json(run_dir: Path) -> Dict[str, Any]:
         if not candidate.is_file() or _is_nested_result(run_dir, candidate):
             continue
         key = _report_key(run_dir, candidate, "result")
-        result[key] = read_json(candidate, {})
+        result[key] = result_preview_or_default(candidate, {})
     return result
 
 
@@ -189,10 +197,16 @@ def _report_key(run_dir: Path, candidate: Path, root_name: str) -> str:
 
 def _read_summary_files(run_dir: Path) -> Dict[str, str]:
     summaries: Dict[str, str] = {}
+    remaining = 4 * PREVIEW_BYTES
     for candidate in sorted(run_dir.rglob("summary.md")):
+        if remaining <= 0:
+            break
         if candidate.is_file():
             key = _report_key(run_dir, candidate, "summary")
-            summaries[key] = candidate.read_text(encoding="utf-8")
+            text = read_text_head(candidate, min(PREVIEW_BYTES, remaining))
+            text = text.encode("utf-8")[:remaining].decode("utf-8", errors="ignore")
+            summaries[key] = text
+            remaining -= len(text.encode("utf-8"))
     return summaries
 
 
@@ -261,32 +275,37 @@ def get_run(run_id: str) -> Dict[str, Any]:
         "ui_request": read_json(run_dir / "ui_request.json", {}),
         "results": _find_result_json(run_dir),
         "summaries": _read_summary_files(run_dir),
-        "logs": {
-            path.name: path.read_text(encoding="utf-8", errors="replace")[-20000:]
-            for path in sorted(run_dir.rglob("*.log"))
-        },
-        "events": [
-            read_json_line
-            for path in sorted(run_dir.rglob("events.jsonl"))
-            for read_json_line in _read_json_lines(path)
-        ],
+        "logs": _read_log_previews(run_dir),
+        "events": list(deque(
+            (
+                event
+                for path in sorted(run_dir.rglob("events.jsonl"))
+                for event in _read_json_lines(path)
+            ),
+            maxlen=1000,
+        )),
     }
 
 
-def _read_json_lines(path: Path) -> list[Dict[str, Any]]:
-    result = []
-    try:
-        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-    except OSError:
-        return result
-    for line in lines:
+def _read_log_previews(run_dir: Path) -> Dict[str, str]:
+    logs: Dict[str, str] = {}
+    remaining = 4 * PREVIEW_BYTES
+    for path in sorted(run_dir.rglob("*.log")):
+        if remaining <= 0 or len(logs) >= 50:
+            break
         try:
-            payload = json.loads(line)
-        except json.JSONDecodeError:
+            text = read_text_tail(path, min(PREVIEW_BYTES, remaining))[-20000:]
+        except OSError:
             continue
-        if isinstance(payload, dict):
-            result.append(payload)
-    return result
+        text = text.encode("utf-8")[:remaining].decode("utf-8", errors="ignore")
+        key = path.name if path.name not in logs else str(path.relative_to(run_dir))
+        logs[key] = text
+        remaining -= len(text.encode("utf-8"))
+    return logs
+
+
+def _read_json_lines(path: Path) -> list[Dict[str, Any]]:
+    return read_event_tail(path)
 
 
 def delete_run(run_id: str) -> tuple[Dict[str, Any], HTTPStatus]:

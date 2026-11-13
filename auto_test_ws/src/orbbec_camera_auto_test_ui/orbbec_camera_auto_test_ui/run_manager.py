@@ -15,6 +15,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Deque, Dict, List, Optional
 
+from .file_preview import PREVIEW_BYTES, READ_CHUNK, result_preview_or_default
 from .standalone import (
     build_command as build_standalone_command,
     last_events,
@@ -400,7 +401,18 @@ def _build_standalone_progress(
     result_details = result.get("details") if isinstance(result, dict) else None
     if not isinstance(result_details, dict):
         result_details = result if isinstance(result, dict) else {}
+    preview = result.get("_preview") if isinstance(result, dict) else None
+    round_counts = preview.get("round_counts", {}) if isinstance(preview, dict) else {}
     for collection_name in ("cycles", "attempts", "tests", "runs"):
+        counts = round_counts.get(collection_name) if isinstance(round_counts, dict) else None
+        if (
+            isinstance(counts, dict)
+            and all(isinstance(value, int) and value >= 0 for value in counts.values())
+            and any(counts.get(status, 0) for status in ("passed", "failed", "interrupted"))
+        ):
+            successes = counts.get("passed", 0)
+            failures = counts.get("failed", 0)
+            break
         records = result_details.get(collection_name)
         if not isinstance(records, list):
             continue
@@ -418,6 +430,22 @@ def _build_standalone_progress(
         failures = sum(status == "failed" for status in status_values)
         break
     else:
+        summary = result.get("summary", {}) if isinstance(result, dict) else {}
+        if isinstance(summary, dict):
+            for key in ("passed_cycles", "successful_restarts", "passed_tests", "passed_runs"):
+                if key in summary:
+                    try:
+                        successes = max(0, int(summary[key] or 0))
+                    except (TypeError, ValueError, OverflowError):
+                        continue
+                    break
+            for key in ("failed_cycles", "failed_attempts", "failed_tests", "failed_runs"):
+                if key in summary:
+                    try:
+                        failures = max(0, int(summary[key] or 0))
+                    except (TypeError, ValueError, OverflowError):
+                        continue
+                    break
         result_status = (
             str(result.get("status") or "").lower()
             if isinstance(result, dict)
@@ -1249,6 +1277,8 @@ class TestJob:
     done_event: threading.Event = field(default_factory=threading.Event)
     standalone_event_byte_offset: int = field(default=0, init=False)
     standalone_event_remainder: bytes = field(default=b"", init=False)
+    standalone_event_discarding: bool = field(default=False, init=False)
+    standalone_event_identity: Optional[tuple[int, int]] = field(default=None, init=False)
     standalone_successes: int = field(default=0, init=False)
     standalone_failures: int = field(default=0, init=False)
 
@@ -1265,39 +1295,59 @@ class TestJob:
             return {"successes": 0, "failures": 0}
         path = self.run_root / "events.jsonl"
         try:
-            size = path.stat().st_size
             with self.lock:
-                if size < self.standalone_event_byte_offset:
-                    self.standalone_event_byte_offset = 0
-                    self.standalone_event_remainder = b""
-                    self.standalone_successes = 0
-                    self.standalone_failures = 0
                 with path.open("rb") as stream:
+                    stat = os.fstat(stream.fileno())
+                    size = stat.st_size
+                    identity = (stat.st_dev, stat.st_ino)
+                    if (
+                        identity != self.standalone_event_identity
+                        or size < self.standalone_event_byte_offset
+                    ):
+                        self.standalone_event_byte_offset = 0
+                        self.standalone_event_remainder = b""
+                        self.standalone_event_discarding = False
+                        self.standalone_successes = 0
+                        self.standalone_failures = 0
+                    self.standalone_event_identity = identity
                     stream.seek(self.standalone_event_byte_offset)
-                    chunk = stream.read()
-                self.standalone_event_byte_offset += len(chunk)
-                if chunk:
-                    lines = (self.standalone_event_remainder + chunk).split(b"\n")
-                    self.standalone_event_remainder = lines.pop()
-                    for raw_line in lines:
-                        try:
-                            event = json.loads(
-                                raw_line.decode("utf-8", errors="replace")
-                            )
-                        except (UnicodeDecodeError, json.JSONDecodeError):
-                            continue
-                        if not isinstance(event, dict):
-                            continue
+                    while self.standalone_event_byte_offset < size:
+                        chunk = stream.read(min(
+                            READ_CHUNK, size - self.standalone_event_byte_offset
+                        ))
+                        if not chunk:
+                            break
+                        self.standalone_event_byte_offset += len(chunk)
+                        lines = (self.standalone_event_remainder + chunk).split(b"\n")
+                        self.standalone_event_remainder = lines.pop()
+                        for raw_line in lines:
+                            if self.standalone_event_discarding:
+                                self.standalone_event_discarding = False
+                                continue
+                            if len(raw_line) > PREVIEW_BYTES:
+                                continue
+                            try:
+                                event = json.loads(raw_line)
+                            except (ValueError, UnicodeError):
+                                continue
+                            if not isinstance(event, dict):
+                                continue
+                            if (
+                                event.get("event") == "progress"
+                                and event.get("phase") == "completed-cycle"
+                            ):
+                                self.standalone_successes += 1
+                            elif event.get("event") == "failure" or (
+                                event.get("event") == "progress"
+                                and event.get("phase") in {"failed-cycle", "failed"}
+                            ):
+                                self.standalone_failures += 1
                         if (
-                            event.get("event") == "progress"
-                            and event.get("phase") == "completed-cycle"
+                            self.standalone_event_discarding
+                            or len(self.standalone_event_remainder) > PREVIEW_BYTES
                         ):
-                            self.standalone_successes += 1
-                        elif event.get("event") == "failure" or (
-                            event.get("event") == "progress"
-                            and event.get("phase") in {"failed-cycle", "failed"}
-                        ):
-                            self.standalone_failures += 1
+                            self.standalone_event_remainder = b""
+                            self.standalone_event_discarding = True
                 return {
                     "successes": self.standalone_successes,
                     "failures": self.standalone_failures,
@@ -1339,7 +1389,7 @@ class TestJob:
             else []
         )
         standalone_result = (
-            read_json(self.run_root / "result.json", {})
+            result_preview_or_default(self.run_root / "result.json", {})
             if self.runner_type == "standalone"
             else {}
         )
