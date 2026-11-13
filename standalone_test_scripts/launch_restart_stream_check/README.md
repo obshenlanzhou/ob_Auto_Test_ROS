@@ -116,3 +116,19 @@ Each image-topic variant has its own directory. For example,
 `depth/image_raw` and `depth/image_unaligned` are stored under `depth/` and
 `depth_unaligned/`; compressed transports use directories such as
 `color_compressed/` and `depth_compressed_depth/`.
+
+### Automatic discovery and receive counts
+
+Automatic image, point-cloud and IMU discovery excludes hidden ROS names: any
+slash-separated path token starting with `_`, including `_buf_cpu`. Explicit
+topic selections remain available and may select hidden topics when the runner
+supports that stream. The stream-toggle runner still requires a matching toggle
+service. Normal topic names containing underscores remain eligible.
+
+Sensor results distinguish messages received, warm-up messages skipped, parsed
+samples and saved files. Point-cloud results include `message_count`,
+`skipped_count`, `skip_frames`, `parsed_count` and `saved_count`. Receiving 13
+messages with skip30 means reception occurred but parsing/saving has not begun;
+it does not prove that the publisher sent no point clouds. The restart runner's
+30-message warm-up remains unchanged. Filtering hidden topics reduces extra
+subscriptions; publisher DDS capacity still requires a separate driver fix.

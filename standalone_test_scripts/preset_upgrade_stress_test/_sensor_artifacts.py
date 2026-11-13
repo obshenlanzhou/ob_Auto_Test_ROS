@@ -64,6 +64,22 @@ def expand_topic_templates(
     return sorted(set(expanded))
 
 
+def is_hidden_topic(topic: str) -> bool:
+    """ROS hides a name when any slash-separated token begins with '_'."""
+    return any(part.startswith("_") for part in topic.split("/") if part)
+
+
+def sensor_capture_progress(row: Dict[str, Any]) -> str:
+    """Keep transport reception separate from warm-up, parsing and file output."""
+    received = int(row.get("message_count", 0) or 0)
+    skipped = int(row.get("skipped_count", 0) or 0)
+    skip_target = int(row.get("skip_frames", skipped) or 0)
+    parsed = int(row.get("parsed_count", row.get("valid_message_count", row.get("valid_sample_count", 0))) or 0)
+    saved = int(row.get("saved_count", 0) or 0)
+    return (f"received {received} message(s), skipped {skipped}/{skip_target} warm-up "
+            f"message(s), parsed {parsed}, saved {saved} file(s)")
+
+
 def _topic_has_type(type_names: Sequence[str], accepted: set[str]) -> bool:
     return any(type_name in accepted for type_name in type_names)
 
@@ -98,12 +114,14 @@ def discover_sensor_topics(
             name
             for name, type_names in topic_types.items()
             if camera_for_topic(name, camera_names) is not None
+            and not is_hidden_topic(name)
             and _topic_has_type(type_names, POINT_CLOUD_TYPES)
         )
         auto_imus = sorted(
             name
             for name, type_names in topic_types.items()
             if camera_for_topic(name, camera_names) is not None
+            and not is_hidden_topic(name)
             and _topic_has_type(type_names, IMU_TYPES)
         )
         latest_point_clouds = (
@@ -519,6 +537,7 @@ class SensorCaptureMonitor:
                 "message_count": 0,
                 "skipped_count": 0,
                 "valid_count": 0,
+                "parsed_count": 0,
                 "saved_point_count": 0,
                 "files": [],
                 "error": "",
@@ -610,6 +629,8 @@ class SensorCaptureMonitor:
                 message,
                 max_points=None if self.save_count > 0 else self.max_points,
             )
+            with self._state_lock:
+                self.state[topic]["parsed_count"] += 1
             path = None
             if self.save_count > 0:
                 camera_name = self.topic_cameras.get(topic, "unknown_camera")
@@ -732,6 +753,7 @@ class SensorCaptureMonitor:
                 "kind": item["kind"],
                 "message_count": item["message_count"],
                 "skipped_count": item["skipped_count"],
+                "skip_frames": self.skip_frames,
                 "files": list(item["files"]),
                 "saved_count": len(item["files"]),
                 "expected_count": self.save_count,
@@ -741,6 +763,7 @@ class SensorCaptureMonitor:
                 row.update(
                     {
                         "valid_message_count": item["valid_count"],
+                        "parsed_count": item["parsed_count"],
                         "finite_point_count": item.get("finite_point_count", 0),
                         "saved_point_count": item.get("saved_point_count", 0),
                         "width": item.get("width", 0),
@@ -846,7 +869,9 @@ def capture_sensor_artifacts(
         return (
             False,
             monitor.snapshot(),
-            f"point cloud/IMU streams were not complete within {timeout:.1f}s",
+            f"point cloud/IMU streams were not complete within {timeout:.1f}s; "
+            + "; ".join(f"{row['topic']}: {sensor_capture_progress(row)}"
+                        for row in monitor.snapshot()),
         )
     finally:
         monitor.end_capture()

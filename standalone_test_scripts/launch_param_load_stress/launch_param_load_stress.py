@@ -31,6 +31,7 @@ from _test_protocol import (
     test_environment_markdown,
 )
 from _sensor_artifacts import (
+    is_hidden_topic,
     SensorCaptureMonitor,
     SensorArtifactPathSequence,
     capture_sensor_artifacts,
@@ -1008,6 +1009,7 @@ def discover_image_topics(
             topic
             for topic, type_names in harness.get_topic_names_and_types().items()
             if ("/" + topic.strip("/")).startswith(camera_prefix)
+            and not is_hidden_topic(topic)
             and any(type_name in image_types for type_name in type_names)
         )
         now = time.monotonic()

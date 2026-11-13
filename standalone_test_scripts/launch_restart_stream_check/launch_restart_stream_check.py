@@ -31,6 +31,8 @@ from _test_protocol import (
     test_environment_markdown,
 )
 from _sensor_artifacts import (
+    is_hidden_topic,
+    sensor_capture_progress,
     SensorCaptureMonitor,
     SensorArtifactPathSequence,
     capture_sensor_artifacts,
@@ -447,7 +449,7 @@ class RosImageHarness:
     def list_image_topics(self) -> List[str]:
         topics: List[str] = []
         for topic_name, type_names in self.get_topic_names_and_types().items():
-            if any(_is_image_type(type_name) for type_name in type_names):
+            if not is_hidden_topic(topic_name) and any(_is_image_type(type_name) for type_name in type_names):
                 topics.append(topic_name)
         return sorted(set(topics))
 
@@ -1256,7 +1258,8 @@ def sensor_failure_details(snapshot: Sequence[Dict[str, Any]]) -> List[Dict[str,
                 {
                     "camera": str(row.get("camera", "") or "unknown"),
                     "topic": str(row.get("topic") or row.get("name") or ""),
-                    "reason": error or f"received {completed}/{expected} required {kind} sample(s)",
+                    "reason": error or (sensor_capture_progress(row) +
+                                       f"; completed {completed}/{expected} required {kind} output(s)"),
                 }
             )
     return details

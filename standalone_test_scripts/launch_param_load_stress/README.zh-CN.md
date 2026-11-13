@@ -151,3 +151,15 @@ launch_param_load_stress/results/YYYYMMDD_HHMMSS_launch_param_load_stress_v2.3.0
 
 每台相机的每个图像 topic 变体独立编号，并在后续压测轮次继续递增。raw、
 未对齐、校正、compressed 和 compressedDepth 分别使用独立目录；已有图片不会被覆盖。
+
+### 自动发现与接收统计
+
+图像、点云和 IMU 的自动发现排除 ROS 隐藏名称：任一由 `/` 分隔的路径段以 `_`
+开头均视为隐藏，包括 `_buf_cpu`。显式话题选择仍可订阅工具支持的隐藏话题；
+开关流工具仍要求存在匹配的开关服务。名称中间包含下划线的正常话题不受影响。
+
+传感器结果区分已接收消息、启动跳过消息、解析成功数量及保存文件数量。点云结果包含
+`message_count`、`skipped_count`、`skip_frames`、`parsed_count`、`saved_count`。
+例如 skip30 时收到 13 帧，表示已接收但尚未进入解析保存阶段，不能据此判断发布端没有
+发布点云。反复 launch 工具的跳过 30 帧条件保持不变。隐藏话题过滤用于减少额外订阅，
+发布端 DDS 容量仍需由驱动单独修复。

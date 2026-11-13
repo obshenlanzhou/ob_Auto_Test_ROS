@@ -157,6 +157,127 @@ def test_explicit_sensor_topic_is_required():
         )
 
 
+@pytest.mark.parametrize("topic, hidden", [
+    ("/camera/depth/points/_buf_cpu", True),
+    ("/camera/_internal/depth/points", True),
+    ("/_rig/camera/imu/sample", True),
+    ("/camera_01/depth/image_raw", False),
+])
+def test_hidden_names_follow_ros_path_token_rules(topic, hidden):
+    assert load_helper().is_hidden_topic(topic) is hidden
+
+
+def test_sensor_discovery_filters_hidden_topics_but_keeps_explicit_selection():
+    module = load_helper()
+    normal = "/camera/depth/points"
+    hidden = normal + "/_buf_cpu"
+    hidden_imu = "/camera/_internal/imu"
+    harness = FakeHarness({
+        normal: ["sensor_msgs/msg/PointCloud2"],
+        hidden: ["sensor_msgs/msg/PointCloud2"],
+        "/camera/_internal/depth/points": ["sensor_msgs/PointCloud2"],
+        "/camera/imu/sample": ["sensor_msgs/msg/Imu"],
+        hidden_imu: ["sensor_msgs/Imu"],
+    })
+    options = dict(harness=harness, camera_names=["camera"], timeout=0, settle_seconds=0)
+    clouds, imus, _ = module.discover_sensor_topics(
+        **options, point_cloud_topics=[], imu_topics=[])
+    assert clouds == [normal]
+    assert imus == ["/camera/imu/sample"]
+    clouds, imus, _ = module.discover_sensor_topics(
+        **options, point_cloud_topics=[hidden], imu_topics=[hidden_imu])
+    assert clouds == [hidden]
+    assert imus == [hidden_imu]
+
+
+@pytest.mark.parametrize("folder", [
+    "launch_restart_stream_check", "export_load_stress_test", "launch_param_load_stress",
+    "preset_upgrade_stress_test",
+])
+def test_every_image_auto_discovery_excludes_hidden_names(folder):
+    module = load_script(ROOT / folder / (folder + ".py"), "hidden_images_" + folder)
+    harness = FakeHarness({
+        "/camera/color/image_raw": ["sensor_msgs/msg/Image"],
+        "/camera/color/image_raw/_buf_cpu": ["sensor_msgs/msg/Image"],
+        "/camera/_internal/depth/image_raw": ["sensor_msgs/Image"],
+    })
+    if folder == "launch_restart_stream_check":
+        topics = module.RosImageHarness.list_image_topics(harness)
+    elif folder == "launch_param_load_stress":
+        topics = module.discover_image_topics(
+            harness=harness, camera_name="camera", timeout=0.1, settle_seconds=0)
+    else:
+        topics, _ = module.discover_image_topics(
+            harness=harness, camera_names=["camera"], sessions=[], timeout=0.1, settle_seconds=0)
+    assert topics == ["/camera/color/image_raw"]
+
+
+def test_toggle_auto_discovery_ignores_hidden_namespace():
+    module = load_script(ROOT / "stream_toggle_stress_test/stream_toggle_stress_test.py",
+                         "hidden_toggle")
+    targets, skipped = module.evaluate_discovery({
+        "/camera/_internal/color/image_raw": ["sensor_msgs/msg/Image"],
+        "/camera/color/image_raw/_buf_cpu": ["sensor_msgs/msg/Image"],
+    }, {})
+    assert targets == []
+    assert skipped == []
+
+
+def test_warmup_reception_is_distinct_from_parsing_and_saving(tmp_path):
+    module = load_helper()
+    harness = FakeHarness()
+    topic = "/camera/depth/points"
+    monitor = module.SensorCaptureMonitor(
+        harness=harness, point_cloud_topics=[topic], imu_topics=[],
+        topic_cameras={topic: "camera"}, output_root=tmp_path, save_count=1, skip_frames=30)
+    try:
+        for _ in range(13):
+            harness.callbacks[topic][1](point_cloud_message())
+        row = monitor.snapshot()[0]
+        assert (row["message_count"], row["skipped_count"], row["skip_frames"],
+                row["valid_message_count"], row["saved_count"]) == (13, 13, 30, 0, 0)
+        assert "received 13" in module.sensor_capture_progress(row)
+        assert "skipped 13/30" in module.sensor_capture_progress(row)
+        assert not monitor.complete()
+        runner = load_script(ROOT / "launch_restart_stream_check/launch_restart_stream_check.py",
+                             "warmup_restart")
+        reason = runner.sensor_failure_details([row])[0]["reason"]
+        assert "received 13" in reason
+        assert "parsed 0" in reason
+        assert "saved 0" in reason
+        for _ in range(18):
+            harness.callbacks[topic][1](point_cloud_message())
+        monitor.wait_for_pending_output(2)
+        row = monitor.snapshot()[0]
+        assert row["skipped_count"] == 30
+        assert row["saved_count"] == 1
+        assert Path(row["files"][0]).is_file()
+    finally:
+        monitor.close()
+
+
+def test_file_write_failure_keeps_successful_parse_count(tmp_path, monkeypatch):
+    module = load_helper()
+    harness = FakeHarness()
+    topic = "/camera/depth/points"
+    def fail_write(*args, **kwargs):
+        raise OSError("test output unavailable")
+    monkeypatch.setattr(module, "write_point_cloud_ply", fail_write)
+    monitor = module.SensorCaptureMonitor(
+        harness=harness, point_cloud_topics=[topic], imu_topics=[],
+        topic_cameras={topic: "camera"}, output_root=tmp_path, save_count=1)
+    try:
+        harness.callbacks[topic][1](point_cloud_message())
+        monitor.wait_for_pending_output(2)
+        row = monitor.snapshot()[0]
+        assert row["message_count"] == row["parsed_count"] == 1
+        assert row["saved_count"] == 0
+        assert row["error"] == "test output unavailable"
+        assert "parsed 1, saved 0" in module.sensor_capture_progress(row)
+    finally:
+        monitor.close()
+
+
 @pytest.mark.parametrize("bigendian", [False, True])
 def test_point_cloud_parser_handles_endianness_and_packed_rgb(bigendian):
     np = pytest.importorskip("numpy")

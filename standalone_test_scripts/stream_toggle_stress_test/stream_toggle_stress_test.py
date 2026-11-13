@@ -29,6 +29,7 @@ from _test_protocol import (
     test_environment_markdown,
 )
 from _sensor_artifacts import (
+    is_hidden_topic,
     SensorCaptureMonitor,
     capture_sensor_artifacts,
     discover_sensor_topics,
@@ -1047,6 +1048,8 @@ def evaluate_discovery(
     targets: List[StreamTarget] = []
     skipped: List[Dict[str, str]] = []
     for topic, types in sorted(topic_types.items()):
+        if is_hidden_topic(topic):
+            continue
         if not is_raw_image_type(types):
             continue
         try:

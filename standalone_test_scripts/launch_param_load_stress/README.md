@@ -165,3 +165,19 @@ launch_param_load_stress/results/YYYYMMDD_HHMMSS_launch_param_load_stress_v2.3.0
 Image numbers continue independently for each camera and image-topic variant
 across test cycles. Raw, unaligned, rectified, compressed, and compressed-depth
 topics use distinct directories. Existing images are never overwritten.
+
+### Automatic discovery and receive counts
+
+Automatic image, point-cloud and IMU discovery excludes hidden ROS names: any
+slash-separated path token starting with `_`, including `_buf_cpu`. Explicit
+topic selections remain available and may select hidden topics when the runner
+supports that stream. The stream-toggle runner still requires a matching toggle
+service. Normal topic names containing underscores remain eligible.
+
+Sensor results distinguish messages received, warm-up messages skipped, parsed
+samples and saved files. Point-cloud results include `message_count`,
+`skipped_count`, `skip_frames`, `parsed_count` and `saved_count`. Receiving 13
+messages with skip30 means reception occurred but parsing/saving has not begun;
+it does not prove that the publisher sent no point clouds. The restart runner's
+30-message warm-up remains unchanged. Filtering hidden topics reduces extra
+subscriptions; publisher DDS capacity still requires a separate driver fix.

@@ -2226,6 +2226,10 @@ def test_sensor_failure_details_identify_camera_and_topic(script_name):
                 "topic": "/camera_04/depth/points",
                 "kind": "point_cloud",
                 "expected_count": 1,
+                "message_count": 13,
+                "skipped_count": 13,
+                "skip_frames": 30,
+                "saved_count": 0,
                 "valid_message_count": 0,
             }
         ]
@@ -2235,7 +2239,8 @@ def test_sensor_failure_details_identify_camera_and_topic(script_name):
         {
             "camera": "camera_04",
             "topic": "/camera_04/depth/points",
-            "reason": "received 0/1 required point_cloud sample(s)",
+            "reason": "received 13 message(s), skipped 13/30 warm-up message(s), "
+                      "parsed 0, saved 0 file(s); completed 0/1 required point_cloud output(s)",
         }
     ]
 

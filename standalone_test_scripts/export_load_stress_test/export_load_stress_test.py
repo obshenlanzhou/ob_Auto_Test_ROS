@@ -32,6 +32,8 @@ from _test_protocol import (
     test_environment_markdown,
 )
 from _sensor_artifacts import (
+    is_hidden_topic,
+    sensor_capture_progress,
     SensorCaptureMonitor,
     SensorArtifactPathSequence,
     capture_sensor_artifacts,
@@ -685,6 +687,8 @@ def discover_image_topics(
             session.assert_running()
         topic_cameras: Dict[str, str] = {}
         for topic, type_names in harness.get_topic_names_and_types().items():
+            if is_hidden_topic(topic):
+                continue
             if not any(_is_image_type(type_name) for type_name in type_names):
                 continue
             camera_name = camera_for_topic(topic, camera_names)
@@ -1593,7 +1597,8 @@ def sensor_failure_details(snapshot: Sequence[Dict[str, Any]]) -> List[Dict[str,
                 {
                     "camera": str(row.get("camera", "") or "unknown"),
                     "topic": str(row.get("topic") or row.get("name") or ""),
-                    "reason": error or f"received {completed}/{expected} required {kind} sample(s)",
+                    "reason": error or (sensor_capture_progress(row) +
+                                       f"; completed {completed}/{expected} required {kind} output(s)"),
                 }
             )
     return details
