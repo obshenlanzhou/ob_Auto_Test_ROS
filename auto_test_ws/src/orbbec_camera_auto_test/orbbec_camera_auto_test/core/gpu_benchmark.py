@@ -38,19 +38,25 @@ def camera_launch_options(launch_file, env):
 
 
 def gpu_benchmark_capability(camera_share, arguments):
+    """Return the backend, usable benchmark launch path, and any validation error."""
     resources = camera_share.parent / "ament_index" / "resource_index"
     marker = resources / "orbbec_gpu_backend" / "orbbec_camera"
     backend = marker.read_text(encoding="utf-8").strip() if marker.is_file() else "NONE"
-    launcher = GPU_LAUNCHES.get(backend)
-    if not launcher:
-        return backend, f"The selected driver has no GPU benchmark backend ({backend})"
-    if not (camera_share / "launch" / launcher).is_file():
-        return backend, f"The selected driver does not install {launcher}"
+    launch_name = GPU_LAUNCHES.get(backend)
+    if not launch_name:
+        return backend, None, f"The selected driver has no GPU benchmark backend ({backend})"
+    candidates = (
+        camera_share / "examples" / "gpu_subscribers" / launch_name,
+        camera_share / "launch" / launch_name,
+    )
+    launcher = next((path for path in candidates if path.is_file()), None)
+    if launcher is None:
+        return backend, None, f"The selected driver does not install {launch_name}"
     if "enable_gpu_transport" not in arguments:
-        return backend, "The selected camera launch does not expose enable_gpu_transport"
+        return backend, None, "The selected camera launch does not expose enable_gpu_transport"
     if backend != "CUDA_BUFFER" and "component_container_name" not in arguments:
-        return backend, "NITROS requires a camera launch with component_container_name"
-    return backend, ""
+        return backend, None, "NITROS requires a camera launch with component_container_name"
+    return backend, launcher, ""
 
 
 def number(value):

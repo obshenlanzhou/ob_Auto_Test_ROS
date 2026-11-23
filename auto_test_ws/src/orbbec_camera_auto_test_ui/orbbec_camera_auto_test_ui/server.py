@@ -457,7 +457,7 @@ def transport_launch_arguments(payload: Dict[str, Any]) -> Dict[str, Any]:
         ros_setup=str(payload.get("ros_setup") or "").strip(),
     )
     arguments = camera_launch_options(launch_file, env)
-    backend, problem = gpu_benchmark_capability(_package_share("orbbec_camera", env), arguments)
+    backend, _, problem = gpu_benchmark_capability(_package_share("orbbec_camera", env), arguments)
     return {"arguments": list(arguments), "gpu_backend": backend, "gpu_problem": problem}
 
 

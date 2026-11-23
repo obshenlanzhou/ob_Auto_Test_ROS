@@ -8,7 +8,7 @@ import yaml
 
 from ..core.environment_info import camera_environment_from_launch_log
 from ..core.gpu_benchmark import (
-    GPU_LAUNCHES, GPU_PROGRESS_FILE, GPU_STREAMS, GpuBenchmarkProgress,
+    GPU_PROGRESS_FILE, GPU_STREAMS, GpuBenchmarkProgress,
     camera_launch_options, gpu_benchmark_capability, read_gpu_summary,
 )
 from ..core.reporter import build_performance_summary, write_json, write_markdown
@@ -104,7 +104,7 @@ def run_gpu_transport_test(
                 and Path(args.launch_file).resolve() != installed_launch.resolve()):
             raise ValueError("GPU transport requires a camera launch installed in the selected driver")
         defaults = camera_launch_options(camera_launch, env)
-        backend, issue = gpu_benchmark_capability(camera_share, defaults)
+        backend, launcher, issue = gpu_benchmark_capability(camera_share, defaults)
         if issue:
             raise RuntimeError(issue)
         progress = GpuBenchmarkProgress(backend, int(duration))
@@ -121,7 +121,7 @@ def run_gpu_transport_test(
         }, sort_keys=False), encoding="utf-8")
         _write_progress(progress_path, progress)
         session = TestSession(
-            str(camera_share / "launch" / GPU_LAUNCHES[backend]), {"config_file_path": config},
+            str(launcher), {"config_file_path": config},
             results_dir, launch_log, runtime_env=env, status_callback=emit_status,
         )
         emit_status(f"Starting {backend} benchmark, {duration:g} s per phase")

@@ -1,4 +1,36 @@
-from orbbec_camera_auto_test.core.gpu_benchmark import GpuBenchmarkProgress, read_gpu_summary
+import pytest
+
+from orbbec_camera_auto_test.core.gpu_benchmark import (
+    GpuBenchmarkProgress, gpu_benchmark_capability, read_gpu_summary,
+)
+
+
+@pytest.mark.parametrize(("backend", "launch_name"), [
+    ("NITROS_GXF", "camera_nitros_subscriber.launch.py"),
+    ("NITROS_BUFFER", "camera_nitros_subscriber.launch.py"),
+    ("CUDA_BUFFER", "camera_cuda_buffer_subscriber.launch.py"),
+])
+def test_gpu_benchmark_resolves_installed_example(tmp_path, backend, launch_name):
+    camera_share = tmp_path / "share" / "orbbec_camera"
+    marker = camera_share.parent / "ament_index/resource_index/orbbec_gpu_backend/orbbec_camera"
+    marker.parent.mkdir(parents=True)
+    marker.write_text(backend)
+    arguments = {"enable_gpu_transport": "true", "component_container_name": ""}
+    assert gpu_benchmark_capability(camera_share, arguments) == (
+        backend, None, f"The selected driver does not install {launch_name}",
+    )
+
+    standalone_launch = camera_share / "launch" / launch_name
+    standalone_launch.parent.mkdir(parents=True)
+    standalone_launch.touch()
+    assert gpu_benchmark_capability(camera_share, arguments) == (backend, standalone_launch, "")
+
+    example_launch = camera_share / "examples/gpu_subscribers" / launch_name
+    example_launch.parent.mkdir(parents=True)
+    example_launch.touch()
+    assert gpu_benchmark_capability(camera_share, arguments) == (backend, example_launch, "")
+    standalone_launch.unlink()
+    assert gpu_benchmark_capability(camera_share, arguments) == (backend, example_launch, "")
 
 
 def test_nitros_log_reports_gpu_backend_only_on_received_samples():
