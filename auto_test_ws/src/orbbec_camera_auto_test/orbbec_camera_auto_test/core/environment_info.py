@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import platform
+import re
 import shlex
 import socket
 import subprocess
@@ -107,6 +108,47 @@ def collect_host_environment(
     if driver_setup:
         host_environment["driver_setup"] = str(driver_setup)
     return host_environment
+
+
+_DRIVER_LOG_MESSAGE = re.compile(r"\[(?P<logger>[^\[\]\s]+)\]: (?P<message>.+)")
+_CAMERA_LOG_FIELDS = {
+    "Serial number": "serial_number",
+    "Firmware version": "firmware_version",
+    "ROS Wrapper version": "ros_sdk_version",
+    "SDK version": "ob_sdk_version",
+    "Hardware version": "hardware_version",
+}
+
+
+def camera_environment_from_launch_log(log_path: Path, camera_name: str) -> Dict[str, Any]:
+    """Read the camera identity recorded by the driver during startup."""
+    cameras = {}
+    try:
+        with log_path.open(encoding="utf-8", errors="replace") as log:
+            for line in log:
+                match = _DRIVER_LOG_MESSAGE.search(line)
+                if not match:
+                    continue
+                logger, message = match.group("logger"), match.group("message").strip()
+                if message.startswith("Device ") and message.endswith(" connected"):
+                    model = message.removeprefix("Device ").removesuffix(" connected").strip()
+                    if model:
+                        cameras[logger] = {"camera_model": model}
+                    continue
+                label, _, value = message.partition(": ")
+                if logger in cameras and label in _CAMERA_LOG_FIELDS and value:
+                    cameras[logger][_CAMERA_LOG_FIELDS[label]] = value.strip()
+    except OSError:
+        return {}
+
+    namespace = str(camera_name).strip("/").replace("/", ".")
+    matches = [
+        fields for logger, fields in cameras.items()
+        if logger == namespace or logger.startswith(f"{namespace}.")
+    ]
+    if len(matches) == 1:
+        return matches[0]
+    return next(iter(cameras.values())) if len(cameras) == 1 else {}
 
 
 def collect_camera_environment(

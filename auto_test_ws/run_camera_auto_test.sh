@@ -10,6 +10,12 @@ export PYTHONPATH
 MODE=""
 DURATION=""
 SCENARIO=""
+TRANSPORT_MODE=""
+TRANSPORT_RECEIVER=""
+TRANSPORT_RELIABILITY=""
+TRANSPORT_SETUP="${ORBBEC_TRANSPORT_SETUP:-}"
+TRANSPORT_WARMUP_FRAMES=""
+TRANSPORT_WARMUP_TIMEOUT_SEC=""
 STABLE_SECONDS="10"
 STREAM_TIMEOUT="60"
 MAX_GAP_SECONDS="1.5"
@@ -37,7 +43,13 @@ Usage:
 Options:
   --mode functional|performance|restart|all
   --duration SECONDS   Performance duration or restart stress duration
-  --scenario default|stress|drop_frame
+  --scenario default|stress|drop_frame|transport_latency
+  --transport-mode cross_process|intra_process
+  --transport-receiver standard|gpu
+  --transport-reliability best_effort|reliable
+  --transport-setup PATH
+  --transport-warmup-frames FRAMES
+  --transport-warmup-timeout-sec SECONDS
   --stable-seconds SECONDS
   --stream-timeout SECONDS
   --max-gap-seconds SECONDS
@@ -76,6 +88,30 @@ while [[ $# -gt 0 ]]; do
       ;;
     --scenario)
       SCENARIO="$2"
+      shift 2
+      ;;
+    --transport-mode)
+      TRANSPORT_MODE="$2"
+      shift 2
+      ;;
+    --transport-receiver)
+      TRANSPORT_RECEIVER="$2"
+      shift 2
+      ;;
+    --transport-reliability)
+      TRANSPORT_RELIABILITY="$2"
+      shift 2
+      ;;
+    --transport-setup)
+      TRANSPORT_SETUP="$2"
+      shift 2
+      ;;
+    --transport-warmup-frames)
+      TRANSPORT_WARMUP_FRAMES="$2"
+      shift 2
+      ;;
+    --transport-warmup-timeout-sec)
+      TRANSPORT_WARMUP_TIMEOUT_SEC="$2"
       shift 2
       ;;
     --stable-seconds)
@@ -253,6 +289,24 @@ run_performance() {
   fi
   if [[ -n "${DURATION}" ]]; then
     args+=(--duration "${DURATION}")
+  fi
+  if [[ -n "${TRANSPORT_MODE}" ]]; then
+    args+=(--transport-mode "${TRANSPORT_MODE}")
+  fi
+  if [[ -n "${TRANSPORT_RECEIVER}" ]]; then
+    args+=(--transport-receiver "${TRANSPORT_RECEIVER}")
+  fi
+  if [[ -n "${TRANSPORT_RELIABILITY}" ]]; then
+    args+=(--transport-reliability "${TRANSPORT_RELIABILITY}")
+  fi
+  if [[ -n "${TRANSPORT_SETUP}" ]]; then
+    args+=(--transport-setup "${TRANSPORT_SETUP}")
+  fi
+  if [[ -n "${TRANSPORT_WARMUP_FRAMES}" ]]; then
+    args+=(--transport-warmup-frames "${TRANSPORT_WARMUP_FRAMES}")
+  fi
+  if [[ -n "${TRANSPORT_WARMUP_TIMEOUT_SEC}" ]]; then
+    args+=(--transport-warmup-timeout-sec "${TRANSPORT_WARMUP_TIMEOUT_SEC}")
   fi
   python3 -m orbbec_camera_auto_test.runners.performance "${args[@]}"
 }

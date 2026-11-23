@@ -136,6 +136,7 @@ Web UI 内置驱动包当前的单相机 Launch 候选：ROS2 19 个，ROS1 21 �
 | --- | --- |
 | `functional` | 校验 Launch 必选接口，并对已发现的 Topic、Service 执行功能检查 |
 | `performance` | 对已发现的主数据流采集 FPS 与系统资源 |
+| `transport_latency` | Web UI 中的 ROS 2 传输延迟测试，支持同进程 IPC 或跨进程 |
 | `restart` | 反复启动 Launch 并等待图像流稳定 |
 | `stream_stall` | 长时间监控断流；当前由 Web UI 或独立 runner 使用 |
 | `all` | 功能测试成功后继续执行性能测试 |
@@ -218,6 +219,63 @@ frame_timestamp_csv_file=<scenario_results_dir>/driver_frame_timestamp.csv
 ```
 
 同时默认开启接收端帧时间戳记录。产物通常包括 `fps.csv`、`driver_frame_timestamp.csv` 和 `frame_timestamps/*.csv`。
+
+### 单版本传输延迟测试
+
+在 Web UI 的 **测试模式** 下拉框中直接选择 **Transport latency · 传输延迟**，
+然后选择通信方式和采样时长。每次运行使用当前选择的 Camera ROS Setup 和 Launch。
+测试组件由自动化工作区独立构建，旧版驱动可以直接复用。
+
+**接收方式** 默认选择标准 ROS。选 GPU 时，UI 检查当前驱动的 GPU 后端并运行其内置示例。
+NITROS 对比 CPU DDS 与 NITROS IPC，统计帧时间戳到订阅回调。CUDA Buffer 对比 CPU 接收后上传
+和共享 CUDA 缓冲区，统计从发布到 GPU 数据就绪。GPU 示例使用固定的 QoS、通信方式和每阶段 60 秒的
+预热超时。采样时长按阶段配置，范围为 1–3600 秒。实时表格显示接收后端，CUDA Buffer 还显示 CPU 回退帧。
+原始 GPU 示例汇总保存在 `gpu_driver_summary.csv`，命令行可用 `--transport-receiver gpu` 选择同一模式。
+
+**流配置** 根据所选 ROS 2 Launch 显示可用开关。将一路图像设为「开启」后，可填写宽度、高度、
+FPS 和格式，支持彩色、深度、单红外、左右红外及左右彩色。留空采用 Launch 默认值，
+相机 YAML 和额外 Launch 参数中的同名设置优先。Gemini 301 系列的「双彩色」和 Gemini 2L 的
+「双红外」由预设启用左右两路，可分别覆盖其图像参数，留空采用预设值。
+
+运行 `./run_camera_auto_test_ui.sh` 时会自动为当前可确定的 ROS 2 环境编译测试组件，
+并按 ROS 2 安装路径和 CPU 架构复用增量构建。启动后如果切换 ROS 2 环境，首次运行传输延迟测试时
+会自动准备该环境的组件。编译需要当前机安装 `colcon` 和对应的 ROS 2 开发依赖。
+
+已有独立测试组件时，可在启动 UI 前通过 `ORBBEC_TRANSPORT_SETUP` 指定对应的 `local_setup.bash`。
+
+| 通信方式 | 测量路径 |
+| --- | --- |
+| 跨进程 | 驱动和 C++ 订阅器位于独立进程，使用标准 ROS 图像和点云消息 |
+| 同进程 IPC | 驱动和同一 C++ 订阅器位于同一 ROS 2 组件容器，只采集实际经 IPC 交付的标准消息 |
+
+同进程需要可组合的相机节点。支持能加入外部容器的 Launch，以及可加载标准相机组件的旧式
+Orbbec 单相机 Launch。两种方式都支持选择流，明确开启的流必须参与测试，其余由发布话题发现。
+明确关闭的流会跳过。标准传输测试在 Launch 声明支持时默认设置 `time_domain=global`
+和 `enable_gpu_transport=false`，可通过额外 Launch 参数覆盖。
+
+**订阅可靠性（QoS）** 可选择 Best Effort（默认）或 Reliable，两种设置都使用 `KEEP_LAST(1)`。
+选择 Reliable 时，相机发布端也需提供 Reliable。实时表格和报告会显示本轮的订阅设置。
+
+在 **测试配置** 中可填写每路预热帧数和预热超时，留空分别使用 30 帧和 60 秒。
+超时涵盖等待话题出帧和预热，所有参与话题达到帧数后才开始计时，默认采样 60 秒。
+延迟从图像或点云
+`header.stamp` 算到 C++ 订阅回调入口，使用主机系统时钟。报告提供样本数、接收 FPS、
+平均延迟、P95、无效时间戳和传输方式不符的帧数。资源统计覆盖测试进程树。
+UI 表格每秒按话题更新样本数、当前和平均 FPS、平均延迟，并在采样结束时显示 P95。
+结果保存在 `transport_summary.csv`、`result.json` 和 `summary.md`。
+结果会记录实际加载的驱动路径和可读取的 SDK 校验值。
+
+命令行也可运行同一场景，将 `--transport-mode` 改为 `intra_process` 可测试同进程。
+
+```bash
+./run_camera_auto_test.sh --mode performance --scenario transport_latency \
+  --transport-mode cross_process --duration 10m \
+  --transport-reliability reliable \
+  --transport-warmup-frames 30 --transport-warmup-timeout-sec 60 \
+  --launch-file gemini_330_series.launch.py \
+  --ros-setup /opt/ros/jazzy/setup.bash \
+  --driver-setup /path/to/driver/install/setup.bash
+```
 
 ### Launch 重启测试
 

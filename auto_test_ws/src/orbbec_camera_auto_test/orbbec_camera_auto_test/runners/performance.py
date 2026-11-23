@@ -11,9 +11,18 @@ from pathlib import Path
 from typing import Any, Dict
 
 from .functional import _build_launch_args, _require_detected_camera
+from .gpu_transport import run_gpu_transport_test
 from .performance_fps import TopicFpsCollector
 from .performance_load import ExternalLoadController
 from .performance_system import MultiCameraSystemSampler, ProcessTreeSampler
+from .transport import (
+    DEFAULT_WARMUP_FRAMES,
+    DEFAULT_WARMUP_TIMEOUT_SEC,
+    TRANSPORT_MODES,
+    TRANSPORT_RELIABILITIES,
+    TRANSPORT_SCENARIO,
+    run_transport_test,
+)
 from ..checks.topics import run_topic_checks, select_discovered_topic_specs
 from ..core.environment_info import collect_camera_environment, collect_host_environment
 from ..core.reporter import append_log, build_performance_summary, ensure_dir, write_json, write_markdown
@@ -807,12 +816,19 @@ def run_performance_test(args) -> int:
     profile = build_generic_performance_profile()
     launch_file = args.launch_file
     base_launch_args = _build_launch_args(profile, args)
-    selected_scenarios = _select_performance_scenarios(profile, args.scenario)
     host_environment = collect_host_environment(
         args.driver_setup,
         ros_version=args.ros_version,
         ros_setup=args.ros_setup,
     )
+    if args.scenario == TRANSPORT_SCENARIO:
+        duration = _parse_duration_value(args.duration) if args.duration else 60.0
+        runner = run_gpu_transport_test if args.transport_receiver == "gpu" else run_transport_test
+        return runner(
+            args, base_launch_args, results_dir, host_environment, duration, emit_status,
+            _stream_config_from_launch_log,
+        )
+    selected_scenarios = _select_performance_scenarios(profile, args.scenario)
     emit_status(f"selected performance scenarios: {', '.join(item.name for item in selected_scenarios)}")
 
     if len(selected_scenarios) == 1:
@@ -873,9 +889,28 @@ def parse_args():
     parser.add_argument("--launch-file", required=True, help="Driver launch file to test")
     parser.add_argument(
         "--scenario",
-        choices=("default", "stress", "drop_frame"),
+        choices=("default", "stress", "drop_frame", TRANSPORT_SCENARIO),
         default="",
-        help="Run one scenario; when omitted all three scenarios run",
+        help="Run one scenario; when omitted the three general performance scenarios run",
+    )
+    parser.add_argument("--transport-mode", choices=TRANSPORT_MODES, default="cross_process")
+    parser.add_argument("--transport-receiver", choices=("standard", "gpu"), default="standard")
+    parser.add_argument(
+        "--transport-reliability", choices=TRANSPORT_RELIABILITIES, default="best_effort",
+        help="Reliability requested by the ROS 2 transport test subscriber",
+    )
+    parser.add_argument("--transport-setup", default=os.environ.get("ORBBEC_TRANSPORT_SETUP"))
+    parser.add_argument(
+        "--transport-preset-profile", action="append", default=[],
+        help="Override one image profile parameter in the selected camera preset YAML",
+    )
+    parser.add_argument(
+        "--transport-warmup-frames", type=int, default=DEFAULT_WARMUP_FRAMES,
+        help="Number of warmup frames per stream before transport sampling",
+    )
+    parser.add_argument(
+        "--transport-warmup-timeout-sec", type=float, default=DEFAULT_WARMUP_TIMEOUT_SEC,
+        help="Time limit in seconds for stream discovery and warmup",
     )
     parser.add_argument("--camera-name", default=None)
     parser.add_argument("--serial-number", default=None)

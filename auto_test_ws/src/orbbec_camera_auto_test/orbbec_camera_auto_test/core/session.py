@@ -154,6 +154,7 @@ def capture_runtime_env(
     driver_setup: Optional[str] = None,
     ros_version: str | int | None = "2",
     ros_setup: Optional[str] = None,
+    tool_setup: Optional[str] = None,
 ) -> Dict[str, str]:
     version = normalize_ros_version(ros_version)
     setup_file = _bash_setup_variant(ros_setup or default_ros_setup(version))
@@ -167,12 +168,20 @@ def capture_runtime_env(
     command_parts = [f"source {shlex.quote(setup_file)} >/dev/null 2>&1"]
     if driver_setup:
         command_parts.append(f"source {shlex.quote(driver_setup)} >/dev/null 2>&1")
+    if tool_setup:
+        if not Path(tool_setup).is_file():
+            raise FileNotFoundError(f"Test setup file not found: {tool_setup}")
+        command_parts.append(f"source {shlex.quote(tool_setup)} >/dev/null 2>&1")
     command = " && ".join(command_parts) + " && env -0"
     raw = subprocess.check_output(
         ["bash", "-lc", command],
         env=sanitize_ros_env(ros_version=version),
     )
-    env = sanitize_ros_env(_parse_env_output(raw), ros_version=version)
+    sourced = _parse_env_output(raw)
+    env = sanitize_ros_env(sourced, ros_version=version)
+    for name in ("ROS_DISTRO", "ROS_ETC_DIR"):
+        if name in sourced:
+            env[name] = sourced[name]
     sdk_dirs = _orbbec_sdk_library_dirs(setup_file, driver_setup)
     if sdk_dirs:
         env["LD_LIBRARY_PATH"] = _prepend_path_value(env.get("LD_LIBRARY_PATH", ""), sdk_dirs)
@@ -268,6 +277,7 @@ class TestSession:
         ros_version: str | int | None = "2",
         ros_setup: Optional[str] = None,
         status_callback: Optional[Callable[[str], None]] = None,
+        runtime_env: Optional[Dict[str, str]] = None,
     ) -> None:
         self.launch_file = launch_file
         self.launch_args = dict(launch_args)
@@ -277,6 +287,7 @@ class TestSession:
         self.ros_version = normalize_ros_version(ros_version)
         self.ros_setup = ros_setup
         self.status_callback = status_callback
+        self.runtime_env = runtime_env
         self.process: Optional[subprocess.Popen[str]] = None
         self.root_pid: Optional[int] = None
         self._reader_thread: Optional[threading.Thread] = None
@@ -338,10 +349,12 @@ class TestSession:
     def start(self) -> None:
         if self.process is not None:
             raise RuntimeError("Launch session is already running")
-        runtime_env = capture_runtime_env(
-            self.driver_setup,
-            ros_version=self.ros_version,
-            ros_setup=self.ros_setup,
+        runtime_env = (
+            dict(self.runtime_env)
+            if self.runtime_env is not None
+            else capture_runtime_env(
+                self.driver_setup, ros_version=self.ros_version, ros_setup=self.ros_setup
+            )
         )
         if self.ros_version == "1":
             runtime_env["ROS_HOME"] = str(self.work_dir)

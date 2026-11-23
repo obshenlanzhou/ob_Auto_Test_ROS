@@ -14,10 +14,29 @@ const state = {
   deviceQueryPending: false,
   activeMode: "functional",
   modeConfigs: {},
+  transportLaunchKey: "",
+  transportLaunchArguments: null,
+  transportGpuCapability: null,
 };
 
 const $ = (id) => document.getElementById(id);
 const MAX_VISIBLE_LOG_LINES = 100;
+const TRANSPORT_MODE = "transport_latency";
+const TRANSPORT_COMMUNICATION = {
+  cross_process: "跨进程",
+  intra_process: "同进程 IPC",
+};
+const TRANSPORT_RELIABILITY = {
+  best_effort: "Best Effort",
+  reliable: "Reliable",
+};
+const IMU_CONTROLS = new Set(["streamAccel", "streamGyro", "streamSyncImu"]);
+const SIDE_COLOR_CONTROLS = new Set(["streamLeftColor", "streamRightColor"]);
+const GPU_UNSUPPORTED_CONTROLS = new Set(["streamIr", ...SIDE_COLOR_CONTROLS]);
+const PRESET_IMAGE_STREAMS = {
+  dual_color: ["left_color", "right_color"],
+  dual_ir: ["left_ir", "right_ir"],
+};
 const THEME_STORAGE_KEY = "orbbec-ui-theme";
 const THEME_COLORS = {
   light: "#f4f7fb",
@@ -132,6 +151,8 @@ const SPECIAL_LAUNCH_CONFIGS = {
 };
 const STREAM_CONTROLS = {
   enable_color: "streamColor",
+  enable_left_color: "streamLeftColor",
+  enable_right_color: "streamRightColor",
   enable_depth: "streamDepth",
   enable_ir: "streamIr",
   enable_left_ir: "streamLeftIr",
@@ -142,8 +163,14 @@ const STREAM_CONTROLS = {
   enable_gyro: "streamGyro",
   enable_sync_output_accel_gyro: "streamSyncImu",
 };
+const STREAM_PROFILE_INPUTS = [...document.querySelectorAll("#streamProfileTable input")];
 const DEFAULT_MODE_CONFIG = {
   performance_scenario: "",
+  transport_mode: "cross_process",
+  transport_receiver: "standard",
+  transport_reliability: "best_effort",
+  transport_warmup_frames: "",
+  transport_warmup_timeout_sec: "",
   launch_file: "",
   launch_config: "generic",
   stream_options: {},
@@ -219,7 +246,7 @@ function deviceQueryPayload() {
   }
   return {
     ros_version: $("rosVersion").value,
-    ros_domain_id: $("rosDomainId").value.trim(),
+    ros_domain_id: $("rosVersion").value === "2" ? $("rosDomainId").value.trim() : "",
     ros_localhost_only: $("rosLocalhostOnly").checked,
     ros_setup: $("rosSetup").value.trim(),
     camera_setup: $("cameraSetup").value.trim(),
@@ -354,31 +381,66 @@ function showDeviceInfo() {
   refreshDevices();
 }
 
+function readStreamOptions(activeOnly = false) {
+  const options = {};
+  for (const [name, id] of Object.entries(STREAM_CONTROLS)) {
+    const input = $(id);
+    if (!activeOnly || !input.disabled) {
+      options[name] = input.value;
+    }
+  }
+  for (const input of STREAM_PROFILE_INPUTS) {
+    if ((!activeOnly || !input.disabled) && input.value.trim()) {
+      options[input.name] = input.value.trim();
+    }
+  }
+  return options;
+}
+
 function formPayload() {
+  const mode = $("mode").value;
+  const transport = mode === TRANSPORT_MODE;
+  const gpu = isGpuSelection();
+  const usesPerformanceScenario = mode === "performance" || mode === "all";
+  const restart = mode === "restart";
+  const streamStall = mode === "stream_stall";
   return {
     ros_version: $("rosVersion").value,
     ros_domain_id: $("rosDomainId").value.trim(),
     ros_localhost_only: $("rosLocalhostOnly").checked,
     ros_setup: $("rosSetup").value.trim(),
     camera_setup: $("cameraSetup").value.trim(),
-    mode: $("mode").value,
-    performance_scenario: $("performanceScenario").value,
+    mode,
+    ...(usesPerformanceScenario ? { performance_scenario: $("performanceScenario").value } : {}),
+    ...(transport ? {
+      transport_receiver: $("transportReceiver").value,
+      ...(!gpu ? {
+        transport_mode: $("transportMode").value,
+        transport_reliability: $("transportReliability").value,
+        transport_warmup_timeout_sec: $("transportWarmupTimeout").value.trim(),
+      } : {}),
+      transport_warmup_frames: $("transportWarmupFrames").value
+        ? String($("transportWarmupFrames").valueAsNumber) : "",
+    } : {
+      run_count: $("runCount").value.trim(),
+      continue_on_error: $("continueOnError").checked,
+    }),
     launch_config: $("launchConfig").value,
-    stream_options: Object.fromEntries(
-      Object.entries(STREAM_CONTROLS).map(([name, id]) => [name, $(id).value])
-    ),
-    run_count: $("runCount").value.trim(),
-    continue_on_error: $("continueOnError").checked,
-    duration: $("duration").value.trim(),
-    stable_seconds: $("stableSeconds").value.trim(),
-    stream_timeout: $("streamTimeout").value.trim(),
-    max_gap_seconds: $("maxGapSeconds").value.trim(),
-    restart_delay: $("restartDelay").value.trim(),
-    image_topics: $("imageTopics").value,
-    warning_interval_sec: $("warningIntervalSec").value.trim(),
-    warmup_sec: $("warmupSec").value.trim(),
-    save_csv: $("saveCsv").value,
-    queue_size: $("queueSize").value.trim(),
+    stream_options: readStreamOptions(true),
+    ...(mode !== "functional" ? { duration: $("duration").value.trim() } : {}),
+    ...(restart || streamStall ? { image_topics: $("imageTopics").value } : {}),
+    ...(restart ? {
+      stable_seconds: $("stableSeconds").value.trim(),
+      stream_timeout: $("streamTimeout").value.trim(),
+      max_gap_seconds: $("maxGapSeconds").value.trim(),
+      restart_delay: $("restartDelay").value.trim(),
+    } : {}),
+    ...(streamStall ? {
+      warning_interval_sec: $("warningIntervalSec").value.trim(),
+      warmup_sec: $("warmupSec").value.trim(),
+      save_csv: $("saveCsv").value,
+      queue_size: $("queueSize").value.trim(),
+    } : {}),
     camera_name: $("cameraName").value.trim(),
     serial_number: $("serialNumber").value.trim(),
     usb_port: $("usbPort").value.trim(),
@@ -913,6 +975,10 @@ const FRAMEWORK_ERROR_FIELDS = [
   ["warning_interval_sec", "warningIntervalSec"],
   ["warmup_sec", "warmupSec"],
   ["queue_size", "queueSize"],
+  ["transport_warmup_frames", "transportWarmupFrames"],
+  ["transport_reliability", "transportReliability"],
+  ["transport_receiver", "transportReceiver"],
+  ["transport_warmup_timeout_sec", "transportWarmupTimeout"],
   ["duration", "duration"],
 ];
 
@@ -959,26 +1025,36 @@ function validateNumberControl(
 
 function validateFrameworkForm() {
   const errors = [];
+  const mode = $("mode").value;
+  const gpu = isGpuSelection();
   if (!$("rosSetup").value.trim()) {
     errors.push(validationIssue($("rosSetup"), "ROS Setup 为必填项"));
   }
   if (!$("launchFile").value.trim()) {
     errors.push(validationIssue($("launchFile"), "请选择 Launch 文件"));
   }
-  const domainError = validateNumberControl($("rosDomainId"), {
-    integer: true,
-    min: 0,
-    max: 232,
-  });
-  if (domainError) errors.push(domainError);
-  const runCountError = validateNumberControl($("runCount"), { integer: true, min: 0, strictMin: true });
-  if (runCountError) errors.push(runCountError);
-
-  const mode = $("mode").value;
-  const durationError = validateDurationControl($("duration"), {
-    required: mode === "restart" || mode === "stream_stall",
-  });
-  if (durationError) errors.push(durationError);
+  if ($("rosVersion").value === "2") {
+    const domainError = validateNumberControl($("rosDomainId"), { integer: true, min: 0, max: 232 });
+    if (domainError) errors.push(domainError);
+  } else if (mode === TRANSPORT_MODE) {
+    errors.push(validationIssue($("rosVersion"), "传输延迟测试需要 ROS 2"));
+  }
+  if (mode !== TRANSPORT_MODE) {
+    const runCountError = validateNumberControl($("runCount"), { integer: true, min: 0, strictMin: true });
+    if (runCountError) errors.push(runCountError);
+  }
+  if (gpu && state.transportGpuCapability?.gpu_problem) {
+    errors.push(validationIssue($("transportReceiver"), state.transportGpuCapability.gpu_problem));
+  }
+  if (gpu && $("launchConfig").value === "dual_color") {
+    errors.push(validationIssue($("launchConfig"), "当前 GPU 示例不支持双彩色预设"));
+  }
+  if (mode !== "functional") {
+    const durationError = validateDurationControl($("duration"), {
+      required: mode === "restart" || mode === "stream_stall",
+    });
+    if (durationError) errors.push(durationError);
+  }
   for (const id of ["stableSeconds", "streamTimeout", "maxGapSeconds", "warmupSec"]) {
     if (!$(id).closest(".is-hidden")) {
       const error = validateDurationControl($(id));
@@ -989,10 +1065,22 @@ function validateFrameworkForm() {
     ["restartDelay", { min: 0 }],
     ["warningIntervalSec", { min: 0, strictMin: true }],
     ["queueSize", { integer: true, min: 0, strictMin: true }],
+    ["transportWarmupFrames", { integer: true, min: gpu ? 0 : 1, max: gpu ? 100000 : Number.MAX_SAFE_INTEGER }],
+    ["transportWarmupTimeout", { min: 0, strictMin: true }],
   ]) {
     if (!$(id).closest(".is-hidden")) {
       const error = validateNumberControl($(id), options);
       if (error) errors.push(error);
+    }
+  }
+  for (const input of STREAM_PROFILE_INPUTS) {
+    const value = input.value.trim();
+    if (input.disabled || !value) continue;
+    const format = input.name.endsWith("_format");
+    const valid = format ? /^[A-Za-z0-9_]+$/.test(value) : /^[0-9]*[1-9][0-9]*$/.test(value);
+    if (!valid) {
+      const label = input.getAttribute("aria-label");
+      errors.push(validationIssue(input, format ? `${label}须为格式名，例如 MJPG 或 Y16` : `${label}须为正整数`));
     }
   }
 
@@ -1161,7 +1249,8 @@ function serverValidationIssues(error, standalone = false) {
       target = target || wrapper?.querySelector("input, select, textarea") || wrapper;
     } else {
       const match = FRAMEWORK_ERROR_FIELDS.find(([hint]) => normalized.includes(hint));
-      target = match ? $(match[1]) : null;
+      target = STREAM_PROFILE_INPUTS.find((input) => normalized.includes(input.name))
+        || (match ? $(match[1]) : null);
     }
     return validationIssue(target, String(message));
   });
@@ -1222,15 +1311,22 @@ function setStatus(status) {
   $("showDevices").disabled = running;
   $("showDevices").title = running ? "测试运行期间暂停设备枚举" : "查看已连接的 ROS 2 相机";
 
-  const showMonitor = value !== "idle";
-  $("monitorEmpty").classList.toggle("is-hidden", showMonitor);
-  $("monitorContent").classList.toggle("is-hidden", !showMonitor);
   const monitor = $("monitorEmpty").closest(".monitor");
   monitor.dataset.state = value;
   monitor.dataset.terminal = String(TERMINAL_RUN_STATUSES.has(value));
+  updateMonitorVisibility();
   if (!TERMINAL_RUN_STATUSES.has(value)) {
     $("runResultSummary").classList.add("is-hidden");
   }
+}
+
+function updateMonitorVisibility() {
+  const idle = $("monitorEmpty").closest(".monitor").dataset.state === "idle";
+  const preview = state.workspace === "framework" && $("mode").value === TRANSPORT_MODE;
+  const showMonitor = !idle || preview;
+  $("monitorEmpty").classList.toggle("is-hidden", showMonitor);
+  $("monitorContent").classList.toggle("is-hidden", !showMonitor);
+  if (idle) renderMonitor({ status: "idle" });
 }
 
 function updateMonitorEmptyCopy() {
@@ -1267,6 +1363,7 @@ function switchWorkspace(workspace, updateUrl = true) {
   $("currentModeLabel").textContent =
     state.workspace === "standalone" ? "任务类型" : "测试模式";
   updateMonitorEmptyCopy();
+  updateMonitorVisibility();
   if (updateUrl) {
     const url = new URL(window.location.href);
     if (state.workspace === "standalone") {
@@ -1634,7 +1731,52 @@ async function updateResultSummary(snapshot) {
   }
 }
 
-function renderPerformance(performance = {}) {
+function renderGpuPerformance(gpu, status) {
+  const backend = gpu.backend || (status === "idle" ? state.transportGpuCapability?.gpu_backend : "");
+  const cuda = backend === "CUDA_BUFFER";
+  const phase = gpu.phase || (TERMINAL_RUN_STATUSES.has(status) ? STATUS_LABELS[status] : "等待数据与预热");
+  const elapsed = gpu.elapsed_seconds > 0 ? ` ${formatNumber(gpu.elapsed_seconds, 1)}/${gpu.duration_seconds} s` : "";
+  const metric = cuda ? "发布到 GPU 数据就绪"
+    : backend?.startsWith("NITROS_") ? "帧时间戳到订阅回调" : "";
+  $("streamMetricsTitle").textContent = ["GPU 传输延迟", metric].filter(Boolean).join(" · ");
+  $("gpuFallbackColumn").classList.toggle("is-hidden", !cuda);
+  $("transportProgress").classList.remove("is-hidden");
+  $("transportProgress").textContent = [backend, phase + elapsed].filter(Boolean).join(" · ");
+  $("gpuLatencyColumn").textContent = gpu.final ? "平均延迟 (ms)" : "最近延迟 (ms)";
+  const body = $("fpsTableBody");
+  body.replaceChildren();
+  if (!gpu.rows?.length) {
+    const cell = body.insertRow().insertCell();
+    cell.colSpan = cuda ? 10 : 9;
+    cell.className = "table-message";
+    cell.textContent = TERMINAL_RUN_STATUSES.has(status) ? "未采集到 GPU 测试数据" : "等待 GPU 测试阶段的数据";
+    return;
+  }
+  for (const sample of gpu.rows) {
+    const row = body.insertRow();
+    const values = [
+      sample.stream, sample.resolution, sample.stream_format, sample.phase, sample.backend, sample.samples,
+      sample.fps == null ? null : formatNumber(sample.fps, 2),
+      sample.latency_ms == null ? null : formatNumber(sample.latency_ms, 3),
+      sample.latency_p95_ms == null ? null : formatNumber(sample.latency_p95_ms, 3),
+    ];
+    if (cuda) values.push(sample.cpu_fallback_frames);
+    for (const value of values) {
+      row.insertCell().textContent = value ?? "—";
+    }
+  }
+}
+
+function renderPerformance(performance, transport, status) {
+  const gpu = performance.transport_receiver === "gpu" || (status === "idle" && isGpuSelection());
+  $("frameworkMonitor").dataset.gpu = String(gpu);
+  $("fpsColumns").classList.toggle("is-hidden", transport || gpu);
+  $("transportColumns").classList.toggle("is-hidden", !transport || gpu);
+  $("gpuTransportColumns").classList.toggle("is-hidden", !gpu);
+  if (gpu) {
+    renderGpuPerformance(performance.gpu_transport || {}, status);
+    return;
+  }
   const reportedScopes = performance.system_scopes || [];
   const hasSystemData =
     reportedScopes.length > 0 ||
@@ -1694,14 +1836,41 @@ function renderPerformance(performance = {}) {
     }
   }
 
+  $("streamMetricsTitle").textContent = transport ? "传输延迟" : "数据流性能";
+  const progress = $("transportProgress");
+  progress.classList.toggle("is-hidden", !transport);
+  if (transport) {
+    const communication = TRANSPORT_COMMUNICATION[performance.transport_mode || $("transportMode").value];
+    const reliability = TRANSPORT_RELIABILITY[status === "idle"
+      ? $("transportReliability").value : performance.transport_reliability];
+    const sampling = performance.transport_sampling_seconds;
+    const duration = performance.transport_duration_seconds;
+    let phase = "等待测试";
+    if (performance.transport_final) {
+      phase = `采样完成 · ${formatNumber(sampling, 1)} s`;
+    } else if (status !== "idle") {
+      if (status === "stopping" || TERMINAL_RUN_STATUSES.has(status)) {
+        phase = STATUS_LABELS[status];
+      } else if (sampling == null) {
+        phase = "等待数据与预热";
+      } else {
+        phase = `采样 ${formatNumber(sampling, 1)}${duration ? ` / ${duration}` : ""} s`;
+      }
+    }
+    progress.textContent = [communication, reliability, phase].filter(Boolean).join(" · ");
+  }
   const body = $("fpsTableBody");
   body.innerHTML = "";
-  const topics = performance.fps_topics || [];
+  const topics = transport && performance.transport_sampling_seconds == null
+    ? [] : performance.fps_topics || [];
   if (!topics.length) {
     const row = document.createElement("tr");
     const cell = document.createElement("td");
     cell.colSpan = 8;
-    cell.textContent = performance.available ? "暂无 FPS 采样。" : "等待性能压测数据。";
+    cell.className = "table-message";
+    cell.textContent = transport
+      ? (TERMINAL_RUN_STATUSES.has(status) ? "未采集到传输数据" : "完成预热后按话题显示采样数据")
+      : (performance.available ? "暂无 FPS 采样。" : "等待性能压测数据。");
     row.appendChild(cell);
     body.appendChild(row);
     return;
@@ -1709,12 +1878,24 @@ function renderPerformance(performance = {}) {
 
   for (const topic of topics) {
     const row = document.createElement("tr");
-    const values = [
-      topic.topic || topic.label || "",
+    const name = topic.topic || topic.label || "";
+    const currentFps = topic.samples === 0 && transport ? "—" : formatNumber(topic.current_fps, 2);
+    const avgFps = topic.samples === 0 && transport ? "—" : formatNumber(topic.avg_fps, 2);
+    const values = transport ? [
+      name,
+      topic.resolution || "—",
+      topic.stream_format || "—",
+      String(topic.samples),
+      currentFps,
+      avgFps,
+      topic.latency_avg_ms == null ? "—" : formatNumber(topic.latency_avg_ms, 3),
+      topic.latency_p95_ms == null ? "—" : formatNumber(topic.latency_p95_ms, 3),
+    ] : [
+      name,
       topic.resolution || "-",
       topic.stream_format || "-",
-      formatNumber(topic.current_fps, 2),
-      formatNumber(topic.avg_fps, 2),
+      currentFps,
+      avgFps,
       formatNumber(topic.ideal_fps, 2),
       String(topic.dropped_frames || 0),
       `${formatNumber((topic.drop_rate || 0) * 100, 3)}%`,
@@ -1724,6 +1905,7 @@ function renderPerformance(performance = {}) {
       cell.textContent = value;
       row.appendChild(cell);
     }
+    row.firstElementChild.title = [name, topic.resolution, topic.stream_format].filter(Boolean).join(" · ");
     body.appendChild(row);
   }
 }
@@ -1763,13 +1945,20 @@ function formatStandaloneCount(progress = {}, key) {
 
 function renderMonitor(payload = {}) {
   const standalone = payload.runner_type === "standalone";
+  const performance = payload.performance || {};
+  const transport = !standalone && (
+    Boolean(performance.transport) || payload.mode === TRANSPORT_MODE ||
+    (payload.status === "idle" && state.workspace === "framework" && $("mode").value === TRANSPORT_MODE)
+  );
+  $("frameworkMonitor").dataset.transport = String(transport);
   $("standaloneMonitor").classList.toggle("is-hidden", !standalone);
   $("frameworkMonitor").classList.toggle("is-hidden", standalone);
   $("runMeta").classList.toggle("is-hidden", standalone);
   const statusLabel = STATUS_LABELS[payload.status] || payload.status || "";
   $("monitorDescription").textContent = standalone
     ? `独立脚本进度与实时日志${statusLabel ? ` · ${statusLabel}` : ""}`
-    : `进程资源、数据流与实时日志${statusLabel ? ` · ${statusLabel}` : ""}`;
+    : transport ? "按话题每秒更新 · P95 在采样结束后显示"
+      : `进程资源、数据流与实时日志${statusLabel ? ` · ${statusLabel}` : ""}`;
 
   if (standalone) {
     $("standaloneElapsed").textContent = formatDuration(
@@ -1788,7 +1977,7 @@ function renderMonitor(payload = {}) {
     );
     return;
   }
-  renderPerformance(payload.performance || {});
+  renderPerformance(performance, transport, payload.status);
   renderRestart(payload.restart || {}, payload.mode || $("mode").value);
 }
 
@@ -1811,15 +2000,102 @@ function updateLaunchConfigOptions(preferred = "") {
   }
   $("launchConfigField").classList.toggle("is-hidden", options.length === 0);
   updateSpecialConfigControls();
+  refreshTransportLaunchArguments();
+}
+
+async function refreshTransportLaunchArguments() {
+  const payload = {
+    launch_file: $("launchFile").value,
+    ros_setup: $("rosSetup").value.trim(),
+    camera_setup: $("cameraSetup").value.trim(),
+  };
+  const key = $("mode").value === TRANSPORT_MODE && $("rosVersion").value === "2"
+    && payload.launch_file ? JSON.stringify(payload) : "";
+  if (state.transportLaunchKey === key) return;
+  state.transportLaunchKey = key;
+  state.transportLaunchArguments = key ? new Set() : null;
+  state.transportGpuCapability = null;
+  updateSpecialConfigControls();
+  updateTransportReceiverNote();
+  if (!key) return;
+  let argumentsForLaunch;
+  let capability = null;
+  try {
+    const result = await api("/api/transport/launch-arguments", { method: "POST", body: key });
+    argumentsForLaunch = new Set(result.arguments);
+    capability = result;
+  } catch (_) {
+    argumentsForLaunch = null;
+  }
+  if (state.transportLaunchKey !== key) return;
+  state.transportLaunchArguments = argumentsForLaunch;
+  state.transportGpuCapability = capability;
+  updateSpecialConfigControls();
+  updateTransportReceiverNote();
+  updateFormReadiness();
+  updateMonitorVisibility();
+}
+
+function isGpuSelection() {
+  return $("mode").value === TRANSPORT_MODE && $("transportReceiver").value === "gpu";
+}
+
+function updateTransportReceiverNote() {
+  const note = $("transportGpuCapability");
+  note.classList.toggle("is-hidden", !isGpuSelection());
+  const capability = state.transportGpuCapability;
+  note.textContent = capability?.gpu_problem || (capability?.gpu_backend
+    ? `${capability.gpu_backend} · ${capability.gpu_backend === "CUDA_BUFFER" ? "跨进程" : "同进程"} · 每阶段预热超时 60 秒`
+    : "根据所选驱动检测 GPU 后端");
 }
 
 function updateSpecialConfigControls() {
   const special = $("launchConfig").value !== "generic";
-  for (const id of Object.values(STREAM_CONTROLS)) {
-    $(id).disabled = special;
+  const transport = $("mode").value === TRANSPORT_MODE;
+  const args = state.transportLaunchArguments;
+  for (const [name, id] of Object.entries(STREAM_CONTROLS)) {
+    const visible = transport
+      ? !special && !IMU_CONTROLS.has(id) && (!isGpuSelection() || !GPU_UNSUPPORTED_CONTROLS.has(id))
+        && (args ? args.has(name) : !SIDE_COLOR_CONTROLS.has(id))
+      : !SIDE_COLOR_CONTROLS.has(id);
+    $(id).closest("label").classList.toggle("is-hidden", !visible);
+    $(id).disabled = special || !visible;
   }
   $("configFilePath").disabled = special;
   $("streamOptions").title = special ? "特殊配置 YAML 会覆盖普通流参数" : "";
+  updateStreamProfileControls();
+}
+
+function updateStreamProfileControls() {
+  const transport = $("mode").value === TRANSPORT_MODE;
+  const preset = PRESET_IMAGE_STREAMS[$("launchConfig").value];
+  const args = state.transportLaunchArguments;
+  const gpu = isGpuSelection();
+  $("frameworkStreams").dataset.transport = String(transport);
+  const table = $("streamProfileTable");
+  let hasEnabledProfile = false;
+  for (const row of table.querySelectorAll(".stream-profile")) {
+    const name = row.dataset.stream;
+    const select = $(STREAM_CONTROLS[`enable_${name}`]);
+    const fromPreset = preset?.includes(name) && (!gpu || !GPU_UNSUPPORTED_CONTROLS.has(select.id));
+    const enabled = transport && (fromPreset || (!select.disabled && select.value === "true"));
+    let visible = false;
+    for (const input of row.querySelectorAll("input")) {
+      const supported = fromPreset || !args || args.has(input.name);
+      input.disabled = !enabled || !supported;
+      input.closest("label").classList.toggle("is-hidden", !supported);
+      visible ||= !input.disabled;
+    }
+    row.classList.toggle("is-hidden", !visible);
+    hasEnabledProfile ||= visible;
+  }
+  table.classList.toggle("is-hidden", !hasEnabledProfile);
+  const note = $("streamProfileNote");
+  note.classList.toggle("is-hidden", !hasEnabledProfile);
+  note.textContent = preset
+    ? "左右两路由预设开启，留空沿用预设"
+    : "留空沿用 Launch 默认值";
+  note.title = preset ? "" : "相机 YAML 和额外 Launch 参数中的同名设置优先。";
 }
 
 function updateRosVersionControls({ fillBlank = false } = {}) {
@@ -1827,6 +2103,9 @@ function updateRosVersionControls({ fillBlank = false } = {}) {
   $("rosSetup").placeholder = defaults.ros || "未识别到唯一 ROS 环境，请填写 setup.bash 路径";
   $("cameraSetup").placeholder = defaults.cameraPlaceholder || defaults.camera;
   const domainEnabled = $("rosVersion").value === "2";
+  $("frameworkRosLabel").textContent = `ROS ${$("rosVersion").value}`;
+  $("rosDomainId").closest("label").classList.toggle("is-hidden", !domainEnabled);
+  $("rosLocalhostOnly").closest("label").classList.toggle("is-hidden", !domainEnabled);
   $("rosDomainId").disabled = !domainEnabled;
   $("rosDomainId").title = domainEnabled
     ? "ROS 2 Domain ID，留空表示不设置"
@@ -1848,27 +2127,50 @@ function updateRosVersionControls({ fillBlank = false } = {}) {
 
 function updateModeControls() {
   const mode = $("mode").value;
+  const transport = mode === TRANSPORT_MODE;
+  const gpu = isGpuSelection();
   const needsPerformance = mode === "performance" || mode === "all";
-  const needsPerformanceRuntime = mode === "performance" || mode === "restart" || mode === "stream_stall" || mode === "all";
   const needsRestart = mode === "restart";
   const needsStreamStall = mode === "stream_stall";
   const needsStreamTopics = needsRestart || needsStreamStall;
+  $("testStrategy").dataset.transport = String(transport);
+  $("testStrategy").dataset.receiver = gpu ? "gpu" : "standard";
   $("performanceScenario").closest("label").classList.toggle("is-hidden", !needsPerformance);
-  $("duration").closest("label").classList.toggle("is-hidden", !needsPerformanceRuntime);
+  for (const [id, visible] of [
+    ["transportReceiver", transport], ["transportWarmupFrames", transport],
+    ["transportMode", transport && !gpu], ["transportReliability", transport && !gpu],
+    ["transportWarmupTimeout", transport && !gpu],
+  ]) {
+    $(id).closest("label").classList.toggle("is-hidden", !visible);
+    $(id).disabled = !visible;
+  }
+  $("transportWarmupFrames").min = gpu ? "0" : "1";
+  updateTransportReceiverNote();
+  $("runCount").closest("label").classList.toggle("is-hidden", transport);
+  $("runCount").disabled = transport;
+  $("continueOnError").closest("label").classList.toggle("is-hidden", transport);
+  $("durationLabel").textContent = gpu ? "每阶段采样时长" : transport ? "采样时长" : "运行时长";
+  $("duration").placeholder = transport ? "60s（默认）" : "300 / 15m / 2h";
+  $("duration").closest("label").classList.toggle("is-hidden", mode === "functional");
   $("restartFields").classList.toggle("is-hidden", !needsRestart);
   $("streamStallFields").classList.toggle("is-hidden", !needsStreamStall);
   $("streamTopicFields").classList.toggle("is-hidden", !needsStreamTopics);
+  if (transport && $("rosVersion").value !== "2") $("frameworkEnvironment").open = true;
   updateFormReadiness();
+  updateMonitorVisibility();
 }
 
 function currentModeConfig() {
   return {
     performance_scenario: $("performanceScenario").value,
+    transport_mode: $("transportMode").value,
+    transport_receiver: $("transportReceiver").value,
+    transport_reliability: $("transportReliability").value,
+    transport_warmup_frames: $("transportWarmupFrames").value,
+    transport_warmup_timeout_sec: $("transportWarmupTimeout").value,
     launch_file: $("launchFile").value,
     launch_config: $("launchConfig").value,
-    stream_options: Object.fromEntries(
-      Object.entries(STREAM_CONTROLS).map(([name, id]) => [name, $(id).value])
-    ),
+    stream_options: readStreamOptions(),
     run_count: $("runCount").value,
     continue_on_error: $("continueOnError").checked,
     duration: $("duration").value,
@@ -1894,7 +2196,15 @@ function applyModeConfig(mode) {
     ...DEFAULT_MODE_CONFIG,
     ...(state.modeConfigs[mode] || {}),
   };
-  $("performanceScenario").value = config.performance_scenario;
+  const scenario = $("performanceScenario");
+  scenario.value = [...scenario.options].some((option) => option.value === config.performance_scenario)
+    ? config.performance_scenario : "";
+  $("transportMode").value = config.transport_mode;
+  $("transportReceiver").value = config.transport_receiver;
+  $("transportReliability").value = config.transport_reliability;
+  $("transportWarmupFrames").value = config.transport_warmup_frames;
+  $("transportWarmupTimeout").value = config.transport_warmup_timeout_sec;
+  if (mode === TRANSPORT_MODE) $("frameworkStreams").open = true;
   $("runCount").value = config.run_count;
   $("continueOnError").checked = truthy(config.continue_on_error);
   $("duration").value = config.duration;
@@ -1918,12 +2228,22 @@ function applyModeConfig(mode) {
   for (const [name, id] of Object.entries(STREAM_CONTROLS)) {
     $(id).value = config.stream_options?.[name] || "";
   }
+  for (const input of STREAM_PROFILE_INPUTS) {
+    input.value = config.stream_options?.[input.name] || "";
+  }
   updateSpecialConfigControls();
 }
 
 function changeFrameworkMode() {
-  state.modeConfigs[state.activeMode] = currentModeConfig();
+  const previous = currentModeConfig();
+  state.modeConfigs[state.activeMode] = previous;
   const mode = $("mode").value;
+  if (mode === TRANSPORT_MODE && !state.modeConfigs[mode]) {
+    const { launch_file, launch_config, stream_options, camera_name, serial_number, usb_port,
+      config_file_path, launch_args } = previous;
+    state.modeConfigs[mode] = { launch_file, launch_config, stream_options, camera_name,
+      serial_number, usb_port, config_file_path, launch_args };
+  }
   state.activeMode = mode;
   applyModeConfig(mode);
   updateModeControls();
@@ -1948,6 +2268,7 @@ async function loadConfig() {
   $("workspacePath").title = config.auto_test_ws || "";
   updateRosVersionControls({ fillBlank: true });
   applyModeConfig(state.activeMode);
+  updateModeControls();
 }
 
 function renderLaunchFileOptions(files, preferred = "") {
@@ -1988,7 +2309,7 @@ async function pollStatus() {
       $("currentMode").textContent =
         payload.runner_type === "standalone"
           ? state.standaloneTest?.title || "独立脚本"
-          : payload.mode || "-";
+          : payload.mode === TRANSPORT_MODE ? "传输延迟" : payload.mode || "-";
     } else {
       $("runMeta").textContent = "";
       $("currentRunId").textContent = "未运行";
@@ -2382,7 +2703,8 @@ function runItem(run) {
   const subtitle = document.createElement("div");
   subtitle.className = "run-subtitle";
   const runnerLabel =
-    run.runner_type === "standalone" ? `独立脚本 · ${run.test_id}` : run.mode || "unknown";
+    run.runner_type === "standalone" ? `独立脚本 · ${run.test_id}`
+      : run.mode === TRANSPORT_MODE ? "传输延迟" : run.mode || "unknown";
   subtitle.textContent = `${runnerLabel} | ${run.started_at || ""} | ${run.results_dir}`;
 
   const badge = document.createElement("span");
@@ -2745,8 +3067,26 @@ async function init() {
     loadLaunchFiles();
   });
   $("mode").addEventListener("change", changeFrameworkMode);
+  $("transportMode").addEventListener("change", updateMonitorVisibility);
+  $("transportReceiver").addEventListener("change", () => {
+    updateSpecialConfigControls();
+    updateModeControls();
+  });
+  $("transportReliability").addEventListener("change", updateMonitorVisibility);
   $("launchFile").addEventListener("change", () => updateLaunchConfigOptions());
-  $("launchConfig").addEventListener("change", updateSpecialConfigControls);
+  $("launchConfig").addEventListener("change", () => {
+    updateSpecialConfigControls();
+    updateFormReadiness();
+  });
+  $("streamOptions").addEventListener("change", (event) => {
+    if (event.target.matches("select")) {
+      updateStreamProfileControls();
+      updateFormReadiness();
+    }
+  });
+  for (const id of ["rosSetup", "cameraSetup"]) {
+    $(id).addEventListener("change", refreshTransportLaunchArguments);
+  }
   $("standaloneTest").addEventListener("change", () =>
     renderStandaloneForm($("standaloneTest").value)
   );

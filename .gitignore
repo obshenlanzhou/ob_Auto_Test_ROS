@@ -6,3 +6,6 @@ __pycache__/
 *.pyc
 results/
 AGENTS.md
+/auto_test_ws/build/
+/auto_test_ws/install/
+/auto_test_ws/log/

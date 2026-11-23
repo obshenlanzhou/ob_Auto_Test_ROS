@@ -3,6 +3,8 @@ from __future__ import annotations
 import argparse
 import json
 import mimetypes
+import os
+import re
 import signal
 import shutil
 import subprocess
@@ -16,6 +18,10 @@ from pathlib import Path
 from typing import Any, Dict
 from urllib.parse import parse_qs, unquote, urlparse
 
+from orbbec_camera_auto_test.core.session import capture_runtime_env
+from orbbec_camera_auto_test.core.gpu_benchmark import camera_launch_options, gpu_benchmark_capability
+from orbbec_camera_auto_test.core.transport_build import ensure_transport_setup
+from orbbec_camera_auto_test.runners.transport import _package_share
 from orbbec_camera_auto_test.profile.merger import load_merged_profile_data
 from .device_info import DeviceQueryError, query_camera_devices
 from .file_preview import (
@@ -442,6 +448,19 @@ def _package_run_results(run_id: str) -> tuple[Dict[str, Any], HTTPStatus]:
     return response, HTTPStatus.OK
 
 
+def transport_launch_arguments(payload: Dict[str, Any]) -> Dict[str, Any]:
+    launch_file = str(payload.get("launch_file") or "")
+    if not re.fullmatch(r"[\w-]+\.launch\.py", launch_file):
+        raise ValueError("Select a ROS 2 camera launch file")
+    env = capture_runtime_env(
+        str(payload.get("camera_setup") or "").strip(),
+        ros_setup=str(payload.get("ros_setup") or "").strip(),
+    )
+    arguments = camera_launch_options(launch_file, env)
+    backend, problem = gpu_benchmark_capability(_package_share("orbbec_camera", env), arguments)
+    return {"arguments": list(arguments), "gpu_backend": backend, "gpu_problem": problem}
+
+
 class UiHandler(BaseHTTPRequestHandler):
     server_version = "OrbbecAutoTestUI/0.1"
 
@@ -550,6 +569,8 @@ class UiHandler(BaseHTTPRequestHandler):
                 self._send_json(response, status=status)
             elif parsed.path == "/api/devices":
                 self._send_json(query_camera_devices(payload))
+            elif parsed.path == "/api/transport/launch-arguments":
+                self._send_json(transport_launch_arguments(payload))
             elif parsed.path == "/api/stop":
                 self._send_json(MANAGER.stop())
             elif parsed.path.startswith("/api/runs/") and parsed.path.endswith(
@@ -603,8 +624,22 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def prepare_transport_test(config: Dict[str, Any]) -> None:
+    if os.environ.get("ORBBEC_TRANSPORT_SETUP"):
+        return
+    ros_setup = config.get("ros_setup") if config.get("ros_version") == "2" else ""
+    ros_setup = ros_setup or setup_defaults()["2"]["ros_setup"]
+    if not ros_setup:
+        return
+    try:
+        ensure_transport_setup(AUTO_TEST_WS, ros_setup, refresh=True)
+    except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+        print(f"[Transport] Could not prepare the test component: {exc}", file=sys.stderr, flush=True)
+
+
 def main() -> None:
     args = parse_args()
+    prepare_transport_test(RUNTIME_CONFIG)
     RUNTIME_CONFIG["host"] = args.host
     RUNTIME_CONFIG["port"] = args.port
     host = args.host

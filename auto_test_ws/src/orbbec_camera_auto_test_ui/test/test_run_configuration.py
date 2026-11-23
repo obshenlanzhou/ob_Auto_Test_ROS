@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 import os
 import subprocess
 import sys
@@ -41,14 +42,185 @@ class RunConfigurationTest(unittest.TestCase):
         self.assertIn("enable_color=true", args)
         self.assertNotIn("--profile", args)
 
+    def test_transport_stream_profiles_are_forwarded_as_launch_arguments(self):
+        payload = self.base_payload()
+        payload.update(mode="transport_latency", stream_options={
+            "color_width": 1280,
+            "color_height": "720",
+            "color_fps": "30",
+            "color_format": "mjpg",
+            "depth_width": "01280",
+            "depth_height": "720",
+            "depth_fps": "",
+            "depth_format": "y16",
+            "enable_left_ir": "true",
+            "left_ir_format": "y8",
+            "enable_right_color": "true",
+            "right_color_width": "1280",
+            "enable_point_cloud": "false",
+        })
+        self.assertEqual(validate_run_payload(payload), [])
+        _, commands, _ = _build_shell_script(payload, Path("/tmp/results"))
+        for arg in ("color_width=1280", "color_height=720", "color_fps=30", "color_format=MJPG",
+                    "depth_width=1280", "depth_height=720", "depth_format=Y16",
+                    "enable_point_cloud=false", "enable_left_ir=true", "left_ir_format=Y8",
+                    "enable_right_color=true", "right_color_width=1280"):
+            self.assertIn(f"--launch-arg {arg}", commands[0])
+        self.assertNotIn("--launch-arg depth_fps=", commands[0])
+
+    def test_invalid_stream_profiles_are_rejected(self):
+        payload = self.base_payload()
+        payload["stream_options"] = {"depth_width": "0", "color_fps": "29.5", "depth_format": "Y16 Y8"}
+        self.assertEqual(validate_run_payload(payload), [
+            "depth_width must be a positive integer",
+            "color_fps must be a positive integer",
+            "depth_format must be a format name such as MJPG or Y16",
+        ])
+
+    def test_transport_scenario_routes_selected_mode_to_performance_runner(self):
+        payload = self.base_payload()
+        payload.update(performance_scenario="transport_latency", transport_mode="intra_process")
+        self.assertEqual(validate_run_payload(payload), [])
+        args = _build_runner_args(payload, "performance", Path("/tmp/results"))
+        self.assertEqual(args[args.index("--transport-mode") + 1], "intra_process")
+        payload["ros_version"] = "1"
+        self.assertTrue(any("ROS 2" in error for error in validate_run_payload(payload)))
+
+    def test_transport_mode_runs_only_the_selected_transport(self):
+        payload = self.base_payload()
+        payload.update(
+            mode="transport_latency", transport_mode="intra_process", duration="10m",
+            transport_reliability="reliable",
+            transport_warmup_frames="45", transport_warmup_timeout_sec="90.5",
+        )
+        self.assertEqual(validate_run_payload(payload), [])
+        _script, commands, _shell = _build_shell_script(payload, Path("/tmp/results"))
+        self.assertEqual(len(commands), 1)
+        self.assertIn("runners.performance", commands[0])
+        self.assertIn("--scenario transport_latency", commands[0])
+        self.assertIn("--transport-mode intra_process", commands[0])
+        self.assertIn("--transport-reliability reliable", commands[0])
+        self.assertIn("--transport-warmup-frames 45", commands[0])
+        self.assertIn("--transport-warmup-timeout-sec 90.5", commands[0])
+        self.assertIn("--duration 10m", commands[0])
+        self.assertNotIn("drop_frame", commands[0])
+        payload["ros_version"] = "1"
+        self.assertTrue(any("ROS 2" in error for error in validate_run_payload(payload)))
+
+    def test_transport_warmup_rejects_invalid_settings(self):
+        payload = self.base_payload()
+        payload.update(
+            mode="transport_latency", transport_warmup_frames="1.5",
+            transport_warmup_timeout_sec="nan",
+        )
+        errors = validate_run_payload(payload)
+        self.assertTrue(any(error.startswith("transport_warmup_frames") for error in errors))
+        self.assertTrue(any(error.startswith("transport_warmup_timeout_sec") for error in errors))
+
+    def test_transport_rejects_unsupported_reliability(self):
+        payload = self.base_payload()
+        payload.update(mode="transport_latency", transport_reliability="system_default")
+        self.assertIn(
+            "transport_reliability must be best_effort or reliable", validate_run_payload(payload)
+        )
+
+    def test_gpu_transport_routes_to_driver_benchmark_without_standard_options(self):
+        payload = self.base_payload()
+        payload.update(
+            mode="transport_latency", transport_receiver="gpu", transport_reliability="reliable",
+            transport_warmup_timeout_sec="10", transport_warmup_frames="0", duration="15s",
+        )
+        self.assertEqual(validate_run_payload(payload), [])
+        _, commands, _ = _build_shell_script(payload, Path("/tmp/results"))
+        self.assertIn("--transport-receiver gpu", commands[0])
+        self.assertIn("--transport-warmup-frames 0", commands[0])
+        self.assertNotIn("--transport-reliability", commands[0])
+        self.assertNotIn("--transport-warmup-timeout-sec", commands[0])
+        payload["duration"] = "1.5s"
+        self.assertTrue(any("integer" in error for error in validate_run_payload(payload)))
+
+    def test_saved_transport_scenario_migrates_to_its_own_mode(self):
+        payload = self.base_payload()
+        payload.update(performance_scenario="transport_latency", transport_mode="intra_process")
+        with tempfile.TemporaryDirectory() as directory:
+            config_path = Path(directory) / "ui_config.json"
+            run_manager.write_json(config_path, payload)
+            with patch.object(run_manager, "CONFIG_PATH", config_path):
+                config = run_manager.load_config()
+        self.assertEqual(config["mode"], "transport_latency")
+        self.assertEqual(config["mode_configs"]["transport_latency"]["transport_mode"], "intra_process")
+        self.assertEqual(config["mode_configs"]["transport_latency"]["transport_reliability"], "best_effort")
+        self.assertEqual(config["mode_configs"]["performance"]["performance_scenario"], "")
+
+    def test_transport_metrics_replace_progress_with_final_latency(self):
+        header = ("elapsed_seconds,topic,samples,current_fps,avg_fps,"
+                  "latency_avg_ms,latency_p95_ms,invalid_stamps,delivery_mismatches\n")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "transport_progress.csv").write_text(
+                header + "1,/camera/depth_registered/points,30,30,30,0,,0,0\n"
+                + "2,/camera/depth_registered/points,60,30,30,0,,0,0"
+            )
+            progress = build_performance_metrics(root)
+            self.assertTrue(progress["transport"])
+            self.assertFalse(progress["transport_final"])
+            self.assertEqual(progress["transport_sampling_seconds"], 1)
+            self.assertEqual(progress["fps_topics"][0]["latency_avg_ms"], 0)
+            self.assertIsNone(progress["fps_topics"][0]["latency_p95_ms"])
+            (root / "transport_summary.csv").write_text(
+                header + "60,/camera/depth_registered/points,1800,30,30,12,15,0,0\n"
+            )
+            final = build_performance_metrics(root)
+            self.assertTrue(final["transport_final"])
+            self.assertEqual(final["elapsed_seconds"], 60)
+            self.assertEqual(final["fps_topics"][0]["topic"], "/camera/depth_registered/points")
+            self.assertEqual(final["fps_topics"][0]["samples"], 1800)
+            self.assertEqual(final["fps_topics"][0]["latency_p95_ms"], 15)
+
+    def test_gpu_transport_metrics_include_stream_profiles(self):
+        rows = [
+            {"stream": "color", "phase": "cpu"},
+            {"stream": "color", "phase": "cuda"},
+            {"stream": "depth", "phase": "cuda"},
+            {"stream": "colored_points", "phase": "cuda"},
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "gpu_transport_progress.json").write_text(json.dumps({"rows": rows}))
+            (root / "launch.log").write_text(
+                "[camera.camera]: color Frame - Width: 1280 Height: 720 fps: 30 Format: MJPG\n"
+                "[camera.camera]: depth Frame - Width: 848 Height: 480 fps: 30 Format: Y16\n"
+            )
+            metrics = build_performance_metrics(root)["gpu_transport"]["rows"]
+
+        self.assertEqual(
+            [(row["phase"], row["resolution"], row["stream_format"]) for row in metrics],
+            [("cpu", "1280 x 720", "MJPG"), ("cuda", "1280 x 720", "MJPG"),
+             ("cuda", "848 x 480", "Y16"), ("cuda", None, "XYZRGB")],
+        )
+
     def test_dual_color_uses_driver_config_and_ignores_stream_options(self):
         payload = self.base_payload()
         payload["launch_config"] = "dual_color"
+        payload["stream_options"]["color_width"] = "1280"
         args = _build_runner_args(payload, "performance", Path("/tmp/results"))
         config_index = args.index("--config-file-path")
         self.assertEqual(args[config_index + 1], "gemini305_dual_color.yaml")
         self.assertIn("device_preset=Dual Color Streams", args)
         self.assertNotIn("enable_color=true", args)
+        self.assertNotIn("color_width=1280", args)
+
+    def test_transport_overrides_only_the_selected_preset_streams(self):
+        payload = self.base_payload()
+        payload.update(mode="transport_latency", launch_config="dual_color", stream_options={
+            "left_color_width": "1280", "right_color_format": "mjpg", "left_ir_width": "848",
+        })
+        self.assertEqual(validate_run_payload(payload), [])
+        _, commands, _ = _build_shell_script(payload, Path("/tmp/results"))
+        self.assertIn("--config-file-path gemini305_dual_color.yaml", commands[0])
+        self.assertIn("--transport-preset-profile left_color_width=1280", commands[0])
+        self.assertIn("--transport-preset-profile right_color_format=MJPG", commands[0])
+        self.assertNotIn("left_ir_width", commands[0])
 
     def test_special_config_is_tied_to_its_launch(self):
         payload = self.base_payload()

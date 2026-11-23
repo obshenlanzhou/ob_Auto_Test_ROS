@@ -611,35 +611,94 @@ def build_performance_summary(result: Dict[str, Any]) -> List[str]:
             )
         lines.append("")
 
-    lines.append("## Topic FPS")
-    lines.append("")
-    fps_rows: List[List[Any]] = []
-    for topic_name, topic_summary in result.get("fps_summary", {}).items():
-        fps_rows.append(
-            [
-                topic_name,
-                f"{topic_summary.get('ideal_fps', 0.0):.2f}",
-                f"{topic_summary.get('current_fps', 0.0):.2f}",
-                f"{topic_summary.get('avg_fps', 0.0):.2f}",
-                topic_summary.get("dropped_frames", 0),
-                f"{topic_summary.get('drop_rate', 0.0) * 100.0:.3f}%",
-            ]
-        )
-    if fps_rows:
-        lines.extend(
-            _markdown_table(
-                ["Topic", "Ideal FPS", "Current FPS", "Average FPS", "Dropped Frames", "Drop Rate"],
-                fps_rows,
+    if result.get("transport_receiver") == "gpu":
+        lines.extend(["## GPU Transport Latency", ""])
+        lines.append(f"- Driver GPU backend: `{result.get('gpu_backend', 'N/A')}`")
+        metric = ("RMW publication to GPU data ready" if result.get("gpu_backend") == "CUDA_BUFFER"
+                  else "Frame header timestamp to subscription callback")
+        lines.extend([f"- Latency basis: {metric}", ""])
+        rows = [
+            [row.get(key) if row.get(key) is not None else "N/A" for key in (
+                "phase", "stream", "backend", "samples", "fps", "latency_ms", "latency_p95_ms",
+                "callback_to_gpu_ms", "cpu_fallback_frames", "read_errors",
+            )]
+            for row in result.get("gpu_transport_summary", [])
+        ]
+        lines.extend(_markdown_table(
+            ["Phase", "Stream", "Received backend", "Samples", "FPS", "Mean latency (ms)",
+             "P95 (ms)", "Callback to GPU (ms)", "CPU fallback frames", "Read errors"],
+            rows or [["N/A"] * 10],
+        ))
+        system = result.get("gpu_system_summary", {})
+        if system:
+            lines.extend(["", "### Whole-system load", ""])
+            lines.extend(_markdown_table(
+                ["Phase", "CPU (%)", "GPU (%)"],
+                [[phase, values.get("cpu_percent"), values.get("gpu_percent")]
+                 for phase, values in system.items()],
+            ))
+        lines.append("")
+    elif result.get("transport_mode"):
+        lines.extend(["## Transport Latency", ""])
+        lines.append(f"- Transport: `{result['transport_mode']}`")
+        if result.get("transport_reliability"):
+            lines.append(f"- Subscription QoS: `{result['transport_reliability']}`, KEEP_LAST(1)")
+        if "warmup_frames" in result and "warmup_timeout_sec" in result:
+            lines.append(
+                f"- Warmup: {result['warmup_frames']} frames per stream, "
+                f"timeout {result['warmup_timeout_sec']:g} s"
             )
-        )
+        lines.append("- Latency basis: frame header timestamp to subscriber callback on the same host")
+        lines.append(f"- Driver package: `{_stringify_markdown_value(environment.get('driver_share'))}`")
+        for library in environment.get("loaded_sdk", []):
+            lines.append(f"- Loaded SDK: `{library['path']}`. SHA-256: `{library['sha256'] or 'N/A'}`")
+        lines.append("")
+        rows = []
+        for topic, stats in result.get("transport_summary", {}).items():
+            avg = stats["latency_avg_ms"]
+            p95 = stats["latency_p95_ms"]
+            rows.append([
+                topic, stats["message_count"], f"{stats['avg_fps']:.3f}",
+                f"{avg:.3f}" if avg is not None else "N/A",
+                f"{p95:.3f}" if p95 is not None else "N/A",
+                stats["invalid_stamps"], stats["delivery_mismatches"],
+            ])
+        lines.extend(_markdown_table(
+            ["Topic", "Samples", "FPS", "Mean latency (ms)", "P95 latency (ms)",
+             "Invalid timestamps", "Delivery mismatches"],
+            rows or [["N/A"] * 7],
+        ))
+        lines.append("")
     else:
-        lines.extend(
-            _markdown_table(
-                ["Topic", "Ideal FPS", "Current FPS", "Average FPS", "Dropped Frames", "Drop Rate"],
-                [["N/A", "N/A", "N/A", "N/A", "N/A", "N/A"]],
+        lines.append("## Topic FPS")
+        lines.append("")
+        fps_rows: List[List[Any]] = []
+        for topic_name, topic_summary in result.get("fps_summary", {}).items():
+            fps_rows.append(
+                [
+                    topic_name,
+                    f"{topic_summary.get('ideal_fps', 0.0):.2f}",
+                    f"{topic_summary.get('current_fps', 0.0):.2f}",
+                    f"{topic_summary.get('avg_fps', 0.0):.2f}",
+                    topic_summary.get("dropped_frames", 0),
+                    f"{topic_summary.get('drop_rate', 0.0) * 100.0:.3f}%",
+                ]
             )
-        )
-    lines.append("")
+        if fps_rows:
+            lines.extend(
+                _markdown_table(
+                    ["Topic", "Ideal FPS", "Current FPS", "Average FPS", "Dropped Frames", "Drop Rate"],
+                    fps_rows,
+                )
+            )
+        else:
+            lines.extend(
+                _markdown_table(
+                    ["Topic", "Ideal FPS", "Current FPS", "Average FPS", "Dropped Frames", "Drop Rate"],
+                    [["N/A", "N/A", "N/A", "N/A", "N/A", "N/A"]],
+                )
+            )
+        lines.append("")
 
     system = result.get("system_summary", {})
     lines.append("## Camera Process Tree Usage")

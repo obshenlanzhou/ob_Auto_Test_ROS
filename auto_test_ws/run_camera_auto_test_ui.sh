@@ -8,4 +8,4 @@ CORE_PACKAGE_ROOT="${WORKSPACE_ROOT}/src/orbbec_camera_auto_test"
 
 export PYTHONPATH="${UI_ROOT}:${CORE_PACKAGE_ROOT}:${PYTHONPATH:-}"
 
-python3 -m orbbec_camera_auto_test_ui.server "$@"
+exec python3 -m orbbec_camera_auto_test_ui.server "$@"
