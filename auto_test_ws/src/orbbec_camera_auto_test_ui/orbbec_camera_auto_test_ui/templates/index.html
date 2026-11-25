@@ -86,38 +86,85 @@
           </div>
 
           <section class="form-section" aria-label="测试策略">
-            <div class="grid two test-grid" id="testStrategy">
+            <div class="grid two test-grid">
               <label class="grid-span-2">
                 <span>测试模式</span>
                 <select id="mode" name="mode">
-                  <option value="functional">Functional · 功能</option>
-                  <option value="performance">Performance · 性能</option>
-                  <option value="transport_latency">Transport latency · 传输延迟</option>
-                  <option value="restart">Restart · 重启</option>
-                  <option value="stream_stall">Stream stall · 卡流</option>
-                  <option value="all">All · 全部</option>
+                  <option value="functional">功能</option>
+                  <option value="performance">性能</option>
+                  <option value="transport_latency">传输延迟</option>
+                  <option value="restart">重启</option>
+                  <option value="stream_stall">卡流</option>
+                  <option value="all">全部</option>
                 </select>
               </label>
-              <label class="grid-span-2">
-                <span>Launch</span>
-                <select id="launchFile" name="launch_file"></select>
-              </label>
-              <label class="grid-span-2 is-hidden">
-                <span>接收方式</span>
-                <select id="transportReceiver" name="transport_receiver">
-                  <option value="standard">标准 ROS</option>
-                  <option value="gpu">GPU</option>
-                </select>
-              </label>
-              <p class="grid-span-2 field-note is-hidden" id="transportGpuCapability"></p>
-              <label class="transport-connection-field is-hidden">
+              <details class="form-section compact-section grid-span-2 inline-disclosure" id="frameworkEnvironment">
+                <summary class="section-title"><div>驱动环境</div><small class="config-summary" id="frameworkRosLabel">ROS 2</small><i aria-hidden="true">⌄</i></summary>
+                <div class="section-content grid two">
+                  <label>
+                    <span>ROS 版本</span>
+                    <select id="rosVersion" name="ros_version">
+                      <option value="2">ROS 2</option>
+                      <option value="1">ROS 1</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>ROS Domain ID</span>
+                    <input id="rosDomainId" name="ros_domain_id" type="number" min="0" max="232" step="1" placeholder="0（留空表示不设置）" />
+                  </label>
+                  <label class="grid-span-2">
+                    <span>ROS Setup</span>
+                    <input id="rosSetup" name="ros_setup" autocomplete="off" placeholder="/opt/ros/humble/setup.bash" />
+                  </label>
+                  <label class="grid-span-2">
+                    <span>Camera ROS Setup</span>
+                    <input id="cameraSetup" name="camera_setup" autocomplete="off" placeholder="/path/to/orbbecsdk_ros2/install/setup.bash" />
+                  </label>
+                  <div class="grid-span-2">
+                    <label class="checkbox-field localhost-toggle">
+                      <span class="field-label"><b>仅本机通信</b><small>ROS 2 · LOCALHOST</small></span>
+                      <span class="localhost-switch">
+                        <input id="rosLocalhostOnly" name="ros_localhost_only" type="checkbox" role="switch" checked />
+                        <span class="localhost-switch-track" aria-hidden="true"></span>
+                      </span>
+                    </label>
+                  </div>
+                </div>
+              </details>
+              <fieldset class="grid-span-2 config-fieldset" id="frameworkCamera">
+                <legend>相机配置</legend>
+                <div class="grid">
+                  <label>
+                    <span>Launch</span>
+                    <select id="launchFile" name="launch_file"></select>
+                  </label>
+                  <details class="form-section compact-section inline-disclosure">
+                    <summary class="section-title"><div>相机参数</div><i aria-hidden="true">⌄</i></summary>
+                    <div class="section-content grid two">
+                      <label><span>相机名称</span><input id="cameraName" name="camera_name" placeholder="camera" /></label>
+                      <label><span>序列号</span><input id="serialNumber" name="serial_number" placeholder="CV2R1610002F" /></label>
+                      <label><span>USB 端口</span><input id="usbPort" name="usb_port" placeholder="2-1" /></label>
+                      <label><span>配置文件</span><input id="configFilePath" name="config_file_path" placeholder="/path/to/camera_config.yaml" /></label>
+                    </div>
+                  </details>
+                </div>
+              </fieldset>
+              <fieldset class="grid-span-2 config-fieldset is-hidden" id="transportReceiver">
+                <legend>接收方式</legend>
+                <div class="receiver-choices">
+                  <label><input id="transportStandard" name="transport_receiver" type="radio" value="standard" checked /><span>标准 ROS</span></label>
+                  <label><input id="transportGpu" name="transport_receiver" type="radio" value="gpu" aria-describedby="transportGpuCapability" disabled /><span>GPU 对比</span></label>
+                </div>
+                <p class="field-note" id="transportGpuCapability" role="status"></p>
+              </fieldset>
+              <label class="is-hidden">
                 <span>通信方式</span>
                 <select id="transportMode" name="transport_mode">
                   <option value="cross_process">跨进程</option>
                   <option value="intra_process">同进程 IPC</option>
                 </select>
               </label>
-              <label class="transport-connection-field is-hidden">
+              <label class="is-hidden">
                 <span>订阅可靠性（QoS）</span>
                 <select id="transportReliability" name="transport_reliability" title="Reliable 需要发布端也使用 Reliable">
                   <option value="best_effort">Best Effort · 尽力</option>
@@ -141,18 +188,11 @@
                   <option value="drop_frame">Drop frame · 丢帧</option>
                 </select>
               </label>
-              <label class="transport-timing-field">
+              <label>
                 <span id="durationLabel">运行时长</span>
-                <input id="duration" name="duration" placeholder="300 / 15m / 2h" />
+                <input id="duration" name="duration" placeholder="300 / 15m / 2h" aria-describedby="transportDurationNote" />
               </label>
-              <label class="transport-timing-field is-hidden">
-                <span>每路预热帧数</span>
-                <input id="transportWarmupFrames" name="transport_warmup_frames" type="number" min="1" step="1" placeholder="30" />
-              </label>
-              <label class="is-hidden">
-                <span>预热超时（秒）</span>
-                <input id="transportWarmupTimeout" name="transport_warmup_timeout_sec" type="number" min="0" step="any" placeholder="60" />
-              </label>
+              <p class="field-note duration-note is-hidden" id="transportDurationNote"></p>
             </div>
 
             <div id="restartFields" class="grid two restart-grid">
@@ -177,8 +217,8 @@
             </div>
           </section>
 
-          <details class="form-section compact-section" id="frameworkStreams" open>
-            <summary class="section-title"><div>流配置</div><i aria-hidden="true">⌄</i></summary>
+          <details class="form-section compact-section" id="frameworkStreams">
+            <summary class="section-title"><div>流配置</div><small class="config-summary" id="frameworkStreamSummary">跟随 Launch</small><i aria-hidden="true">⌄</i></summary>
             <div class="section-content">
               <div id="launchConfigField" class="grid two">
                 <label>
@@ -186,154 +226,198 @@
                   <select id="launchConfig" name="launch_config"><option value="generic">通用</option></select>
                 </label>
               </div>
-              <div id="streamOptions" class="grid two">
-                <label class="stream-toggle"><span>彩色</span><select id="streamColor" aria-label="彩色流状态"><option value="">默认</option><option value="true">开启</option><option value="false">关闭</option></select></label>
-                <label class="stream-toggle"><span>深度</span><select id="streamDepth" aria-label="深度流状态"><option value="">默认</option><option value="true">开启</option><option value="false">关闭</option></select></label>
-                <label class="stream-toggle is-hidden"><span>左彩色</span><select id="streamLeftColor"><option value="">默认</option><option value="true">开启</option><option value="false">关闭</option></select></label>
-                <label class="stream-toggle is-hidden"><span>右彩色</span><select id="streamRightColor"><option value="">默认</option><option value="true">开启</option><option value="false">关闭</option></select></label>
-                <label class="stream-toggle"><span>深度点云</span><select id="streamPointCloud"><option value="">默认</option><option value="true">开启</option><option value="false">关闭</option></select></label>
-                <label class="stream-toggle"><span>彩色点云</span><select id="streamColoredPointCloud"><option value="">默认</option><option value="true">开启</option><option value="false">关闭</option></select></label>
-                <div class="infrared-stream-options grid-span-2">
-                  <label class="stream-toggle"><span>红外</span><select id="streamIr"><option value="">默认</option><option value="true">开启</option><option value="false">关闭</option></select></label>
-                  <label class="stream-toggle"><span>左红外</span><select id="streamLeftIr"><option value="">默认</option><option value="true">开启</option><option value="false">关闭</option></select></label>
-                  <label class="stream-toggle"><span>右红外</span><select id="streamRightIr"><option value="">默认</option><option value="true">开启</option><option value="false">关闭</option></select></label>
-                </div>
-                <label><span>Accel</span><select id="streamAccel"><option value="">默认</option><option value="true">开启</option><option value="false">关闭</option></select></label>
-                <label><span>Gyro</span><select id="streamGyro"><option value="">默认</option><option value="true">开启</option><option value="false">关闭</option></select></label>
-                <label><span>Sync Accel + Gyro</span><select id="streamSyncImu"><option value="">默认</option><option value="true">开启</option><option value="false">关闭</option></select></label>
-                <div id="streamProfileTable" class="stream-profile-table grid-span-2 is-hidden">
-                  <div class="stream-profile-header" aria-hidden="true">
-                    <span>流</span><span>分辨率</span><span>FPS</span><span>格式</span>
-                  </div>
-                  <div class="stream-profile is-hidden" data-stream="color">
+              <div id="streamOptions" class="stream-options">
+                <div class="stream-row">
+                  <label class="stream-toggle">
                     <span>彩色</span>
-                    <div class="stream-resolution">
-                      <label><input name="color_width" aria-label="彩色宽度" inputmode="numeric" placeholder="1280" /></label>
-                      <span aria-hidden="true">×</span>
-                      <label><input name="color_height" aria-label="彩色高度" inputmode="numeric" placeholder="720" /></label>
+                    <select id="streamColor" aria-label="彩色流状态"><option value="">跟随 Launch</option><option value="true">开启</option><option value="false">关闭</option></select>
+                    <span class="stream-preset-state is-hidden">预设开启</span>
+                  </label>
+                  <div class="stream-profile is-hidden" data-stream="color">
+                    <div class="stream-profile-resolution">
+                      <span>分辨率</span>
+                      <div class="stream-resolution">
+                        <label><input name="color_width" aria-label="彩色宽度" inputmode="numeric" placeholder="1280" /></label>
+                        <span aria-hidden="true">×</span>
+                        <label><input name="color_height" aria-label="彩色高度" inputmode="numeric" placeholder="720" /></label>
+                      </div>
                     </div>
-                    <label><input name="color_fps" aria-label="彩色帧率" inputmode="numeric" placeholder="30" /></label>
-                    <label><input name="color_format" aria-label="彩色格式" placeholder="MJPG" /></label>
-                  </div>
-                  <div class="stream-profile is-hidden" data-stream="depth">
-                    <span>深度</span>
-                    <div class="stream-resolution">
-                      <label><input name="depth_width" aria-label="深度宽度" inputmode="numeric" placeholder="1280" /></label>
-                      <span aria-hidden="true">×</span>
-                      <label><input name="depth_height" aria-label="深度高度" inputmode="numeric" placeholder="720" /></label>
-                    </div>
-                    <label><input name="depth_fps" aria-label="深度帧率" inputmode="numeric" placeholder="30" /></label>
-                    <label><input name="depth_format" aria-label="深度格式" placeholder="Y16" /></label>
-                  </div>
-                  <div class="stream-profile is-hidden" data-stream="left_color">
-                    <span>左彩色</span>
-                    <div class="stream-resolution">
-                      <label><input name="left_color_width" aria-label="左彩色宽度" inputmode="numeric" /></label>
-                      <span aria-hidden="true">×</span>
-                      <label><input name="left_color_height" aria-label="左彩色高度" inputmode="numeric" /></label>
-                    </div>
-                    <label><input name="left_color_fps" aria-label="左彩色帧率" inputmode="numeric" placeholder="30" /></label>
-                    <label><input name="left_color_format" aria-label="左彩色格式" placeholder="MJPG" /></label>
-                  </div>
-                  <div class="stream-profile is-hidden" data-stream="right_color">
-                    <span>右彩色</span>
-                    <div class="stream-resolution">
-                      <label><input name="right_color_width" aria-label="右彩色宽度" inputmode="numeric" /></label>
-                      <span aria-hidden="true">×</span>
-                      <label><input name="right_color_height" aria-label="右彩色高度" inputmode="numeric" /></label>
-                    </div>
-                    <label><input name="right_color_fps" aria-label="右彩色帧率" inputmode="numeric" placeholder="30" /></label>
-                    <label><input name="right_color_format" aria-label="右彩色格式" placeholder="MJPG" /></label>
-                  </div>
-                  <div class="stream-profile is-hidden" data-stream="ir">
-                    <span>红外</span>
-                    <div class="stream-resolution">
-                      <label><input name="ir_width" aria-label="红外宽度" inputmode="numeric" /></label>
-                      <span aria-hidden="true">×</span>
-                      <label><input name="ir_height" aria-label="红外高度" inputmode="numeric" /></label>
-                    </div>
-                    <label><input name="ir_fps" aria-label="红外帧率" inputmode="numeric" placeholder="30" /></label>
-                    <label><input name="ir_format" aria-label="红外格式" placeholder="Y8" /></label>
-                  </div>
-                  <div class="stream-profile is-hidden" data-stream="left_ir">
-                    <span>左红外</span>
-                    <div class="stream-resolution">
-                      <label><input name="left_ir_width" aria-label="左红外宽度" inputmode="numeric" /></label>
-                      <span aria-hidden="true">×</span>
-                      <label><input name="left_ir_height" aria-label="左红外高度" inputmode="numeric" /></label>
-                    </div>
-                    <label><input name="left_ir_fps" aria-label="左红外帧率" inputmode="numeric" placeholder="30" /></label>
-                    <label><input name="left_ir_format" aria-label="左红外格式" placeholder="Y8" /></label>
-                  </div>
-                  <div class="stream-profile is-hidden" data-stream="right_ir">
-                    <span>右红外</span>
-                    <div class="stream-resolution">
-                      <label><input name="right_ir_width" aria-label="右红外宽度" inputmode="numeric" /></label>
-                      <span aria-hidden="true">×</span>
-                      <label><input name="right_ir_height" aria-label="右红外高度" inputmode="numeric" /></label>
-                    </div>
-                    <label><input name="right_ir_fps" aria-label="右红外帧率" inputmode="numeric" placeholder="30" /></label>
-                    <label><input name="right_ir_format" aria-label="右红外格式" placeholder="Y8" /></label>
+                    <label class="stream-profile-fps"><span>FPS</span><input name="color_fps" aria-label="彩色帧率" inputmode="numeric" placeholder="30" /></label>
+                    <label class="stream-profile-format"><span>格式</span><input name="color_format" aria-label="彩色格式" placeholder="MJPG" /></label>
                   </div>
                 </div>
-                <p class="field-note grid-span-2 is-hidden" id="streamProfileNote"></p>
+                <div class="stream-row">
+                  <label class="stream-toggle">
+                    <span>深度</span>
+                    <select id="streamDepth" aria-label="深度流状态"><option value="">跟随 Launch</option><option value="true">开启</option><option value="false">关闭</option></select>
+                    <span class="stream-preset-state is-hidden">预设开启</span>
+                  </label>
+                  <div class="stream-profile is-hidden" data-stream="depth">
+                    <div class="stream-profile-resolution">
+                      <span>分辨率</span>
+                      <div class="stream-resolution">
+                        <label><input name="depth_width" aria-label="深度宽度" inputmode="numeric" placeholder="1280" /></label>
+                        <span aria-hidden="true">×</span>
+                        <label><input name="depth_height" aria-label="深度高度" inputmode="numeric" placeholder="720" /></label>
+                      </div>
+                    </div>
+                    <label class="stream-profile-fps"><span>FPS</span><input name="depth_fps" aria-label="深度帧率" inputmode="numeric" placeholder="30" /></label>
+                    <label class="stream-profile-format"><span>格式</span><input name="depth_format" aria-label="深度格式" placeholder="Y16" /></label>
+                  </div>
+                </div>
+                <div class="stream-row is-hidden">
+                  <label class="stream-toggle">
+                    <span>左彩色</span>
+                    <select id="streamLeftColor"><option value="">跟随 Launch</option><option value="true">开启</option><option value="false">关闭</option></select>
+                    <span class="stream-preset-state is-hidden">预设开启</span>
+                  </label>
+                  <div class="stream-profile is-hidden" data-stream="left_color">
+                    <div class="stream-profile-resolution">
+                      <span>分辨率</span>
+                      <div class="stream-resolution">
+                        <label><input name="left_color_width" aria-label="左彩色宽度" inputmode="numeric" /></label>
+                        <span aria-hidden="true">×</span>
+                        <label><input name="left_color_height" aria-label="左彩色高度" inputmode="numeric" /></label>
+                      </div>
+                    </div>
+                    <label class="stream-profile-fps"><span>FPS</span><input name="left_color_fps" aria-label="左彩色帧率" inputmode="numeric" placeholder="30" /></label>
+                    <label class="stream-profile-format"><span>格式</span><input name="left_color_format" aria-label="左彩色格式" placeholder="MJPG" /></label>
+                  </div>
+                </div>
+                <div class="stream-row is-hidden">
+                  <label class="stream-toggle">
+                    <span>右彩色</span>
+                    <select id="streamRightColor"><option value="">跟随 Launch</option><option value="true">开启</option><option value="false">关闭</option></select>
+                    <span class="stream-preset-state is-hidden">预设开启</span>
+                  </label>
+                  <div class="stream-profile is-hidden" data-stream="right_color">
+                    <div class="stream-profile-resolution">
+                      <span>分辨率</span>
+                      <div class="stream-resolution">
+                        <label><input name="right_color_width" aria-label="右彩色宽度" inputmode="numeric" /></label>
+                        <span aria-hidden="true">×</span>
+                        <label><input name="right_color_height" aria-label="右彩色高度" inputmode="numeric" /></label>
+                      </div>
+                    </div>
+                    <label class="stream-profile-fps"><span>FPS</span><input name="right_color_fps" aria-label="右彩色帧率" inputmode="numeric" placeholder="30" /></label>
+                    <label class="stream-profile-format"><span>格式</span><input name="right_color_format" aria-label="右彩色格式" placeholder="MJPG" /></label>
+                  </div>
+                </div>
+                <div class="stream-row">
+                  <label class="stream-toggle">
+                    <span>深度点云</span>
+                    <select id="streamPointCloud"><option value="">跟随 Launch</option><option value="true">开启</option><option value="false">关闭</option></select>
+                  </label>
+                </div>
+                <div class="stream-row">
+                  <label class="stream-toggle">
+                    <span>彩色点云</span>
+                    <select id="streamColoredPointCloud"><option value="">跟随 Launch</option><option value="true">开启</option><option value="false">关闭</option></select>
+                  </label>
+                </div>
+                <div class="stream-row">
+                  <label class="stream-toggle">
+                    <span>红外</span>
+                    <select id="streamIr"><option value="">跟随 Launch</option><option value="true">开启</option><option value="false">关闭</option></select>
+                    <span class="stream-preset-state is-hidden">预设开启</span>
+                  </label>
+                  <div class="stream-profile is-hidden" data-stream="ir">
+                    <div class="stream-profile-resolution">
+                      <span>分辨率</span>
+                      <div class="stream-resolution">
+                        <label><input name="ir_width" aria-label="红外宽度" inputmode="numeric" /></label>
+                        <span aria-hidden="true">×</span>
+                        <label><input name="ir_height" aria-label="红外高度" inputmode="numeric" /></label>
+                      </div>
+                    </div>
+                    <label class="stream-profile-fps"><span>FPS</span><input name="ir_fps" aria-label="红外帧率" inputmode="numeric" placeholder="30" /></label>
+                    <label class="stream-profile-format"><span>格式</span><input name="ir_format" aria-label="红外格式" placeholder="Y8" /></label>
+                  </div>
+                </div>
+                <div class="stream-row">
+                  <label class="stream-toggle">
+                    <span>左红外</span>
+                    <select id="streamLeftIr"><option value="">跟随 Launch</option><option value="true">开启</option><option value="false">关闭</option></select>
+                    <span class="stream-preset-state is-hidden">预设开启</span>
+                  </label>
+                  <div class="stream-profile is-hidden" data-stream="left_ir">
+                    <div class="stream-profile-resolution">
+                      <span>分辨率</span>
+                      <div class="stream-resolution">
+                        <label><input name="left_ir_width" aria-label="左红外宽度" inputmode="numeric" /></label>
+                        <span aria-hidden="true">×</span>
+                        <label><input name="left_ir_height" aria-label="左红外高度" inputmode="numeric" /></label>
+                      </div>
+                    </div>
+                    <label class="stream-profile-fps"><span>FPS</span><input name="left_ir_fps" aria-label="左红外帧率" inputmode="numeric" placeholder="30" /></label>
+                    <label class="stream-profile-format"><span>格式</span><input name="left_ir_format" aria-label="左红外格式" placeholder="Y8" /></label>
+                  </div>
+                </div>
+                <div class="stream-row">
+                  <label class="stream-toggle">
+                    <span>右红外</span>
+                    <select id="streamRightIr"><option value="">跟随 Launch</option><option value="true">开启</option><option value="false">关闭</option></select>
+                    <span class="stream-preset-state is-hidden">预设开启</span>
+                  </label>
+                  <div class="stream-profile is-hidden" data-stream="right_ir">
+                    <div class="stream-profile-resolution">
+                      <span>分辨率</span>
+                      <div class="stream-resolution">
+                        <label><input name="right_ir_width" aria-label="右红外宽度" inputmode="numeric" /></label>
+                        <span aria-hidden="true">×</span>
+                        <label><input name="right_ir_height" aria-label="右红外高度" inputmode="numeric" /></label>
+                      </div>
+                    </div>
+                    <label class="stream-profile-fps"><span>FPS</span><input name="right_ir_fps" aria-label="右红外帧率" inputmode="numeric" placeholder="30" /></label>
+                    <label class="stream-profile-format"><span>格式</span><input name="right_ir_format" aria-label="右红外格式" placeholder="Y8" /></label>
+                  </div>
+                </div>
+                <div class="stream-row">
+                  <label class="stream-toggle">
+                    <span>Accel</span>
+                    <select id="streamAccel"><option value="">跟随 Launch</option><option value="true">开启</option><option value="false">关闭</option></select>
+                  </label>
+                </div>
+                <div class="stream-row">
+                  <label class="stream-toggle">
+                    <span>Gyro</span>
+                    <select id="streamGyro"><option value="">跟随 Launch</option><option value="true">开启</option><option value="false">关闭</option></select>
+                  </label>
+                </div>
+                <div class="stream-row">
+                  <label class="stream-toggle">
+                    <span>Sync Accel + Gyro</span>
+                    <select id="streamSyncImu"><option value="">跟随 Launch</option><option value="true">开启</option><option value="false">关闭</option></select>
+                  </label>
+                </div>
               </div>
+              <p class="field-note is-hidden" id="streamProfileNote"></p>
             </div>
           </details>
 
-          <details class="form-section compact-section" id="frameworkEnvironment">
-            <summary class="section-title"><div>运行环境</div><small id="frameworkRosLabel">ROS 2</small><i aria-hidden="true">⌄</i></summary>
-            <div class="section-content grid two">
-              <label>
-                <span>ROS 版本</span>
-                <select id="rosVersion" name="ros_version">
-                  <option value="2">ROS 2</option>
-                  <option value="1">ROS 1</option>
-                </select>
-              </label>
-              <label>
-                <span>ROS Domain ID</span>
-                <input id="rosDomainId" name="ros_domain_id" type="number" min="0" max="232" step="1" placeholder="0（留空表示不设置）" />
-              </label>
-              <label class="grid-span-2">
-                <span>ROS Setup</span>
-                <input id="rosSetup" name="ros_setup" autocomplete="off" placeholder="/opt/ros/humble/setup.bash" />
-              </label>
-              <label class="grid-span-2">
-                <span>Camera ROS Setup</span>
-                <input id="cameraSetup" name="camera_setup" autocomplete="off" placeholder="/path/to/orbbecsdk_ros2/install/setup.bash" />
-              </label>
-              <div class="grid-span-2">
-                <label class="checkbox-field localhost-toggle">
-                  <span class="field-label"><b>仅本机通信</b><small>ROS 2 · LOCALHOST</small></span>
-                  <span class="localhost-switch">
-                    <input id="rosLocalhostOnly" name="ros_localhost_only" type="checkbox" role="switch" checked />
-                    <span class="localhost-switch-track" aria-hidden="true"></span>
-                  </span>
-                </label>
-              </div>
-            </div>
-          </details>
-
-          <details class="form-section compact-section">
-            <summary class="section-title"><div>相机参数</div><i aria-hidden="true">⌄</i></summary>
-            <div class="section-content">
-              <div class="grid two">
-                <label><span>Camera Name</span><input id="cameraName" name="camera_name" placeholder="camera" /></label>
-                <label><span>Serial Number</span><input id="serialNumber" name="serial_number" placeholder="CV2R1610002F" /></label>
-                <label><span>USB Port</span><input id="usbPort" name="usb_port" placeholder="2-1" /></label>
-                <label><span>Config File Path</span><input id="configFilePath" name="config_file_path" placeholder="/path/to/camera_config.yaml" /></label>
-              </div>
-            </div>
-          </details>
-
-          <details class="form-section compact-section">
-            <summary class="section-title"><div>Launch 参数</div><i aria-hidden="true">⌄</i></summary>
-            <div class="section-content">
-              <p class="risk-banner multi-camera-launch-warning" role="note">
-                <strong>多相机 Launch 提示：</strong>页面设置的日志级别和 Launch 参数不会生效，请直接在 Launch 文件中配置。
-              </p>
-              <label><span>Extra Launch Args</span><textarea id="launchArgs" name="launch_args" rows="4" placeholder="enable_point_cloud=true&#10;enable_colored_point_cloud=true"></textarea></label>
+          <details class="form-section compact-section" id="frameworkAdvanced">
+            <summary class="section-title"><div>高级设置</div><small class="config-summary is-hidden" id="frameworkAdvancedSummary"></small><i aria-hidden="true">⌄</i></summary>
+            <div class="section-content advanced-settings">
+              <section class="advanced-group is-hidden" id="transportWarmupSettings" aria-labelledby="transportWarmupTitle">
+                <h3 id="transportWarmupTitle">预热</h3>
+                <div class="grid two">
+                  <label>
+                    <span>每路预热帧数</span>
+                    <input id="transportWarmupFrames" name="transport_warmup_frames" type="number" min="1" step="1" placeholder="30" />
+                  </label>
+                  <label class="is-hidden">
+                    <span>预热超时（秒）</span>
+                    <input id="transportWarmupTimeout" name="transport_warmup_timeout_sec" type="number" min="0" step="any" placeholder="60" />
+                  </label>
+                </div>
+              </section>
+              <section class="advanced-group" aria-labelledby="advancedLaunchTitle">
+                <h3 id="advancedLaunchTitle">Launch 参数</h3>
+                <p class="risk-banner multi-camera-launch-warning" role="note">
+                  <strong>多相机 Launch 提示：</strong>页面设置的日志级别和 Launch 参数不会生效，请直接在 Launch 文件中配置。
+                </p>
+                <label><span>额外 Launch 参数</span><textarea id="launchArgs" name="launch_args" rows="4" placeholder="enable_point_cloud=true&#10;enable_colored_point_cloud=true"></textarea></label>
+              </section>
             </div>
           </details>
 
@@ -478,7 +562,14 @@
                     <thead>
                       <tr id="fpsColumns"><th>Topic</th><th>分辨率</th><th>格式</th><th>当前 FPS</th><th>平均 FPS</th><th>目标 FPS</th><th>丢帧</th><th>丢帧率</th></tr>
                       <tr id="transportColumns" class="is-hidden"><th scope="col">话题</th><th scope="col">分辨率</th><th scope="col">格式</th><th scope="col">样本数</th><th scope="col">当前 FPS</th><th scope="col">平均 FPS</th><th scope="col">平均延迟 (ms)</th><th scope="col">P95 延迟 (ms)</th></tr>
-                      <tr id="gpuTransportColumns" class="is-hidden"><th scope="col">流</th><th scope="col">分辨率</th><th scope="col">格式</th><th scope="col">阶段</th><th scope="col">接收后端</th><th scope="col">样本数</th><th scope="col">FPS</th><th scope="col" id="gpuLatencyColumn">最近延迟 (ms)</th><th scope="col">P95 (ms)</th><th scope="col" id="gpuFallbackColumn">CPU 回退帧</th></tr>
+                      <tr id="gpuTransportColumns" class="is-hidden">
+                        <th scope="col">流</th><th scope="col">分辨率</th><th scope="col">格式</th>
+                        <th scope="col">模式</th><th scope="col">接收后端</th>
+                        <th scope="col">FPS</th>
+                        <th scope="col" title="运行中显示最近采样窗口的平均值，结束后显示全阶段平均值">端到端平均时延 (ms)</th>
+                        <th scope="col">端到端 P95 时延 (ms)</th>
+                        <th scope="col">整机 CPU (%)</th><th scope="col">整机 GPU (%)</th>
+                      </tr>
                     </thead>
                     <tbody id="fpsTableBody"><tr><td colspan="8">等待性能压测数据…</td></tr></tbody>
                   </table>

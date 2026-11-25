@@ -222,17 +222,21 @@ frame_timestamp_csv_file=<scenario_results_dir>/driver_frame_timestamp.csv
 
 ### 单版本传输延迟测试
 
-在 Web UI 的 **测试模式** 下拉框中直接选择 **Transport latency · 传输延迟**，
+在 Web UI 的 **测试模式** 下拉框中直接选择 **传输延迟**，
 然后选择通信方式和采样时长。每次运行使用当前选择的 Camera ROS Setup 和 Launch。
 测试组件由自动化工作区独立构建，旧版驱动可以直接复用。
 
-**接收方式** 默认选择标准 ROS。选 GPU 时，UI 检查当前驱动的 GPU 后端并运行其内置示例。
-NITROS 对比 CPU DDS 与 NITROS IPC，统计帧时间戳到订阅回调。CUDA Buffer 对比 CPU 接收后上传
-和共享 CUDA 缓冲区，统计从发布到 GPU 数据就绪。GPU 示例使用固定的 QoS、通信方式和每阶段 60 秒的
-预热超时。采样时长按阶段配置，范围为 1–3600 秒。实时表格显示接收后端，CUDA Buffer 还显示 CPU 回退帧。
-原始 GPU 示例汇总保存在 `gpu_driver_summary.csv`，命令行可用 `--transport-receiver gpu` 选择同一模式。
+**接收方式** 默认选择标准 ROS。选择相机 Launch 或修改驱动环境后，UI 检查 GPU 后端并显示可用的对比路径。
+选择 **GPU 对比** 后，采样时长按阶段填写，旁边显示两阶段的合计采样时间。预热设置位于 **高级设置**。
+NITROS 对比 CPU DDS 与 NITROS IPC，CUDA Buffer 对比接收 CPU 数据后上传和直接访问共享 CUDA 缓冲。
+当前驱动的两种 GPU 测试都从帧时间戳计时到订阅回调开始。`time_domain=device` 时，该时延显示为
+`n/a`，FPS 继续统计。旧版 CUDA Buffer 驱动缺少端到端时延数据时，该时延也显示为 `n/a`。
+GPU 示例使用固定的 QoS、通信方式和每阶段 60 秒的预热超时。采样时长按阶段配置，范围为 1–3600 秒。
+表格按流排列两种模式，显示流、分辨率、格式、模式、接收后端、FPS、端到端平均和 P95 时延以及整机 CPU/GPU 占用。
+原始 GPU 示例汇总保存在 `gpu_driver_summary.csv`，可以查看样本数、最长收帧间隔及 CUDA Buffer 的 CPU 回退帧。
+命令行可用 `--transport-receiver gpu` 选择同一模式。
 
-**流配置** 根据所选 ROS 2 Launch 显示可用开关。将一路图像设为「开启」后，可填写宽度、高度、
+**流配置** 根据所选 ROS 2 Launch 显示可用开关。将一路图像设为「开启」后，在该流下方可填写宽度、高度、
 FPS 和格式，支持彩色、深度、单红外、左右红外及左右彩色。留空采用 Launch 默认值，
 相机 YAML 和额外 Launch 参数中的同名设置优先。Gemini 301 系列的「双彩色」和 Gemini 2L 的
 「双红外」由预设启用左右两路，可分别覆盖其图像参数，留空采用预设值。

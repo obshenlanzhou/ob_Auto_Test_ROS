@@ -718,24 +718,125 @@ h3 {
   align-items: end;
 }
 
-#testStrategy[data-transport="true"] {
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+.inline-disclosure {
+  box-shadow: none;
+  background: transparent;
 }
 
-#testStrategy[data-transport="true"] > label {
-  grid-column: span 2;
+.inline-disclosure summary {
+  padding: 8px 10px;
 }
 
-#testStrategy[data-transport="true"] > .transport-connection-field {
-  grid-column: span 3;
+.section-title .config-summary {
+  min-width: 0;
+  margin-left: auto;
+  overflow: hidden;
+  font-family: inherit;
+  font-size: 11px;
+  letter-spacing: normal;
+  text-overflow: ellipsis;
+  text-transform: none;
+  white-space: nowrap;
 }
 
-#testStrategy[data-receiver="gpu"] > .transport-timing-field {
-  grid-column: span 3;
+#runForm .compact-section .config-summary:not(.is-hidden) + i {
+  margin-left: 0;
 }
 
-#testStrategy[data-transport="true"] > .grid-span-2 {
-  grid-column: 1 / -1;
+.config-fieldset {
+  min-inline-size: 0;
+  margin: 0;
+  border: 0;
+  padding: 0;
+}
+
+.config-fieldset legend {
+  margin-bottom: 6px;
+  padding: 0;
+  color: var(--text-soft);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.receiver-choices {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  margin-bottom: 5px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 3px;
+  background: var(--input-bg);
+}
+
+.receiver-choices label {
+  position: relative;
+}
+
+.receiver-choices input {
+  position: absolute;
+  inset: 0;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+}
+
+.receiver-choices span {
+  border: 1px solid transparent;
+  border-radius: 7px;
+  padding: 7px 6px;
+  text-align: center;
+}
+
+.receiver-choices input:checked + span {
+  border-color: var(--primary-line);
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+
+.receiver-choices input:focus-visible + span {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+}
+
+.receiver-choices input:disabled + span {
+  border-color: transparent;
+  background: transparent;
+  color: var(--muted);
+  opacity: 0.65;
+}
+
+.receiver-choices input:disabled:checked + span {
+  border-color: var(--line);
+}
+
+.receiver-choices input:not(:disabled) {
+  cursor: pointer;
+}
+
+.duration-note {
+  align-self: end;
+  padding: 0 0 7px;
+}
+
+.advanced-settings {
+  gap: 12px;
+}
+
+.advanced-group {
+  display: grid;
+  gap: 8px;
+}
+
+.advanced-group:not(.is-hidden) ~ .advanced-group {
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+
+.advanced-group h3 {
+  margin: 0;
+  color: var(--text-soft);
+  font-size: 12px;
 }
 
 #frameworkMonitor[data-gpu="true"] > .perf-metrics,
@@ -747,63 +848,58 @@ h3 {
   grid-column: 1 / -1;
 }
 
-#frameworkStreams[data-transport="true"] #streamOptions {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 7px 14px;
-}
-
-.infrared-stream-options {
-  display: contents;
-}
-
-#frameworkStreams[data-transport="true"] .infrared-stream-options {
+.stream-options {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(90px, 1fr));
-  gap: 7px 12px;
 }
 
-#frameworkStreams[data-transport="true"] .stream-toggle {
-  grid-template-columns: 4em minmax(0, 1fr);
-  align-items: center;
-  gap: 6px;
-}
-
-#frameworkStreams[data-transport="true"] .infrared-stream-options .stream-toggle {
-  grid-template-columns: 3em minmax(0, 1fr);
-}
-
-#frameworkStreams[data-transport="true"] .infrared-stream-options:not(:has(label:not(.is-hidden))) {
-  display: none;
-}
-
-.stream-profile-table {
+.stream-row {
   display: grid;
   gap: 6px;
-  margin-top: 2px;
   border-top: 1px solid var(--line);
-  padding-top: 8px;
+  padding: 5px 0;
 }
 
-.stream-profile,
-.stream-profile-header {
-  display: grid;
-  grid-template-columns: 38px minmax(0, 2fr) minmax(34px, 0.65fr) minmax(48px, 1fr);
+.stream-toggle {
+  grid-template-columns: minmax(0, 1fr) minmax(110px, 42%);
   align-items: center;
-  gap: 6px;
+  gap: 8px;
 }
 
-.stream-profile-header {
-  margin-bottom: -3px;
+.stream-preset-state {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.stream-profile {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(40px, 0.7fr) minmax(55px, 1fr);
+  gap: 8px;
+  padding-bottom: 3px;
+}
+
+.stream-profile-resolution {
+  display: grid;
+  grid-column: 1;
+  gap: 3px;
+}
+
+.stream-profile-fps {
+  grid-column: 2;
+}
+
+.stream-profile-format {
+  grid-column: 3;
+}
+
+.stream-profile label {
+  gap: 3px;
+}
+
+.stream-profile > label > span,
+.stream-profile-resolution > span {
   color: var(--muted);
   font-size: 11px;
-  font-weight: 700;
-  text-align: center;
-}
-
-.stream-profile > span {
-  color: var(--text-soft);
-  font-size: 12px;
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .stream-resolution {
@@ -815,8 +911,17 @@ h3 {
   font-size: 11px;
 }
 
+.stream-profile-resolution:not(:has(.stream-resolution label:not(.is-hidden))),
+.stream-resolution:has(label.is-hidden) > span {
+  display: none;
+}
+
+.stream-resolution:has(label.is-hidden) {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .stream-profile input,
-#frameworkStreams[data-transport="true"] .stream-toggle select {
+.stream-toggle select {
   min-width: 0;
   min-height: 32px;
   padding: 5px 4px;
@@ -829,7 +934,7 @@ h3 {
   font-variant-numeric: tabular-nums;
 }
 
-#frameworkStreams[data-transport="true"] .stream-toggle select {
+.stream-toggle select {
   padding-left: 6px;
   padding-right: 17px;
   background-position: calc(100% - 11px) 13px, calc(100% - 7px) 13px;

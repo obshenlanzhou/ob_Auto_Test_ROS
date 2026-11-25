@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 from typing import Any, Dict, Iterable, List
 
+from .gpu_benchmark import FRAME_TO_CALLBACK, gpu_latency_basis
+
 
 def ensure_dir(path: Path) -> Path:
     path.mkdir(parents=True, exist_ok=True)
@@ -614,29 +616,39 @@ def build_performance_summary(result: Dict[str, Any]) -> List[str]:
     if result.get("transport_receiver") == "gpu":
         lines.extend(["## GPU Transport Latency", ""])
         lines.append(f"- Driver GPU backend: `{result.get('gpu_backend', 'N/A')}`")
-        metric = ("RMW publication to GPU data ready" if result.get("gpu_backend") == "CUDA_BUFFER"
-                  else "Frame header timestamp to subscription callback")
-        lines.extend([f"- Latency basis: {metric}", ""])
-        rows = [
-            [row.get(key) if row.get(key) is not None else "N/A" for key in (
-                "phase", "stream", "backend", "samples", "fps", "latency_ms", "latency_p95_ms",
-                "callback_to_gpu_ms", "cpu_fallback_frames", "read_errors",
-            )]
-            for row in result.get("gpu_transport_summary", [])
-        ]
-        lines.extend(_markdown_table(
-            ["Phase", "Stream", "Received backend", "Samples", "FPS", "Mean latency (ms)",
-             "P95 (ms)", "Callback to GPU (ms)", "CPU fallback frames", "Read errors"],
-            rows or [["N/A"] * 10],
-        ))
+        if result.get("duration_seconds") is not None:
+            lines.append(f"- Test duration: {result['duration_seconds']:g} s")
+        lines.extend(["- Latency basis: Frame header timestamp to subscription callback", ""])
+        summary = result.get("gpu_transport_summary", [])
+        basis = gpu_latency_basis(result.get("gpu_backend"), summary)
         system = result.get("gpu_system_summary", {})
-        if system:
-            lines.extend(["", "### Whole-system load", ""])
-            lines.extend(_markdown_table(
-                ["Phase", "CPU (%)", "GPU (%)"],
-                [[phase, values.get("cpu_percent"), values.get("gpu_percent")]
-                 for phase, values in system.items()],
-            ))
+        configs = {config.get("stream"): config for config in stream_config}
+        cloud_formats = {"points": "XYZ", "colored_points": "XYZRGB"}
+        phase_names = {"cpu": "CPU (DDS)", "cuda": "CUDA Buffer"}
+        rows = []
+        for row in summary:
+            phase, stream = row["phase"], row["stream"]
+            load = system.get(phase, {})
+            config = configs.get(stream, {})
+            width, height = config.get("width"), config.get("height")
+            end_to_end = (row.get("latency_basis") or basis) == FRAME_TO_CALLBACK
+            metrics = [
+                row.get("fps"),
+                row.get("latency_ms") if end_to_end else None,
+                row.get("latency_p95_ms") if end_to_end else None,
+                load.get("cpu_percent"), load.get("gpu_percent"),
+            ]
+            rows.append([
+                stream, f"{width} x {height}" if width and height else None,
+                cloud_formats.get(stream) or config.get("format"), phase_names.get(phase, phase),
+                row.get("backend"),
+                *[f"{value:.3f}" if value is not None else "n/a" for value in metrics],
+            ])
+        headers = [
+            "Stream", "Resolution", "Format", "Mode", "Receiver backend", "FREQ[Hz]",
+            "LATENCY AVG (ms)", "LATENCY P95 (ms)", "CPU[%]", "GPU[%]",
+        ]
+        lines.extend(_markdown_table(headers, rows or [["n/a"] * len(headers)]))
         lines.append("")
     elif result.get("transport_mode"):
         lines.extend(["## Transport Latency", ""])

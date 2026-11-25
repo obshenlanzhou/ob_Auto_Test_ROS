@@ -15,6 +15,7 @@ const state = {
   activeMode: "functional",
   modeConfigs: {},
   transportLaunchKey: "",
+  transportLaunchRequest: null,
   transportLaunchArguments: null,
   transportGpuCapability: null,
 };
@@ -163,7 +164,7 @@ const STREAM_CONTROLS = {
   enable_gyro: "streamGyro",
   enable_sync_output_accel_gyro: "streamSyncImu",
 };
-const STREAM_PROFILE_INPUTS = [...document.querySelectorAll("#streamProfileTable input")];
+const STREAM_PROFILE_INPUTS = [...document.querySelectorAll("#streamOptions .stream-profile input")];
 const DEFAULT_MODE_CONFIG = {
   performance_scenario: "",
   transport_mode: "cross_process",
@@ -413,7 +414,7 @@ function formPayload() {
     mode,
     ...(usesPerformanceScenario ? { performance_scenario: $("performanceScenario").value } : {}),
     ...(transport ? {
-      transport_receiver: $("transportReceiver").value,
+      transport_receiver: gpu ? "gpu" : "standard",
       ...(!gpu ? {
         transport_mode: $("transportMode").value,
         transport_reliability: $("transportReliability").value,
@@ -977,7 +978,7 @@ const FRAMEWORK_ERROR_FIELDS = [
   ["queue_size", "queueSize"],
   ["transport_warmup_frames", "transportWarmupFrames"],
   ["transport_reliability", "transportReliability"],
-  ["transport_receiver", "transportReceiver"],
+  ["transport_receiver", "transportStandard"],
   ["transport_warmup_timeout_sec", "transportWarmupTimeout"],
   ["duration", "duration"],
 ];
@@ -1043,8 +1044,9 @@ function validateFrameworkForm() {
     const runCountError = validateNumberControl($("runCount"), { integer: true, min: 0, strictMin: true });
     if (runCountError) errors.push(runCountError);
   }
-  if (gpu && state.transportGpuCapability?.gpu_problem) {
-    errors.push(validationIssue($("transportReceiver"), state.transportGpuCapability.gpu_problem));
+  const gpuProblem = gpu && gpuReceiverProblem();
+  if (gpuProblem) {
+    errors.push(validationIssue($("transportStandard"), gpuProblem));
   }
   if (gpu && $("launchConfig").value === "dual_color") {
     errors.push(validationIssue($("launchConfig"), "当前 GPU 示例不支持双彩色预设"));
@@ -1053,7 +1055,11 @@ function validateFrameworkForm() {
     const durationError = validateDurationControl($("duration"), {
       required: mode === "restart" || mode === "stream_stall",
     });
-    if (durationError) errors.push(durationError);
+    if (durationError) {
+      errors.push(durationError);
+    } else if (gpu && !validGpuDuration(transportDurationSeconds())) {
+      errors.push(validationIssue($("duration"), "每阶段采样时长须换算为 1–3600 的整数秒"));
+    }
   }
   for (const id of ["stableSeconds", "streamTimeout", "maxGapSeconds", "warmupSec"]) {
     if (!$(id).closest(".is-hidden")) {
@@ -1733,34 +1739,40 @@ async function updateResultSummary(snapshot) {
 
 function renderGpuPerformance(gpu, status) {
   const backend = gpu.backend || (status === "idle" ? state.transportGpuCapability?.gpu_backend : "");
-  const cuda = backend === "CUDA_BUFFER";
+  const phaseNames = { cpu: "CPU (DDS)", cuda: "CUDA Buffer" };
   const phase = gpu.phase || (TERMINAL_RUN_STATUSES.has(status) ? STATUS_LABELS[status] : "等待数据与预热");
   const elapsed = gpu.elapsed_seconds > 0 ? ` ${formatNumber(gpu.elapsed_seconds, 1)}/${gpu.duration_seconds} s` : "";
-  const metric = cuda ? "发布到 GPU 数据就绪"
-    : backend?.startsWith("NITROS_") ? "帧时间戳到订阅回调" : "";
-  $("streamMetricsTitle").textContent = ["GPU 传输延迟", metric].filter(Boolean).join(" · ");
-  $("gpuFallbackColumn").classList.toggle("is-hidden", !cuda);
+  const basis = gpu.latency_basis || (backend?.startsWith("NITROS_") ? "frame_to_callback" : "");
+  const progress = gpu.final && gpu.duration_seconds
+    ? `测试时长 ${gpu.duration_seconds} s`
+    : (phaseNames[phase] || phase) + elapsed;
+  $("streamMetricsTitle").textContent = "GPU 传输延迟 · 帧时间戳到订阅回调";
   $("transportProgress").classList.remove("is-hidden");
-  $("transportProgress").textContent = [backend, phase + elapsed].filter(Boolean).join(" · ");
-  $("gpuLatencyColumn").textContent = gpu.final ? "平均延迟 (ms)" : "最近延迟 (ms)";
+  $("transportProgress").textContent = [backend, progress].filter(Boolean).join(" · ");
   const body = $("fpsTableBody");
   body.replaceChildren();
   if (!gpu.rows?.length) {
     const cell = body.insertRow().insertCell();
-    cell.colSpan = cuda ? 10 : 9;
+    cell.colSpan = 10;
     cell.className = "table-message";
     cell.textContent = TERMINAL_RUN_STATUSES.has(status) ? "未采集到 GPU 测试数据" : "等待 GPU 测试阶段的数据";
     return;
   }
   for (const sample of gpu.rows) {
     const row = body.insertRow();
+    const load = gpu.system?.[sample.phase] || {};
+    const endToEnd = (sample.latency_basis || basis) === "frame_to_callback";
+    const avg = endToEnd ? sample.latency_ms : null;
+    const p95 = endToEnd ? sample.latency_p95_ms : null;
     const values = [
-      sample.stream, sample.resolution, sample.stream_format, sample.phase, sample.backend, sample.samples,
-      sample.fps == null ? null : formatNumber(sample.fps, 2),
-      sample.latency_ms == null ? null : formatNumber(sample.latency_ms, 3),
-      sample.latency_p95_ms == null ? null : formatNumber(sample.latency_p95_ms, 3),
+      sample.stream, sample.resolution, sample.stream_format, phaseNames[sample.phase] || sample.phase,
+      sample.backend,
+      sample.fps == null ? null : formatNumber(sample.fps, gpu.final ? 3 : 2),
+      avg == null ? "n/a" : formatNumber(avg, 3),
+      p95 == null ? (gpu.final ? "n/a" : null) : formatNumber(p95, 3),
+      load.cpu_percent == null ? null : formatNumber(load.cpu_percent, 3),
+      load.gpu_percent == null ? null : formatNumber(load.gpu_percent, 3),
     ];
-    if (cuda) values.push(sample.cpu_fallback_frames);
     for (const value of values) {
       row.insertCell().textContent = value ?? "—";
     }
@@ -1981,7 +1993,7 @@ function renderMonitor(payload = {}) {
   renderRestart(payload.restart || {}, payload.mode || $("mode").value);
 }
 
-function updateLaunchConfigOptions(preferred = "") {
+function updateLaunchConfigOptions(preferred = "", { refreshGpu = false } = {}) {
   const select = $("launchConfig");
   const options = SPECIAL_LAUNCH_CONFIGS[$("launchFile").value] || [];
   select.replaceChildren();
@@ -2000,34 +2012,45 @@ function updateLaunchConfigOptions(preferred = "") {
   }
   $("launchConfigField").classList.toggle("is-hidden", options.length === 0);
   updateSpecialConfigControls();
-  refreshTransportLaunchArguments();
+  refreshTransportLaunchArguments({ force: refreshGpu });
 }
 
-async function refreshTransportLaunchArguments() {
-  const payload = {
+function transportLaunchKey() {
+  const config = {
     launch_file: $("launchFile").value,
     ros_setup: $("rosSetup").value.trim(),
     camera_setup: $("cameraSetup").value.trim(),
   };
-  const key = $("mode").value === TRANSPORT_MODE && $("rosVersion").value === "2"
-    && payload.launch_file ? JSON.stringify(payload) : "";
-  if (state.transportLaunchKey === key) return;
+  return $("mode").value === TRANSPORT_MODE && $("rosVersion").value === "2"
+    && config.launch_file && config.ros_setup ? JSON.stringify(config) : "";
+}
+
+async function refreshTransportLaunchArguments({ force = false } = {}) {
+  const key = transportLaunchKey();
+  if (!force && state.transportLaunchKey === key) return;
+  state.transportLaunchRequest?.abort();
+  const request = key ? new AbortController() : null;
+  state.transportLaunchRequest = request;
   state.transportLaunchKey = key;
-  state.transportLaunchArguments = key ? new Set() : null;
+  state.transportLaunchArguments = null;
   state.transportGpuCapability = null;
   updateSpecialConfigControls();
   updateTransportReceiverNote();
-  if (!key) return;
+  updateFormReadiness();
+  if (!request) return;
   let argumentsForLaunch;
   let capability = null;
   try {
-    const result = await api("/api/transport/launch-arguments", { method: "POST", body: key });
+    const result = await api("/api/transport/launch-arguments", {
+      method: "POST", body: key, signal: request.signal,
+    });
     argumentsForLaunch = new Set(result.arguments);
     capability = result;
   } catch (_) {
     argumentsForLaunch = null;
   }
-  if (state.transportLaunchKey !== key) return;
+  if (state.transportLaunchRequest !== request) return;
+  state.transportLaunchRequest = null;
   state.transportLaunchArguments = argumentsForLaunch;
   state.transportGpuCapability = capability;
   updateSpecialConfigControls();
@@ -2037,29 +2060,60 @@ async function refreshTransportLaunchArguments() {
 }
 
 function isGpuSelection() {
-  return $("mode").value === TRANSPORT_MODE && $("transportReceiver").value === "gpu";
+  return $("mode").value === TRANSPORT_MODE && $("transportGpu").checked;
+}
+
+function gpuReceiverProblem() {
+  if ($("rosVersion").value !== "2") return "GPU 对比需要 ROS 2";
+  const key = transportLaunchKey();
+  if (!key) return "选择相机 Launch 并配置 ROS Setup 后检测 GPU 后端";
+  if (state.transportLaunchKey !== key || state.transportLaunchRequest) return "正在检测驱动的 GPU 后端…";
+  const capability = state.transportGpuCapability;
+  if (!capability) return "无法检测 GPU 后端，请检查驱动环境和相机 Launch";
+  if (capability.gpu_backend === "NONE") return "当前驱动没有 GPU 测试后端";
+  const problem = capability.gpu_problem;
+  if (!problem) return "";
+  if (problem.includes("does not install")) return "当前驱动缺少已安装的 GPU 测试示例";
+  if (problem.includes("enable_gpu_transport")) return "当前 Launch 未提供 GPU 传输开关";
+  if (problem.includes("component_container_name")) return "当前 Launch 未提供 NITROS 所需的组件容器参数";
+  return "当前驱动或 Launch 不支持 GPU 对比";
 }
 
 function updateTransportReceiverNote() {
   const note = $("transportGpuCapability");
-  note.classList.toggle("is-hidden", !isGpuSelection());
+  const transport = $("mode").value === TRANSPORT_MODE;
+  const problem = transport ? gpuReceiverProblem() : "";
+  const paths = {
+    NITROS_GXF: "NITROS GXF · CPU DDS ↔ NITROS IPC（同进程）",
+    NITROS_BUFFER: "NITROS Buffer · CPU DDS ↔ NITROS IPC（同进程）",
+    CUDA_BUFFER: "CUDA Buffer · CPU 接收后上传 ↔ 共享 CUDA 缓冲（跨进程）",
+  };
   const capability = state.transportGpuCapability;
-  note.textContent = capability?.gpu_problem || (capability?.gpu_backend
-    ? `${capability.gpu_backend} · ${capability.gpu_backend === "CUDA_BUFFER" ? "跨进程" : "同进程"} · 每阶段预热超时 60 秒`
-    : "根据所选驱动检测 GPU 后端");
+  $("transportGpu").disabled = !transport || Boolean(problem);
+  note.textContent = problem || paths[capability?.gpu_backend] || "";
+  note.title = capability?.gpu_problem || "";
 }
 
 function updateSpecialConfigControls() {
-  const special = $("launchConfig").value !== "generic";
+  const config = $("launchConfig").value;
+  const special = config !== "generic";
   const transport = $("mode").value === TRANSPORT_MODE;
   const args = state.transportLaunchArguments;
+  const gpu = isGpuSelection();
+  const preset = PRESET_IMAGE_STREAMS[config];
   for (const [name, id] of Object.entries(STREAM_CONTROLS)) {
+    const select = $(id);
+    const row = select.closest(".stream-row");
+    const fromPreset = transport && preset?.includes(name.slice("enable_".length))
+      && (!gpu || !GPU_UNSUPPORTED_CONTROLS.has(id));
     const visible = transport
-      ? !special && !IMU_CONTROLS.has(id) && (!isGpuSelection() || !GPU_UNSUPPORTED_CONTROLS.has(id))
+      ? !special && !IMU_CONTROLS.has(id) && (!gpu || !GPU_UNSUPPORTED_CONTROLS.has(id))
         && (args ? args.has(name) : !SIDE_COLOR_CONTROLS.has(id))
       : !SIDE_COLOR_CONTROLS.has(id);
-    $(id).closest("label").classList.toggle("is-hidden", !visible);
-    $(id).disabled = special || !visible;
+    row.classList.toggle("is-hidden", !visible && !fromPreset);
+    select.classList.toggle("is-hidden", Boolean(fromPreset));
+    row.querySelector(".stream-preset-state")?.classList.toggle("is-hidden", !fromPreset);
+    select.disabled = special || !visible;
   }
   $("configFilePath").disabled = special;
   $("streamOptions").title = special ? "特殊配置 YAML 会覆盖普通流参数" : "";
@@ -2071,10 +2125,8 @@ function updateStreamProfileControls() {
   const preset = PRESET_IMAGE_STREAMS[$("launchConfig").value];
   const args = state.transportLaunchArguments;
   const gpu = isGpuSelection();
-  $("frameworkStreams").dataset.transport = String(transport);
-  const table = $("streamProfileTable");
   let hasEnabledProfile = false;
-  for (const row of table.querySelectorAll(".stream-profile")) {
+  for (const row of $("streamOptions").querySelectorAll(".stream-profile")) {
     const name = row.dataset.stream;
     const select = $(STREAM_CONTROLS[`enable_${name}`]);
     const fromPreset = preset?.includes(name) && (!gpu || !GPU_UNSUPPORTED_CONTROLS.has(select.id));
@@ -2089,13 +2141,56 @@ function updateStreamProfileControls() {
     row.classList.toggle("is-hidden", !visible);
     hasEnabledProfile ||= visible;
   }
-  table.classList.toggle("is-hidden", !hasEnabledProfile);
   const note = $("streamProfileNote");
   note.classList.toggle("is-hidden", !hasEnabledProfile);
   note.textContent = preset
     ? "左右两路由预设开启，留空沿用预设"
     : "留空沿用 Launch 默认值";
   note.title = preset ? "" : "相机 YAML 和额外 Launch 参数中的同名设置优先。";
+  const overrides = Object.values(STREAM_CONTROLS)
+    .map($)
+    .filter((select) => !select.disabled && select.value).length;
+  const summary = $("frameworkStreamSummary");
+  const config = $("launchConfig");
+  summary.textContent = config.value !== "generic" ? config.selectedOptions[0].textContent
+    : overrides ? `已配置 ${overrides} 路` : "跟随 Launch";
+}
+
+function updateDriverSetupSummary() {
+  const setup = $("rosSetup").value.trim();
+  const version = $("rosVersion").value;
+  const distro = setup.match(/^\/opt\/ros\/([^/]+)\//)?.[1];
+  const summary = $("frameworkRosLabel");
+  summary.textContent = distro ? `ROS ${version} ${distro[0].toUpperCase()}${distro.slice(1)}`
+    : setup ? `ROS ${version}` : "未配置 ROS";
+  summary.title = [$("cameraSetup").value.trim(), setup].filter(Boolean).join("\n");
+}
+
+function transportDurationSeconds() {
+  const value = $("duration").value.trim().toLowerCase() || "60";
+  if (!DURATION_PATTERN.test(value)) return NaN;
+  const multiplier = { s: 1, m: 60, h: 3600 }[value.slice(-1)];
+  return multiplier ? Number(value.slice(0, -1)) * multiplier : Number(value);
+}
+
+function validGpuDuration(seconds) {
+  return Number.isInteger(seconds) && seconds >= 1 && seconds <= 3600;
+}
+
+function updateTransportTiming() {
+  const transport = $("mode").value === TRANSPORT_MODE;
+  const gpu = isGpuSelection();
+  const seconds = gpu ? transportDurationSeconds() : NaN;
+  const durationNote = $("transportDurationNote");
+  durationNote.classList.toggle("is-hidden", !gpu);
+  durationNote.textContent = "";
+  if (gpu) {
+    durationNote.textContent = validGpuDuration(seconds)
+      ? `两阶段共采样 ${seconds * 2} 秒，另计预热` : "每阶段 1–3600 秒";
+  }
+  const warmup = $("frameworkAdvancedSummary");
+  warmup.classList.toggle("is-hidden", !transport);
+  warmup.textContent = `每路预热 ${$("transportWarmupFrames").value || 30} 帧`;
 }
 
 function updateRosVersionControls({ fillBlank = false } = {}) {
@@ -2103,7 +2198,6 @@ function updateRosVersionControls({ fillBlank = false } = {}) {
   $("rosSetup").placeholder = defaults.ros || "未识别到唯一 ROS 环境，请填写 setup.bash 路径";
   $("cameraSetup").placeholder = defaults.cameraPlaceholder || defaults.camera;
   const domainEnabled = $("rosVersion").value === "2";
-  $("frameworkRosLabel").textContent = `ROS ${$("rosVersion").value}`;
   $("rosDomainId").closest("label").classList.toggle("is-hidden", !domainEnabled);
   $("rosLocalhostOnly").closest("label").classList.toggle("is-hidden", !domainEnabled);
   $("rosDomainId").disabled = !domainEnabled;
@@ -2122,6 +2216,7 @@ function updateRosVersionControls({ fillBlank = false } = {}) {
       $("cameraSetup").value = defaults.camera;
     }
   }
+  updateDriverSetupSummary();
   updateModeControls();
 }
 
@@ -2133,11 +2228,12 @@ function updateModeControls() {
   const needsRestart = mode === "restart";
   const needsStreamStall = mode === "stream_stall";
   const needsStreamTopics = needsRestart || needsStreamStall;
-  $("testStrategy").dataset.transport = String(transport);
-  $("testStrategy").dataset.receiver = gpu ? "gpu" : "standard";
+  $("transportReceiver").classList.toggle("is-hidden", !transport);
+  $("transportReceiver").disabled = !transport;
+  $("transportWarmupSettings").classList.toggle("is-hidden", !transport);
   $("performanceScenario").closest("label").classList.toggle("is-hidden", !needsPerformance);
   for (const [id, visible] of [
-    ["transportReceiver", transport], ["transportWarmupFrames", transport],
+    ["transportWarmupFrames", transport],
     ["transportMode", transport && !gpu], ["transportReliability", transport && !gpu],
     ["transportWarmupTimeout", transport && !gpu],
   ]) {
@@ -2151,6 +2247,7 @@ function updateModeControls() {
   $("continueOnError").closest("label").classList.toggle("is-hidden", transport);
   $("durationLabel").textContent = gpu ? "每阶段采样时长" : transport ? "采样时长" : "运行时长";
   $("duration").placeholder = transport ? "60s（默认）" : "300 / 15m / 2h";
+  updateTransportTiming();
   $("duration").closest("label").classList.toggle("is-hidden", mode === "functional");
   $("restartFields").classList.toggle("is-hidden", !needsRestart);
   $("streamStallFields").classList.toggle("is-hidden", !needsStreamStall);
@@ -2164,7 +2261,7 @@ function currentModeConfig() {
   return {
     performance_scenario: $("performanceScenario").value,
     transport_mode: $("transportMode").value,
-    transport_receiver: $("transportReceiver").value,
+    transport_receiver: $("transportGpu").checked ? "gpu" : "standard",
     transport_reliability: $("transportReliability").value,
     transport_warmup_frames: $("transportWarmupFrames").value,
     transport_warmup_timeout_sec: $("transportWarmupTimeout").value,
@@ -2200,11 +2297,11 @@ function applyModeConfig(mode) {
   scenario.value = [...scenario.options].some((option) => option.value === config.performance_scenario)
     ? config.performance_scenario : "";
   $("transportMode").value = config.transport_mode;
-  $("transportReceiver").value = config.transport_receiver;
+  $("transportGpu").checked = config.transport_receiver === "gpu";
+  $("transportStandard").checked = !$("transportGpu").checked;
   $("transportReliability").value = config.transport_reliability;
   $("transportWarmupFrames").value = config.transport_warmup_frames;
   $("transportWarmupTimeout").value = config.transport_warmup_timeout_sec;
-  if (mode === TRANSPORT_MODE) $("frameworkStreams").open = true;
   $("runCount").value = config.run_count;
   $("continueOnError").checked = truthy(config.continue_on_error);
   $("duration").value = config.duration;
@@ -2285,16 +2382,18 @@ function renderLaunchFileOptions(files, preferred = "") {
   }
 }
 
-function loadLaunchFiles() {
+function loadLaunchFiles({ refreshGpu = false } = {}) {
   const rosVersion = $("rosVersion").value || "2";
   const files = SINGLE_CAMERA_LAUNCH_FILES[rosVersion] || [];
   const configured = state.config.ros_version === rosVersion ? state.config.launch_file : "";
-  renderLaunchFileOptions(files, configured);
+  const preferred = refreshGpu ? $("launchFile").value || configured : configured;
+  const preset = refreshGpu ? $("launchConfig").value : configured ? state.config.launch_config : "";
+  renderLaunchFileOptions(files, preferred);
   $("launchFile").title = `内置 ${files.length} 个 ROS${rosVersion} 单相机 Launch`;
   if (state.workspace === "framework") {
     $("launchCount").textContent = `${files.length} 个 · ROS ${rosVersion}`;
   }
-  updateLaunchConfigOptions(configured ? state.config.launch_config : "");
+  updateLaunchConfigOptions(preset, { refreshGpu });
 }
 
 async function pollStatus() {
@@ -3021,8 +3120,13 @@ async function init() {
   switchWorkspace(initialWorkspace, false);
   $("runForm").addEventListener("submit", startRun);
   $("standaloneForm").addEventListener("submit", startStandaloneRun);
-  $("runForm").addEventListener("input", () => {
+  $("runForm").addEventListener("input", (event) => {
     clearValidation("runForm", "frameworkValidation");
+    if (["duration", "transportWarmupFrames"].includes(event.target.id)) updateTransportTiming();
+    if (["rosSetup", "cameraSetup"].includes(event.target.id)) {
+      updateDriverSetupSummary();
+      updateTransportReceiverNote();
+    }
     updateFormReadiness();
   });
   $("standaloneForm").addEventListener("input", () => {
@@ -3033,7 +3137,7 @@ async function init() {
   $("standaloneStopButton").addEventListener("click", stopRun);
   $("showDevices").addEventListener("click", showDeviceInfo);
   $("refreshDevices").addEventListener("click", refreshDevices);
-  $("refreshLaunches").addEventListener("click", loadLaunchFiles);
+  $("refreshLaunches").addEventListener("click", () => loadLaunchFiles({ refreshGpu: true }));
   $("refreshRuns").addEventListener("click", loadRuns);
   $("openReportDirectory").addEventListener("click", () => {
     if (state.selectedRunId) {
@@ -3085,7 +3189,7 @@ async function init() {
     }
   });
   for (const id of ["rosSetup", "cameraSetup"]) {
-    $(id).addEventListener("change", refreshTransportLaunchArguments);
+    $(id).addEventListener("change", () => refreshTransportLaunchArguments());
   }
   $("standaloneTest").addEventListener("change", () =>
     renderStandaloneForm($("standaloneTest").value)

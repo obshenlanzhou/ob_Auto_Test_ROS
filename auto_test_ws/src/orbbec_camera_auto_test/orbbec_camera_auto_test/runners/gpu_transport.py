@@ -9,7 +9,7 @@ import yaml
 from ..core.environment_info import camera_environment_from_launch_log
 from ..core.gpu_benchmark import (
     GPU_PROGRESS_FILE, GPU_STREAMS, GpuBenchmarkProgress,
-    camera_launch_options, gpu_benchmark_capability, read_gpu_summary,
+    camera_launch_options, gpu_benchmark_capability, group_gpu_rows, read_gpu_summary,
 )
 from ..core.reporter import build_performance_summary, write_json, write_markdown
 from ..core.session import TestSession, capture_runtime_env
@@ -61,7 +61,8 @@ def _prepare_camera(args, launch_args, defaults, camera_share, results_dir):
         config.write_text(yaml.safe_dump(overrides, sort_keys=False), encoding="utf-8")
         settings["config_file_path"] = str(config)
     settings["camera_name"] = str(effective.get("camera_name") or "camera")
-    return settings, streams
+    time_domain = str(overrides.get("time_domain", settings["time_domain"]) or "unknown").lower()
+    return settings, streams, time_domain
 
 
 def _write_progress(path, progress, *, final=False):
@@ -107,8 +108,10 @@ def run_gpu_transport_test(
         backend, launcher, issue = gpu_benchmark_capability(camera_share, defaults)
         if issue:
             raise RuntimeError(issue)
-        progress = GpuBenchmarkProgress(backend, int(duration))
-        settings, streams = _prepare_camera(args, launch_args, defaults, camera_share, results_dir)
+        settings, streams, time_domain = _prepare_camera(
+            args, launch_args, defaults, camera_share, results_dir,
+        )
+        progress = GpuBenchmarkProgress(backend, int(duration), time_domain)
         result["camera_name"] = settings["camera_name"]
         result["gpu_backend"] = backend
         result["transport_mode"] = "cross_process" if backend == "CUDA_BUFFER" else "intra_process"
@@ -138,11 +141,13 @@ def run_gpu_transport_test(
         exit_code = session.process.returncode
         session.stop()
         progress.consume(launch_log)
-        rows, system = read_gpu_summary(raw_summary, backend)
+        rows, system = read_gpu_summary(raw_summary, backend, time_domain)
         if rows:
             progress.rows = rows
+        if system:
+            progress.system = system
         _write_progress(progress_path, progress, final=bool(rows))
-        result["gpu_transport_summary"] = list(rows.values())
+        result["gpu_transport_summary"] = group_gpu_rows(rows.values())
         result["gpu_system_summary"] = system
         phases = ("cpu", "cuda") if backend == "CUDA_BUFFER" else ("CPU (DDS)", "NITROS (IPC)")
         if exit_code or any(not rows.get((phase, stream), {}).get("complete")
