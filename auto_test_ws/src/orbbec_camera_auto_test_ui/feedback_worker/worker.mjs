@@ -90,7 +90,7 @@ async function submitFeedback(request, env, url) {
       title,
       body: `来自 Orbbec 测试工具的改进建议。\n\n### 改进建议\n\n${body}`,
     }),
-    redirect: "error",
+    redirect: "manual",
     signal: AbortSignal.timeout(8000),
   });
   if (result.status !== 201) {

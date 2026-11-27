@@ -27,6 +27,7 @@ test("publishes only to the configured GitHub repository after verification", as
       return Response.json({ success: true, hostname: new URL(origin).hostname, action: "feedback" });
     }
     assert.equal(url, "https://api.github.com/repos/obshenlanzhou/ob_Auto_Test_ROS/issues");
+    assert.equal(options.redirect, "manual");
     assert.equal(options.headers.Authorization, "Bearer mock-token");
     const { title, body } = JSON.parse(options.body);
     assert.equal(title, "工具优化");
