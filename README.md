@@ -5,6 +5,17 @@
 - `auto_test_ws/`：完整自动化测试工作区，包含功能测试、性能压测、launch 重启出流测试，以及本地 Web UI。
 - `standalone_test_scripts/`：可单独交付和运行的独立测试脚本，不依赖 `orbbec_camera_auto_test` 自动化测试框架。
 
+## 仓库地址
+
+- [GitHub 源仓库](https://github.com/obshenlanzhou/ob_Auto_Test_ROS)
+- [Gitee 镜像](https://gitee.com/kong-yue1/ob_Auto_Test_ROS)
+
+通过 HTTPS 克隆 Gitee 镜像。
+
+```bash
+git clone https://gitee.com/kong-yue1/ob_Auto_Test_ROS.git
+```
+
 ## 文档入口
 
 - 完整自动化测试工作区文档：[auto_test_ws/README.md](auto_test_ws/README.md)
@@ -75,6 +86,15 @@ python3 ./launch_restart_stream_check/launch_restart_stream_check.py --help
 ```
 
 更多独立脚本入口见 [standalone_test_scripts/README.zh-CN.md](standalone_test_scripts/README.zh-CN.md)。
+
+## Web UI 在线更新
+
+通过 Git 克隆仓库后，在本机 Web UI 顶部打开「在线更新」，点击「检查更新」查看当前
+commit 和远端最新 commit。点击「更新并重启」后，工具会快进到该 commit，重启 Web UI
+并自动刷新页面。
+
+在线更新跟踪当前 Git 分支配置的上游。直接从 GitHub 克隆时默认检查 GitHub，从 Gitee
+镜像克隆时默认检查 Gitee。更新需要工作区干净、分支可快进，以及当前测试和结果打包已结束。
 
 ## 适用场景
 

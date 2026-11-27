@@ -237,6 +237,69 @@ async function api(path, options = {}) {
   return payload;
 }
 
+let toolUpdateInfo = {};
+let toolUpdateBusy = false;
+
+function renderToolUpdate(message = toolUpdateInfo.message || "") {
+  const { remote, ref, current, latest, enabled, state: updateState } = toolUpdateInfo;
+  $("toolUpdateUpstream").textContent = remote && ref ? `${remote}/${ref.replace(/^refs\/heads\//, "")}` : "—";
+  for (const [id, revision] of [["toolUpdateCurrent", current], ["toolUpdateLatest", latest]]) {
+    $(id).textContent = revision?.slice(0, 12) || "—";
+    $(id).title = revision || "";
+  }
+  $("toolUpdateStatus").textContent = message;
+  $("checkToolUpdate").disabled = toolUpdateBusy || !enabled;
+  $("applyToolUpdate").disabled = toolUpdateBusy || updateState !== "available";
+  $("closeToolUpdate").disabled = toolUpdateBusy;
+}
+
+async function waitForUpdatedUI(previousInstance, latest) {
+  for (let attempt = 0; attempt < 120; attempt++) {
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    try {
+      const info = await api("/api/update");
+      if (info.instance !== previousInstance && info.current === latest) {
+        window.location.reload();
+        return;
+      }
+    } catch (_) {
+      // The listening socket is temporarily closed during restart.
+    }
+  }
+  throw new Error("代码已更新，等待 Web UI 重启超时。请重新打开测试工具页面。");
+}
+
+async function toolUpdate(action) {
+  if (toolUpdateBusy) return;
+  toolUpdateBusy = true;
+  let message = "";
+  try {
+    if (action === "apply") {
+      renderToolUpdate("正在更新代码…");
+      const { current, latest } = toolUpdateInfo;
+      const result = await api("/api/update/apply", {
+        method: "POST", body: JSON.stringify({ current, latest }),
+      });
+      toolUpdateInfo = { ...toolUpdateInfo, state: "restarting", current: result.latest };
+      renderToolUpdate("代码已更新，正在重启 Web UI…");
+      await waitForUpdatedUI(result.instance, result.latest);
+    } else if (action === "check") {
+      renderToolUpdate("正在检查远端提交…");
+      toolUpdateInfo = await api("/api/update/check", { method: "POST", body: "{}" });
+    } else {
+      toolUpdateInfo = {};
+      renderToolUpdate("正在读取当前版本…");
+      toolUpdateInfo = await api("/api/update");
+    }
+  } catch (error) {
+    toolUpdateInfo = { ...toolUpdateInfo, state: "unchecked" };
+    message = error.message;
+  } finally {
+    toolUpdateBusy = false;
+    renderToolUpdate(message || toolUpdateInfo.message);
+  }
+}
+
 function deviceQueryPayload() {
   if (state.workspace === "standalone") {
     const values = standaloneCurrentValues();
@@ -3461,6 +3524,15 @@ async function init() {
   $("standaloneStopButton").addEventListener("click", stopRun);
   $("showDevices").addEventListener("click", showDeviceInfo);
   $("refreshDevices").addEventListener("click", refreshDevices);
+  $("showToolUpdate").addEventListener("click", () => {
+    $("toolUpdateDialog").showModal();
+    toolUpdate("open");
+  });
+  $("checkToolUpdate").addEventListener("click", () => toolUpdate("check"));
+  $("applyToolUpdate").addEventListener("click", () => toolUpdate("apply"));
+  $("toolUpdateDialog").addEventListener("cancel", (event) => {
+    if (toolUpdateBusy) event.preventDefault();
+  });
   $("refreshLaunches").addEventListener("click", () => loadLaunchFiles({ refreshGpu: true }));
   $("refreshRuns").addEventListener("click", loadRuns);
   $("openReportDirectory").addEventListener("click", () => {

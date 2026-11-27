@@ -16,6 +16,7 @@ import uuid
 from collections import deque
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from ipaddress import ip_address
 from pathlib import Path
 from typing import Any, Dict
 from urllib.parse import parse_qs, unquote, urlparse
@@ -38,6 +39,7 @@ from .file_preview import (
     read_text_tail,
     result_preview_or_default,
 )
+from .repository_update import RepositoryUpdate, UpdateError
 from .run_manager import (
     AUTO_TEST_WS,
     CONFIG_PATH,
@@ -64,6 +66,10 @@ from .standalone import (
 MANAGER = RunManager()
 PACKAGE_PROGRESS: Dict[str, Dict[str, Any]] = {}
 PACKAGE_LOCK = threading.Lock()
+OPERATION_LOCK = threading.Lock()
+RESTART_REQUESTED = threading.Event()
+UI_INSTANCE = uuid.uuid4().hex
+REPOSITORY_UPDATE = RepositoryUpdate(AUTO_TEST_WS.parent)
 UI_PACKAGE_DIR = Path(__file__).resolve().parent
 RUNTIME_CONFIG: Dict[str, Any] = load_config()
 
@@ -367,7 +373,9 @@ def get_package_progress(run_id: str) -> Dict[str, Any]:
 
 
 def package_run_results(run_id: str) -> tuple[Dict[str, Any], HTTPStatus]:
-    with PACKAGE_LOCK:
+    with OPERATION_LOCK, PACKAGE_LOCK:
+        if RESTART_REQUESTED.is_set():
+            return {"error": "Web UI 正在重启。"}, HTTPStatus.CONFLICT
         if PACKAGE_PROGRESS.get(run_id, {}).get("status") in {"preparing", "running", "finalizing"}:
             return {
                 "error": "result packaging is already running",
@@ -388,6 +396,28 @@ def package_run_results(run_id: str) -> tuple[Dict[str, Any], HTTPStatus]:
             **response,
         }
     return response, status
+
+
+def start_run(payload: Dict[str, Any], *, standalone: bool = False) -> tuple[int, Dict[str, Any]]:
+    with OPERATION_LOCK:
+        if RESTART_REQUESTED.is_set():
+            return HTTPStatus.CONFLICT, {"error": "Web UI 正在重启。"}
+        return MANAGER.start_standalone(payload) if standalone else MANAGER.start(payload)
+
+
+def apply_repository_update(payload: Dict[str, Any]) -> str:
+    with OPERATION_LOCK:
+        if RESTART_REQUESTED.is_set():
+            raise UpdateError("Web UI 正在重启。")
+        if MANAGER.has_active_job():
+            raise UpdateError("请等待当前测试结束后再更新。")
+        with PACKAGE_LOCK:
+            if any(item.get("status") in {"preparing", "running", "finalizing"}
+                   for item in PACKAGE_PROGRESS.values()):
+                raise UpdateError("请等待测试结果打包完成后再更新。")
+        revision = REPOSITORY_UPDATE.apply(payload.get("current"), payload.get("latest"))
+        RESTART_REQUESTED.set()
+        return revision
 
 
 def _package_run_results(run_id: str) -> tuple[Dict[str, Any], HTTPStatus]:
@@ -576,6 +606,15 @@ class UiHandler(BaseHTTPRequestHandler):
         body = self.rfile.read(length)
         return json.loads(body.decode("utf-8"))
 
+    def _local_update_client(self) -> bool:
+        try:
+            host = urlparse(f"http://{self.headers.get('Host', '')}").hostname
+            return ip_address(self.client_address[0]).is_loopback and (
+                host == "localhost" or ip_address(host).is_loopback
+            )
+        except ValueError:
+            return False
+
     def do_GET(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
         path = parsed.path
@@ -603,6 +642,11 @@ class UiHandler(BaseHTTPRequestHandler):
                 self._send_json(list_profiles())
             elif path == "/api/standalone/tests":
                 self._send_json(list_standalone_tests())
+            elif path == "/api/update":
+                info = REPOSITORY_UPDATE.local() if self._local_update_client() else {
+                    "enabled": False, "message": "请在运行测试工具的电脑上打开本机页面进行更新。",
+                }
+                self._send_json({**info, "instance": UI_INSTANCE})
             elif path == "/api/status":
                 offset = int((query.get("offset") or ["0"])[0] or "0")
                 self._send_json(MANAGER.current_snapshot(log_offset=offset))
@@ -624,15 +668,30 @@ class UiHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
         try:
+            if parsed.path in {"/api/update/check", "/api/update/apply"} and (
+                not self._local_update_client()
+                or self.headers.get("Origin") != f"http://{self.headers.get('Host', '')}"
+                or self.headers.get_content_type() != "application/json"
+            ):
+                self._send_json({"error": "请从本机测试工具页面操作。"}, status=HTTPStatus.FORBIDDEN)
+                return
             payload = self._read_json_body()
             if parsed.path == "/api/config":
                 self._send_json(save_config(payload))
             elif parsed.path == "/api/run":
-                status, response = MANAGER.start(payload)
+                status, response = start_run(payload)
                 self._send_json(response, status=status)
             elif parsed.path == "/api/standalone/run":
-                status, response = MANAGER.start_standalone(payload)
+                status, response = start_run(payload, standalone=True)
                 self._send_json(response, status=status)
+            elif parsed.path == "/api/update/check":
+                self._send_json({**REPOSITORY_UPDATE.check(), "instance": UI_INSTANCE})
+            elif parsed.path == "/api/update/apply":
+                if not isinstance(payload, dict):
+                    raise ValueError("无效的更新请求。")
+                revision = apply_repository_update(payload)
+                self._send_json({"latest": revision, "instance": UI_INSTANCE})
+                self.server.shutdown()
             elif parsed.path == "/api/devices":
                 self._send_json(query_camera_devices(payload))
             elif parsed.path == "/api/transport/launch-arguments":
@@ -664,6 +723,8 @@ class UiHandler(BaseHTTPRequestHandler):
             if exc.output:
                 response["output"] = exc.output
             self._send_json(response, status=exc.status)
+        except UpdateError as exc:
+            self._send_json({"error": str(exc)}, status=HTTPStatus.CONFLICT)
         except ValueError as exc:
             self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
         except Exception as exc:  # noqa: BLE001
@@ -734,6 +795,10 @@ def main() -> None:
     finally:
         server.server_close()
         signal.signal(signal.SIGTERM, previous_sigterm)
+    if RESTART_REQUESTED.is_set():
+        print("Restarting UI after repository update", flush=True)
+        os.execv(sys.executable, [sys.executable, "-m", "orbbec_camera_auto_test_ui.server",
+                                  "--host", host, "--port", str(server.server_port)])
     print("UI server stopped", flush=True)
 
 

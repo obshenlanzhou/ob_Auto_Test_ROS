@@ -1946,6 +1946,21 @@ button.danger {
   min-width: 100px;
 }
 
+.tool-update-dialog {
+  width: min(460px, calc(100vw - 32px));
+}
+
+.tool-update-versions {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px 16px;
+  margin: 16px 0;
+}
+
+.tool-update-versions dt { color: var(--muted); }
+.tool-update-versions dd { margin: 0; overflow-wrap: anywhere; }
+.tool-update-actions { gap: 8px; flex-wrap: wrap; }
+
 .camera-plan-dialog {
   width: min(860px, calc(100vw - 32px));
 }

@@ -48,6 +48,7 @@
           <button type="button" class="device-info-button" id="showDevices">
             <span aria-hidden="true">◉</span> 相机信息
           </button>
+          <button type="button" class="device-info-button" id="showToolUpdate">在线更新</button>
           <div class="theme-switch" role="group" aria-label="页面主题">
             <button type="button" data-theme-value="light" aria-pressed="true"><span aria-hidden="true">☀</span> 浅色</button>
             <button type="button" data-theme-value="dark" aria-pressed="false"><span aria-hidden="true">☾</span> 深色</button>
@@ -711,6 +712,25 @@
         </details>
       </section>
     </template>
+
+    <dialog class="exit-code-dialog tool-update-dialog" id="toolUpdateDialog" aria-labelledby="toolUpdateTitle">
+      <form method="dialog">
+        <div class="exit-code-dialog-header">
+          <h2 id="toolUpdateTitle">在线更新</h2>
+          <button type="submit" class="exit-code-dialog-close" id="closeToolUpdate" aria-label="关闭在线更新">×</button>
+        </div>
+        <dl class="tool-update-versions">
+          <dt>远端分支</dt><dd><code id="toolUpdateUpstream">—</code></dd>
+          <dt>当前提交</dt><dd><code id="toolUpdateCurrent">—</code></dd>
+          <dt>最新提交</dt><dd><code id="toolUpdateLatest">—</code></dd>
+        </dl>
+        <p class="field-note" id="toolUpdateStatus" role="status"></p>
+        <div class="exit-code-dialog-footer tool-update-actions">
+          <button type="button" class="ghost" id="checkToolUpdate" disabled>检查更新</button>
+          <button type="button" class="primary" id="applyToolUpdate" disabled>更新并重启</button>
+        </div>
+      </form>
+    </dialog>
 
     <dialog class="exit-code-dialog device-info-dialog" id="deviceInfoDialog" aria-labelledby="deviceInfoDialogTitle">
       <form method="dialog">

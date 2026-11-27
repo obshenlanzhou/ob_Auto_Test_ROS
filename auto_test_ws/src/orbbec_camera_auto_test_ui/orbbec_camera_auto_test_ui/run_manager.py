@@ -1678,6 +1678,10 @@ class RunManager:
             return {"status": "idle", "logs": [], "log_offset": 0}
         return job.snapshot(log_offset=log_offset)
 
+    def has_active_job(self) -> bool:
+        with self._lock:
+            return self._current is not None and not self._current.done_event.is_set()
+
     def current_run_info(self) -> Dict[str, Any]:
         """Return history metadata without reading logs or computing metrics."""
         with self._lock:
