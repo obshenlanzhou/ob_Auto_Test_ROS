@@ -775,6 +775,7 @@ def main() -> None:
     port = args.port
     ensure_dir(UI_RESULTS_ROOT)
     server = ThreadingHTTPServer((host, port), UiHandler)
+    threading.Thread(target=REPOSITORY_UPDATE.initialize_archive, daemon=True).start()
     print(f"Orbbec camera auto test UI: http://{host}:{port}", flush=True)
     print(f"Results root: {UI_RESULTS_ROOT}", flush=True)
 

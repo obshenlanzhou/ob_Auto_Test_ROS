@@ -248,9 +248,9 @@ function renderToolUpdate(message = toolUpdateInfo.message || "") {
     $(id).title = revision || "";
   }
   $("toolUpdateStatus").textContent = message;
-  $("checkToolUpdate").disabled = toolUpdateBusy || !enabled;
+  $("checkToolUpdate").disabled = toolUpdateBusy || !(enabled || toolUpdateInfo.retry_initialization);
   $("applyToolUpdate").disabled = toolUpdateBusy || updateState !== "available";
-  $("closeToolUpdate").disabled = toolUpdateBusy;
+  $("closeToolUpdate").disabled = toolUpdateBusy && updateState !== "initializing";
 }
 
 async function waitForUpdatedUI(previousInstance, latest) {
@@ -290,6 +290,11 @@ async function toolUpdate(action) {
       toolUpdateInfo = {};
       renderToolUpdate("正在读取当前版本…");
       toolUpdateInfo = await api("/api/update");
+      while (toolUpdateInfo.state === "initializing" && $("toolUpdateDialog").open) {
+        renderToolUpdate();
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        toolUpdateInfo = await api("/api/update");
+      }
     }
   } catch (error) {
     toolUpdateInfo = { ...toolUpdateInfo, state: "unchecked" };
@@ -3531,7 +3536,7 @@ async function init() {
   $("checkToolUpdate").addEventListener("click", () => toolUpdate("check"));
   $("applyToolUpdate").addEventListener("click", () => toolUpdate("apply"));
   $("toolUpdateDialog").addEventListener("cancel", (event) => {
-    if (toolUpdateBusy) event.preventDefault();
+    if (toolUpdateBusy && toolUpdateInfo.state !== "initializing") event.preventDefault();
   });
   $("refreshLaunches").addEventListener("click", () => loadLaunchFiles({ refreshGpu: true }));
   $("refreshRuns").addEventListener("click", loadRuns);

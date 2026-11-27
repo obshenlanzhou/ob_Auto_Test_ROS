@@ -1,6 +1,8 @@
+from io import BytesIO
 from pathlib import Path
 import subprocess
 import sys
+from zipfile import ZipFile
 
 import pytest
 
@@ -8,7 +10,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from orbbec_camera_auto_test_ui.repository_update import RepositoryUpdate, UpdateError
-from orbbec_camera_auto_test_ui import server
+from orbbec_camera_auto_test_ui import repository_update, server
 
 
 def git(root, *args):
@@ -31,6 +33,12 @@ def checkout(tmp_path):
     source.mkdir()
     git(source, "init")
     git(source, "symbolic-ref", "HEAD", "refs/heads/main")
+    launcher = source / "auto_test_ws/run_camera_auto_test_ui.sh"
+    launcher.parent.mkdir()
+    launcher.write_text("#!/usr/bin/env bash\n")
+    launcher.chmod(0o755)
+    (source / ".gitignore").write_text("results/\n")
+    git(source, "add", ".gitignore", "auto_test_ws")
     current = commit(source, "version.txt", "original")
     mirror = tmp_path / "mirror"
     git(tmp_path, "clone", "--bare", str(source), str(mirror))
@@ -102,3 +110,71 @@ def test_running_tests_block_updates(monkeypatch):
     monkeypatch.setattr(server.MANAGER, "has_active_job", lambda: True)
     with pytest.raises(UpdateError, match="当前测试结束"):
         server.apply_repository_update({})
+
+
+@pytest.fixture
+def archive(checkout, tmp_path, monkeypatch):
+    source, _, current, latest = checkout
+    monkeypatch.setattr(repository_update, "ZIP_REMOTE", str(tmp_path / "mirror"))
+    data = subprocess.check_output(["git", "-C", str(source), "archive", "--format=zip", current])
+    directory = tmp_path / "extracted"
+    with ZipFile(BytesIO(data)) as zipped:
+        zipped.extractall(directory)
+    results = directory / "auto_test_ws/results"
+    results.mkdir()
+    (results / "ui_config.json").write_text('{"retained": true}')
+    return directory, current, latest
+
+
+def test_older_zip_initializes_in_place_and_can_update(archive):
+    directory, current, latest = archive
+    updater = RepositoryUpdate(directory)
+    launcher = directory / "auto_test_ws/run_camera_auto_test_ui.sh"
+    launcher_mode = launcher.stat().st_mode
+
+    updater.initialize_archive()
+
+    assert updater.local()["current"] == current
+    assert updater.check()["latest"] == latest
+    assert (directory / "version.txt").read_text() == "original"
+    assert launcher.stat().st_mode == launcher_mode
+    assert git(directory, "status", "--porcelain") == ""
+    assert updater.apply(current, latest) == latest
+    assert (directory / "auto_test_ws/results/ui_config.json").read_text() == '{"retained": true}'
+
+
+def test_zip_with_local_edits_is_preserved_and_can_retry(archive):
+    directory, current, latest = archive
+    updater = RepositoryUpdate(directory)
+    version = directory / "version.txt"
+    version.write_text("edited after extraction")
+
+    updater.initialize_archive()
+
+    assert "不匹配" in updater.local()["message"]
+    assert not (directory / ".git").exists()
+    assert not list(directory.glob(".orbbec-zip-*"))
+    assert version.read_text() == "edited after extraction"
+
+    version.write_text("original")
+    info = updater.check()
+    assert (info["state"], info["current"], info["latest"]) == ("available", current, latest)
+
+
+def test_zip_network_failure_can_retry(archive, tmp_path, monkeypatch):
+    directory, current, latest = archive
+    updater = RepositoryUpdate(directory)
+    monkeypatch.setattr(repository_update, "ZIP_REMOTE", str(tmp_path / "unreachable"))
+
+    updater.initialize_archive()
+
+    assert "请检查网络" in updater.local()["message"]
+    assert not (directory / ".git").exists()
+
+    interrupted = directory / ".orbbec-zip-interrupted"
+    interrupted.mkdir()
+    (interrupted / "partial-clone").write_text("staging")
+    monkeypatch.setattr(repository_update, "ZIP_REMOTE", str(tmp_path / "mirror"))
+    info = updater.check()
+    assert (info["current"], info["latest"]) == (current, latest)
+    assert git(directory, "status", "--porcelain") == ""
