@@ -220,8 +220,9 @@ test('GPU transport table keeps stream details and reports only end-to-end laten
   );
   const template = fs.readFileSync(path.join(__dirname, '../orbbec_camera_auto_test_ui/templates/index.html'), 'utf8');
   const header = template.match(/id="gpuStreamTable"[^>]*>\s*<thead>([\s\S]*?)<\/thead>/)[1];
+  assert.equal([...header.matchAll(/<tr\b/g)].length, 1);
   assert.deepEqual([...header.matchAll(/<th\b[^>]*>([^<]*)<\/th>/g)].map(match => match[1]),
-    ['相机', '流', '分辨率', '格式', '模式', '接收后端', 'FPS', '端到端时延 (ms)', '平均', 'P95']);
+    ['相机', '流', '分辨率', '格式', '模式', '接收后端', 'FPS', '平均时延 (ms)', 'P95 时延 (ms)']);
   context.renderGpuPerformance({}, 'idle');
   assert.equal(body.rows[0][0].colSpan, 8);
   const result = {
@@ -266,15 +267,27 @@ test('GPU transport table keeps stream details and reports only end-to-end laten
 });
 
 test('transport duration restores saved units and submits them as supported duration strings', () => {
+  let gpu = true;
+  let multiCamera = false;
+  const profileRate = {name: "depth_fps", value: "", disabled: false};
   const elements = {
     duration: {value: ''}, durationUnit: {value: 'm'}, mode: {value: 'transport_latency'},
     transportDurationNote: {classList: {toggle() {}}},
+    transportDurationEstimate: {classList: {toggle() {}}},
     frameworkAdvancedSummary: {classList: {toggle() {}}}, transportWarmupFrames: {},
   };
   const context = vm.createContext({
     $: id => elements[id],
     TRANSPORT_MODE: 'transport_latency',
-    isGpuSelection: () => true,
+    isGpuSelection: () => gpu,
+    isMultiCameraTransport: () => multiCamera,
+    STREAM_PROFILE_INPUTS: [profileRate],
+    state: {
+      transportCameraPlan: {cameras: [
+        {streams: ['depth'], arguments: {depth_fps: 15}},
+        {streams: {points: null}, arguments: {depth_fps: 5}},
+      ]},
+    },
   });
   const durationPattern = source.match(/^const DURATION_PATTERN = .*;$/m)[0];
   vm.runInContext(durationPattern, context);
@@ -297,9 +310,28 @@ test('transport duration restores saved units and submits them as supported dura
   assert.match(elements.transportDurationNote.textContent, /2 小时/);
   elements.duration.value = '2';
   assert.equal(context.validGpuDuration(context.transportDurationSeconds()), false);
+  context.updateTransportTiming();
+  assert.equal(elements.transportDurationEstimate.textContent, '');
   elements.duration.value = '30m';
   assert.equal(context.frameworkDurationValue('transport_latency'), '30m');
   assert.equal(context.transportDurationSeconds(), 1800);
+
+  context.setFrameworkDuration('10', 'transport_latency');
+  context.updateTransportTiming();
+  assert.equal(elements.transportDurationEstimate.textContent, '预计耗时约 37 秒');
+  elements.transportWarmupFrames.value = '0';
+  context.updateTransportTiming();
+  assert.equal(elements.transportDurationEstimate.textContent, '预计耗时约 35 秒');
+  elements.transportWarmupFrames.value = '30';
+  profileRate.value = '10';
+  context.updateTransportTiming();
+  assert.equal(elements.transportDurationEstimate.textContent, '预计耗时约 41 秒');
+  multiCamera = true;
+  context.updateTransportTiming();
+  assert.equal(elements.transportDurationEstimate.textContent, '预计耗时约 47 秒');
+  gpu = false;
+  context.updateTransportTiming();
+  assert.equal(elements.transportDurationEstimate.textContent, '预计耗时约 31 秒');
 });
 
 test('transport logs open once on failure and respect manual toggling between polls', () => {

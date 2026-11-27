@@ -203,7 +203,7 @@
               <div class="duration-field" id="frameworkDurationField" data-validation-field>
                 <label id="durationLabel" for="duration">运行时长</label>
                 <div class="duration-controls">
-                  <input id="duration" name="duration" autocomplete="off" placeholder="300 / 15m / 2h" aria-describedby="transportDurationNote" />
+                  <input id="duration" name="duration" autocomplete="off" placeholder="300 / 15m / 2h" aria-describedby="transportDurationNote transportDurationEstimate" />
                   <select id="durationUnit" aria-label="采样时长单位" class="is-hidden">
                     <option value="s">秒</option>
                     <option value="m">分钟</option>
@@ -211,6 +211,7 @@
                   </select>
                 </div>
                 <p class="field-note duration-note is-hidden" id="transportDurationNote"></p>
+                <p class="field-note duration-note duration-estimate is-hidden" id="transportDurationEstimate"></p>
               </div>
             </div>
 
@@ -593,18 +594,15 @@
                   <table class="fps-table gpu-stream-table" id="gpuStreamTable" aria-labelledby="streamMetricsTitle">
                     <thead>
                       <tr>
-                        <th rowspan="2" scope="col" class="transport-camera-column is-hidden">相机</th>
-                        <th rowspan="2" scope="col">流</th>
-                        <th rowspan="2" scope="col">分辨率</th>
-                        <th rowspan="2" scope="col">格式</th>
-                        <th rowspan="2" scope="col">模式</th>
-                        <th rowspan="2" scope="col">接收后端</th>
-                        <th rowspan="2" scope="col" class="gpu-transport-number">FPS</th>
-                        <th colspan="2" class="gpu-latency-heading">端到端时延 (ms)</th>
-                      </tr>
-                      <tr>
-                        <th scope="col" class="gpu-transport-number" title="运行中显示最近采样窗口的平均值，结束后显示全阶段平均值">平均</th>
-                        <th scope="col" class="gpu-transport-number">P95</th>
+                        <th scope="col" class="transport-camera-column is-hidden">相机</th>
+                        <th scope="col">流</th>
+                        <th scope="col">分辨率</th>
+                        <th scope="col">格式</th>
+                        <th scope="col">模式</th>
+                        <th scope="col">接收后端</th>
+                        <th scope="col" class="gpu-transport-number">FPS</th>
+                        <th scope="col" class="gpu-transport-number" title="运行中显示最近采样窗口的平均值，结束后显示全阶段平均值">平均时延 (ms)</th>
+                        <th scope="col" class="gpu-transport-number">P95 时延 (ms)</th>
                       </tr>
                     </thead>
                     <tbody id="gpuStreamTableBody"></tbody>

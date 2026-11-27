@@ -862,6 +862,11 @@ button.camera-mode-toggle[aria-pressed="true"] {
   margin: 0;
 }
 
+.duration-estimate {
+  color: var(--text-soft);
+  font-weight: 600;
+}
+
 .advanced-settings {
   gap: 12px;
 }
@@ -2615,12 +2620,12 @@ button.danger {
 }
 
 .gpu-stream-table {
-  min-width: 660px;
+  min-width: 720px;
   table-layout: fixed;
 }
 
 .gpu-stream-table:has(.transport-camera-column:not(.is-hidden)) {
-  min-width: 760px;
+  min-width: 820px;
 }
 
 .gpu-stream-table :is(th, td) {
@@ -2629,7 +2634,7 @@ button.danger {
   text-overflow: ellipsis;
 }
 
-.gpu-stream-table thead tr:first-child th:nth-child(2) {
+.gpu-stream-table th:nth-child(2) {
   width: 17%;
 }
 
@@ -2637,8 +2642,8 @@ button.danger {
   width: 8%;
 }
 
-.gpu-stream-table .gpu-latency-heading {
-  text-align: center;
+.gpu-stream-table th:nth-last-child(-n + 2) {
+  width: 14%;
 }
 
 .gpu-stream-table :is(th, td).gpu-transport-number {

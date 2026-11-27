@@ -2631,6 +2631,7 @@ function updateStreamProfileControls() {
   const config = $("launchConfig");
   summary.textContent = config.value !== "generic" ? config.selectedOptions[0].textContent
     : overrides ? `已配置 ${overrides} 路` : "跟随 Launch";
+  updateTransportTiming();
 }
 
 function updateDriverSetupSummary() {
@@ -2668,19 +2669,37 @@ function validGpuDuration(seconds) {
   return Number.isInteger(seconds) && seconds >= 1 && seconds <= 3600;
 }
 
+function estimateTransportWarmupFps() {
+  const rates = isMultiCameraTransport()
+    ? (state.transportCameraPlan?.cameras || []).flatMap((camera) => {
+        const streams = Array.isArray(camera.streams) ? camera.streams : Object.keys(camera.streams || {});
+        return streams.map((stream) => {
+          const source = stream === "points" || stream === "colored_points" ? "depth" : stream;
+          return camera.arguments?.[`${source}_fps`];
+        });
+      })
+    : STREAM_PROFILE_INPUTS.filter((input) => !input.disabled && input.name.endsWith("_fps"))
+        .map((input) => input.value);
+  return Math.min(30, ...rates.map(Number).filter((fps) => Number.isFinite(fps) && fps > 0));
+}
+
 function updateTransportTiming() {
   const transport = $("mode").value === TRANSPORT_MODE;
   const gpu = isGpuSelection();
   const duration = $("duration");
   const unit = $("durationUnit");
+  const warmupFrames = $("transportWarmupFrames").value || "30";
   duration.placeholder = !transport ? "300 / 15m / 2h"
     : { s: "60（默认）", m: "1（默认）", h: "例如 0.5" }[unit.value];
+
+  const seconds = transport ? transportDurationSeconds() : NaN;
+  const validDuration = gpu ? validGpuDuration(seconds) : Number.isFinite(seconds) && seconds > 0;
+  const phases = gpu ? 2 : 1;
   const durationNote = $("transportDurationNote");
   let note = "";
   if (gpu) {
-    const seconds = transportDurationSeconds();
-    note = validGpuDuration(seconds)
-      ? `两阶段共采样 ${formatSamplingDuration(seconds * 2)}，另计预热`
+    note = validDuration
+      ? `两阶段共采样 ${formatSamplingDuration(seconds * phases)}`
       : "每阶段须为 1 秒至 1 小时，精确到整秒";
   }
   if (transport && unit.value === "h" && !duration.value.trim()) {
@@ -2688,9 +2707,26 @@ function updateTransportTiming() {
   }
   durationNote.textContent = note;
   durationNote.classList.toggle("is-hidden", !note);
+
+  const estimate = $("transportDurationEstimate");
+  const frames = Number(warmupFrames);
+  const showEstimate = transport && validDuration && Number.isInteger(frames)
+    && (gpu ? frames >= 0 && frames <= 100000 : frames > 0);
+  estimate.classList.toggle("is-hidden", !showEstimate);
+  if (showEstimate) {
+    const fps = estimateTransportWarmupFps();
+    const startupShutdownAllowance = 15;
+    const total = Math.ceil(phases * (seconds + frames / fps) + startupShutdownAllowance);
+    estimate.textContent = `预计耗时约 ${formatSamplingDuration(total)}`;
+    estimate.title = `含采样、按 ${fps} FPS 估算的预热，以及 ${startupShutdownAllowance} 秒启停预留`;
+  } else {
+    estimate.textContent = "";
+    estimate.title = "";
+  }
+
   const warmup = $("frameworkAdvancedSummary");
   warmup.classList.toggle("is-hidden", !transport);
-  warmup.textContent = `每路预热 ${$("transportWarmupFrames").value || 30} 帧`;
+  warmup.textContent = `每路预热 ${warmupFrames} 帧`;
 }
 
 function updateRosVersionControls({ fillBlank = false } = {}) {
@@ -2757,7 +2793,6 @@ function updateModeControls() {
   $("continueOnError").closest("label").classList.toggle("is-hidden", transport);
   $("durationLabel").textContent = gpu ? "每阶段采样时长" : transport ? "采样时长" : "运行时长";
   $("durationUnit").classList.toggle("is-hidden", !transport);
-  $("frameworkDurationField").classList.toggle("grid-span-2", gpu);
   $("frameworkDurationField").classList.toggle("is-hidden", mode === "functional");
   $("duration").inputMode = transport ? "decimal" : "text";
   updateTransportTiming();
@@ -3640,7 +3675,10 @@ async function init() {
   $("standaloneForm").addEventListener("submit", startStandaloneRun);
   $("runForm").addEventListener("input", (event) => {
     clearValidation("runForm", "frameworkValidation");
-    if (["duration", "durationUnit", "transportWarmupFrames"].includes(event.target.id)) updateTransportTiming();
+    if (["duration", "durationUnit", "transportWarmupFrames"].includes(event.target.id)
+      || STREAM_PROFILE_INPUTS.includes(event.target) && event.target.name.endsWith("_fps")) {
+      updateTransportTiming();
+    }
     if (["rosSetup", "cameraSetup"].includes(event.target.id)) {
       updateDriverSetupSummary();
       updateTransportReceiverNote();
