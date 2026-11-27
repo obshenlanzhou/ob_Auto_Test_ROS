@@ -183,20 +183,23 @@ test('GPU detection ignores stale results even when returning to the same driver
 
 test('GPU transport table keeps stream details and reports only end-to-end latency', () => {
   const elements = new Map();
-  const body = {
+  const tableBody = () => ({
     rows: [],
     replaceChildren() { this.rows = []; },
     insertRow() {
       const cells = [];
       this.rows.push(cells);
-      return {insertCell: () => {
-        const cell = {};
+      return {classList: {toggle() {}}, insertCell: () => {
+        const cell = {classList: {toggle() {}}};
         cells.push(cell);
         return cell;
       }};
     },
-  };
-  elements.set('fpsTableBody', body);
+  });
+  const body = tableBody();
+  const resources = tableBody();
+  elements.set('gpuStreamTableBody', body);
+  elements.set('gpuSystemTableBody', resources);
   const element = id => {
     if (!elements.has(id)) {
       elements.set(id, {classList: {toggle() {}, remove() {}}});
@@ -207,20 +210,20 @@ test('GPU transport table keeps stream details and reports only end-to-end laten
     $: element,
     state: {},
     TERMINAL_RUN_STATUSES: new Set(['succeeded']),
+    ACTIVE_RUN_STATUSES: new Set(['running']),
     STATUS_LABELS: {succeeded: '完成'},
     formatNumber: (value, digits) => value.toFixed(digits),
   });
   vm.runInContext(
-    source.slice(source.indexOf('function renderGpuPerformance('), source.indexOf('function renderPerformance(')),
+    source.slice(source.indexOf('function formatSamplingDuration('), source.indexOf('function renderPerformance(')),
     context,
   );
   const template = fs.readFileSync(path.join(__dirname, '../orbbec_camera_auto_test_ui/templates/index.html'), 'utf8');
-  const header = template.match(/<tr id="gpuTransportColumns"[^>]*>([\s\S]*?)<\/tr>/)[1];
+  const header = template.match(/id="gpuStreamTable"[^>]*>\s*<thead>([\s\S]*?)<\/thead>/)[1];
   assert.deepEqual([...header.matchAll(/<th\b[^>]*>([^<]*)<\/th>/g)].map(match => match[1]),
-    ['相机', '流', '分辨率', '格式', '模式', '接收后端', 'FPS', '端到端平均时延 (ms)',
-      '端到端 P95 时延 (ms)', '整机 CPU (%)', '整机 GPU (%)']);
+    ['相机', '流', '分辨率', '格式', '模式', '接收后端', 'FPS', '端到端时延 (ms)', '平均', 'P95']);
   context.renderGpuPerformance({}, 'idle');
-  assert.equal(body.rows[0][0].colSpan, 10);
+  assert.equal(body.rows[0][0].colSpan, 8);
   const result = {
     backend: 'CUDA_BUFFER',
     phase: 'cuda',
@@ -234,17 +237,87 @@ test('GPU transport table keeps stream details and reports only end-to-end laten
   };
   context.renderGpuPerformance(result, 'succeeded');
   assert.match(element('streamMetricsTitle').textContent, /帧时间戳到订阅回调/);
-  assert.match(element('transportProgress').textContent, /测试时长 60 s/);
   assert.deepEqual(body.rows[0].map(cell => cell.textContent),
-    ['depth', '640 x 480', 'Y16', 'CUDA Buffer', 'cuda', '0.517', '35.499', '40.153', '52.428', '40.845']);
+    ['depth', '640 x 480', 'Y16', 'CUDA Buffer', 'cuda', '0.517', '35.499', '40.153']);
+  assert.deepEqual(resources.rows[0].map(cell => cell.textContent), ['CUDA Buffer', '52.428', '40.845']);
   context.renderGpuPerformance({...result, configured: true,
     rows: [{...result.rows[0], camera_name: 'camera_02'}]}, 'succeeded');
-  assert.equal(body.rows[0].length, 11);
+  assert.equal(body.rows[0].length, 9);
   assert.equal(body.rows[0][0].textContent, 'camera_02');
 
   context.renderGpuPerformance({...result, latency_basis: undefined}, 'succeeded');
   assert.deepEqual(body.rows[0].slice(6, 8).map(cell => cell.textContent), ['n/a', 'n/a']);
-  context.renderGpuPerformance({...result, final: false,
+  context.renderGpuPerformance({...result, final: false, elapsed_seconds: 23,
     rows: [{...result.rows[0], latency_p95_ms: undefined}]}, 'running');
   assert.deepEqual(body.rows[0].slice(6, 8).map(cell => cell.textContent), ['35.499', '—']);
+  assert.equal(element('transportRunProgress').textContent, 'CUDA Buffer · 采样 23 秒 / 1 分钟');
+
+  const depth = {...result.rows[0], camera_name: 'camera_01'};
+  context.renderGpuPerformance({...result, configured: true,
+    rows: [
+      {...depth, phase: 'cpu', backend: 'cpu', stream_format: '16UC1'},
+      {...depth, camera_name: 'camera_02'},
+      depth,
+    ]}, 'succeeded');
+  assert.deepEqual(body.rows[0].slice(0, 4).map(cell => cell.rowSpan), [2, 2, 2, undefined]);
+  assert.equal(body.rows[1][0].textContent, 'Y16');
+  assert.equal(body.rows[2][0].textContent, 'camera_02');
+  assert.equal(resources.rows.length, 1);
+});
+
+test('transport duration restores saved units and submits them as supported duration strings', () => {
+  const elements = {
+    duration: {value: ''}, durationUnit: {value: 'm'}, mode: {value: 'transport_latency'},
+    transportDurationNote: {classList: {toggle() {}}},
+    frameworkAdvancedSummary: {classList: {toggle() {}}}, transportWarmupFrames: {},
+  };
+  const context = vm.createContext({
+    $: id => elements[id],
+    TRANSPORT_MODE: 'transport_latency',
+    isGpuSelection: () => true,
+  });
+  const durationPattern = source.match(/^const DURATION_PATTERN = .*;$/m)[0];
+  vm.runInContext(durationPattern, context);
+  vm.runInContext(source.slice(source.indexOf('function formatSamplingDuration('),
+    source.indexOf('function samplingProgress(')), context);
+  vm.runInContext(source.slice(source.indexOf('function frameworkDurationValue('),
+    source.indexOf('function updateModeControls(')), context);
+  assert.equal(context.frameworkDurationValue('transport_latency'), '');
+  assert.equal(context.transportDurationSeconds(), 60);
+  elements.duration.value = '15';
+  assert.equal(context.frameworkDurationValue('transport_latency'), '15m');
+  assert.equal(context.frameworkDurationValue('performance'), '15');
+  context.updateTransportTiming();
+  assert.match(elements.transportDurationNote.textContent, /30 分钟/);
+  context.setFrameworkDuration('1H', 'transport_latency');
+  assert.equal(elements.duration.value, '1');
+  assert.equal(elements.durationUnit.value, 'h');
+  assert.equal(context.transportDurationSeconds(), 3600);
+  context.updateTransportTiming();
+  assert.match(elements.transportDurationNote.textContent, /2 小时/);
+  elements.duration.value = '2';
+  assert.equal(context.validGpuDuration(context.transportDurationSeconds()), false);
+  elements.duration.value = '30m';
+  assert.equal(context.frameworkDurationValue('transport_latency'), '30m');
+  assert.equal(context.transportDurationSeconds(), 1800);
+});
+
+test('transport logs open once on failure and respect manual toggling between polls', () => {
+  const logs = {dataset: {}, open: true};
+  const context = vm.createContext({$: () => logs});
+  vm.runInContext(source.slice(source.indexOf('function updateMonitorLogs('),
+    source.indexOf('function renderPerformance(')), context);
+  const run = {run_id: 'run', status: 'running'};
+  context.updateMonitorLogs(run, true);
+  assert.equal(logs.open, false);
+  logs.open = true;
+  context.updateMonitorLogs(run, true);
+  assert.equal(logs.open, true);
+  logs.open = false;
+  const failed = {...run, status: 'failed'};
+  context.updateMonitorLogs(failed, true);
+  assert.equal(logs.open, true);
+  logs.open = false;
+  context.updateMonitorLogs(failed, true);
+  assert.equal(logs.open, false);
 });

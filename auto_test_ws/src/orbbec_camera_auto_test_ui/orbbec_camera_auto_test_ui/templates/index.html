@@ -200,11 +200,18 @@
                   <option value="drop_frame">Drop frame · 丢帧</option>
                 </select>
               </label>
-              <label>
-                <span id="durationLabel">运行时长</span>
-                <input id="duration" name="duration" placeholder="300 / 15m / 2h" aria-describedby="transportDurationNote" />
-              </label>
-              <p class="field-note duration-note is-hidden" id="transportDurationNote"></p>
+              <div class="duration-field" id="frameworkDurationField" data-validation-field>
+                <label id="durationLabel" for="duration">运行时长</label>
+                <div class="duration-controls">
+                  <input id="duration" name="duration" autocomplete="off" placeholder="300 / 15m / 2h" aria-describedby="transportDurationNote" />
+                  <select id="durationUnit" aria-label="采样时长单位" class="is-hidden">
+                    <option value="s">秒</option>
+                    <option value="m">分钟</option>
+                    <option value="h">小时</option>
+                  </select>
+                </div>
+                <p class="field-note duration-note is-hidden" id="transportDurationNote"></p>
+              </div>
             </div>
 
             <div id="restartFields" class="grid two restart-grid">
@@ -511,12 +518,16 @@
           </section>
 
           <div class="monitor-content is-hidden" id="monitorContent">
+            <p class="transport-run-progress is-hidden" id="transportRunProgress"></p>
             <section class="run-result is-hidden" id="runResultSummary" aria-live="polite">
               <div class="run-result-hero">
                 <span class="run-result-mark" id="runResultMark" aria-hidden="true">✓</span>
                 <div class="run-result-copy">
                   <span class="panel-kicker">RUN COMPLETE</span>
-                  <h3 id="runResultTitle">测试已完成</h3>
+                  <div class="run-result-heading">
+                    <h3 id="runResultTitle">测试已完成</h3>
+                    <span id="runResultTiming" class="is-hidden"></span>
+                  </div>
                   <p id="runResultMessage"></p>
                 </div>
                 <div class="run-result-actions">
@@ -569,30 +580,53 @@
                   <span id="streamMetricsTitle">数据流性能</span>
                   <small id="transportProgress" class="is-hidden"></small>
                 </div>
-                <div class="fps-table-wrap">
+                <div class="fps-table-wrap" id="fpsTableWrap">
                   <table class="fps-table">
                     <thead>
                       <tr id="fpsColumns"><th>Topic</th><th>分辨率</th><th>格式</th><th>当前 FPS</th><th>平均 FPS</th><th>目标 FPS</th><th>丢帧</th><th>丢帧率</th></tr>
                       <tr id="transportColumns" class="is-hidden"><th scope="col" class="transport-camera-column is-hidden">相机</th><th scope="col">话题</th><th scope="col">分辨率</th><th scope="col">格式</th><th scope="col">样本数</th><th scope="col">当前 FPS</th><th scope="col">平均 FPS</th><th scope="col">平均延迟 (ms)</th><th scope="col">P95 延迟 (ms)</th></tr>
-                      <tr id="gpuTransportColumns" class="is-hidden">
-                        <th scope="col" class="transport-camera-column is-hidden">相机</th>
-                        <th scope="col">流</th><th scope="col">分辨率</th><th scope="col">格式</th>
-                        <th scope="col">模式</th><th scope="col">接收后端</th>
-                        <th scope="col">FPS</th>
-                        <th scope="col" title="运行中显示最近采样窗口的平均值，结束后显示全阶段平均值">端到端平均时延 (ms)</th>
-                        <th scope="col">端到端 P95 时延 (ms)</th>
-                        <th scope="col">整机 CPU (%)</th><th scope="col">整机 GPU (%)</th>
-                      </tr>
                     </thead>
                     <tbody id="fpsTableBody"><tr><td colspan="8">等待性能压测数据…</td></tr></tbody>
+                  </table>
+                </div>
+                <div class="fps-table-wrap is-hidden" id="gpuStreamTableWrap">
+                  <table class="fps-table gpu-stream-table" id="gpuStreamTable" aria-labelledby="streamMetricsTitle">
+                    <thead>
+                      <tr>
+                        <th rowspan="2" scope="col" class="transport-camera-column is-hidden">相机</th>
+                        <th rowspan="2" scope="col">流</th>
+                        <th rowspan="2" scope="col">分辨率</th>
+                        <th rowspan="2" scope="col">格式</th>
+                        <th rowspan="2" scope="col">模式</th>
+                        <th rowspan="2" scope="col">接收后端</th>
+                        <th rowspan="2" scope="col" class="gpu-transport-number">FPS</th>
+                        <th colspan="2" class="gpu-latency-heading">端到端时延 (ms)</th>
+                      </tr>
+                      <tr>
+                        <th scope="col" class="gpu-transport-number" title="运行中显示最近采样窗口的平均值，结束后显示全阶段平均值">平均</th>
+                        <th scope="col" class="gpu-transport-number">P95</th>
+                      </tr>
+                    </thead>
+                    <tbody id="gpuStreamTableBody"></tbody>
+                  </table>
+                </div>
+              </div>
+              <div class="data-section is-hidden" id="gpuSystemMetrics">
+                <div class="data-title"><span id="gpuSystemTitle">整机资源占用</span></div>
+                <div class="system-table-wrap">
+                  <table class="system-table gpu-system-table" aria-labelledby="gpuSystemTitle">
+                    <thead>
+                      <tr><th scope="col">模式</th><th scope="col">整机 CPU (%)</th><th scope="col">整机 GPU (%)</th></tr>
+                    </thead>
+                    <tbody id="gpuSystemTableBody"></tbody>
                   </table>
                 </div>
               </div>
             </section>
 
-            <section class="log-panel">
+            <details class="log-panel" id="monitorLogs" open>
+              <summary>实时日志</summary>
               <div class="log-toolbar">
-                <div class="data-title"><span>实时日志</span></div>
                 <div class="toolbar-actions">
                   <label class="follow-toggle"><input id="followLogs" type="checkbox" checked /><span>自动跟随</span></label>
                   <button type="button" class="text-button" id="copyLogs">复制</button>
@@ -600,7 +634,7 @@
                 </div>
               </div>
               <pre id="logOutput" class="log" aria-live="polite"></pre>
-            </section>
+            </details>
           </div>
         </section>
       </section>

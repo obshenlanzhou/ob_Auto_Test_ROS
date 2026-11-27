@@ -503,7 +503,7 @@ function formPayload() {
     }),
     launch_config: $("launchConfig").value,
     stream_options: readStreamOptions(!cameraPlan),
-    ...(mode !== "functional" ? { duration: $("duration").value.trim() } : {}),
+    ...(mode !== "functional" ? { duration: frameworkDurationValue(mode) } : {}),
     ...(restart || streamStall ? { image_topics: $("imageTopics").value } : {}),
     ...(restart ? {
       stable_seconds: $("stableSeconds").value.trim(),
@@ -1035,7 +1035,7 @@ function truthy(value) {
   return ["1", "true", "yes", "on"].includes(String(value || "").toLowerCase());
 }
 
-const DURATION_PATTERN = /^\d+(?:\.\d+)?[smh]?$/i;
+const DURATION_PATTERN = /^(\d+(?:\.\d+)?)([smh])?$/i;
 const FRAMEWORK_ERROR_FIELDS = [
   ["domain id", "rosDomainId"],
   ["camera ros setup", "cameraSetup"],
@@ -1066,6 +1066,7 @@ function validationIssue(target, message) {
 function controlLabel(control, fallback = "字段") {
   return control.closest("label")?.querySelector(".field-label b")?.textContent
     || control.closest("label")?.querySelector("span")?.textContent
+    || control.labels?.[0]?.textContent.trim()
     || fallback;
 }
 
@@ -1137,8 +1138,13 @@ function validateFrameworkForm() {
     });
     if (durationError) {
       errors.push(durationError);
-    } else if (gpu && !validGpuDuration(transportDurationSeconds())) {
-      errors.push(validationIssue($("duration"), "每阶段采样时长须换算为 1–3600 的整数秒"));
+    } else if (mode === TRANSPORT_MODE) {
+      const seconds = transportDurationSeconds();
+      if (gpu && !validGpuDuration(seconds)) {
+        errors.push(validationIssue($("duration"), "每阶段须为 1 秒至 1 小时，精确到整秒"));
+      } else if (!Number.isFinite(seconds) || seconds <= 0) {
+        errors.push(validationIssue($("duration"), "采样时长须大于 0"));
+      }
     }
   }
   for (const id of ["stableSeconds", "streamTimeout", "maxGapSeconds", "warmupSec"]) {
@@ -1295,7 +1301,7 @@ function presentValidationErrors(formId, summaryId, errors, { focus = true } = {
     const control = target.matches?.("input, select, textarea")
       ? target
       : target.querySelector?.("input, select, textarea");
-    const host = control?.closest("label") || target;
+    const host = control?.closest("label, [data-validation-field]") || target;
     host.classList.add("field-invalid");
     if (control) control.setAttribute("aria-invalid", "true");
     const note = document.createElement("small");
@@ -1715,8 +1721,12 @@ function renderResultSummary(snapshot, detail = {}) {
     ? resultFailureMessage(result)
     : result.error?.message || result.error;
   const warningValue = warnings.length ? resultWarningMessage(warnings[0]) : "";
+  const performance = snapshot.performance || {};
+  const compact = snapshot.runner_type !== "standalone"
+    && (snapshot.mode === TRANSPORT_MODE || Boolean(performance.transport));
 
   panel.dataset.status = snapshot.status;
+  panel.classList.toggle("run-result-compact", compact);
   $("runResultMark").textContent = presentation.mark;
   panel.querySelector(".panel-kicker").textContent = presentation.kicker;
   $("runResultTitle").textContent = presentation.title;
@@ -1724,7 +1734,22 @@ function renderResultSummary(snapshot, detail = {}) {
     ? displayResultValue(errorValue)
     : warningValue
       ? displayResultValue(warningValue)
-      : presentation.message;
+      : compact ? "" : presentation.message;
+
+  const timing = $("runResultTiming");
+  timing.classList.toggle("is-hidden", !compact);
+  if (compact) {
+    const gpu = performance.gpu_transport || {};
+    const sampling = gpu.final && gpu.duration_seconds > 0
+      ? `每阶段采样 ${formatSamplingDuration(gpu.duration_seconds)}`
+      : performance.transport_final && performance.transport_sampling_seconds > 0
+        ? `采样 ${formatSamplingDuration(performance.transport_sampling_seconds)}` : "";
+    const wallElapsed = (Date.parse(snapshot.ended_at) - Date.parse(snapshot.started_at)) / 1000;
+    const total = Number.isFinite(wallElapsed) ? wallElapsed : elapsed;
+    timing.textContent = [sampling, `总耗时 ${formatSamplingDuration(total)}`].filter(Boolean).join(" · ");
+    panel.classList.remove("is-hidden");
+    return;
+  }
 
   const facts = [
     ["运行时长", formatDuration(elapsed)],
@@ -1818,47 +1843,120 @@ async function updateResultSummary(snapshot) {
   }
 }
 
+function formatSamplingDuration(seconds) {
+  if (!Number.isFinite(seconds) || seconds < 0) return "—";
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor(seconds / 60) % 60;
+  const rest = seconds % 60;
+  return [
+    hours ? `${hours} 小时` : "",
+    minutes ? `${minutes} 分钟` : "",
+    rest || (!hours && !minutes) ? `${Number(rest.toFixed(3))} 秒` : "",
+  ].filter(Boolean).join(" ");
+}
+
+function samplingProgress(elapsed, duration) {
+  const progress = `采样 ${formatSamplingDuration(Number(formatNumber(elapsed, 1)))}`;
+  return duration > 0 ? `${progress} / ${formatSamplingDuration(duration)}` : progress;
+}
+
+function renderTransportProgress(status, message = "") {
+  const progress = $("transportRunProgress");
+  const visible = ACTIVE_RUN_STATUSES.has(status) && Boolean(message);
+  progress.classList.toggle("is-hidden", !visible);
+  if (visible && progress.textContent !== message) progress.textContent = message;
+}
+
+function gpuPhaseLabel(phase) {
+  return { cpu: "CPU (DDS)", cuda: "CUDA Buffer" }[phase] || phase;
+}
+
 function renderGpuPerformance(gpu, status) {
   const backend = gpu.backend || (status === "idle" ? state.transportGpuCapability?.gpu_backend : "");
-  const phaseNames = { cpu: "CPU (DDS)", cuda: "CUDA Buffer" };
-  const phase = gpu.phase || (TERMINAL_RUN_STATUSES.has(status) ? STATUS_LABELS[status] : "等待数据与预热");
-  const elapsed = gpu.elapsed_seconds > 0 ? ` ${formatNumber(gpu.elapsed_seconds, 1)}/${gpu.duration_seconds} s` : "";
   const basis = gpu.latency_basis || (backend?.startsWith("NITROS_") ? "frame_to_callback" : "");
-  const progress = gpu.final && gpu.duration_seconds
-    ? `测试时长 ${gpu.duration_seconds} s`
-    : (phaseNames[phase] || phase) + elapsed;
+  const phase = gpu.elapsed_seconds > 0
+    ? samplingProgress(gpu.elapsed_seconds, gpu.duration_seconds) : "等待数据与预热";
+  const progress = status === "running"
+    ? [gpuPhaseLabel(gpu.phase), gpu.final ? "整理结果" : phase].filter(Boolean).join(" · ")
+    : STATUS_LABELS[status];
+  renderTransportProgress(status, progress);
   $("streamMetricsTitle").textContent = "GPU 传输延迟 · 帧时间戳到订阅回调";
   $("transportProgress").classList.remove("is-hidden");
-  $("transportProgress").textContent = [backend, progress].filter(Boolean).join(" · ");
-  const body = $("fpsTableBody");
+  $("transportProgress").textContent = backend === "NONE" ? "" : backend || "";
+
+  const resources = Object.entries(gpu.system || {});
+  const resourceBody = $("gpuSystemTableBody");
+  resourceBody.replaceChildren();
+  $("gpuSystemMetrics").classList.toggle("is-hidden", !resources.length);
+  for (const [mode, load] of resources) {
+    const row = resourceBody.insertRow();
+    row.insertCell().textContent = gpuPhaseLabel(mode);
+    for (const percent of [load.cpu_percent, load.gpu_percent]) {
+      row.insertCell().textContent = percent == null ? "—" : formatNumber(percent, 3);
+    }
+  }
+
+  const body = $("gpuStreamTableBody");
   body.replaceChildren();
   if (!gpu.rows?.length) {
     const cell = body.insertRow().insertCell();
-    cell.colSpan = gpu.configured ? 11 : 10;
+    cell.colSpan = gpu.configured ? 9 : 8;
     cell.className = "table-message";
     cell.textContent = TERMINAL_RUN_STATUSES.has(status) ? "未采集到 GPU 测试数据" : "等待 GPU 测试阶段的数据";
     return;
   }
+
+  const groups = new Map();
   for (const sample of gpu.rows) {
-    const row = body.insertRow();
-    const load = gpu.system?.[sample.phase] || {};
-    const endToEnd = (sample.latency_basis || basis) === "frame_to_callback";
-    const avg = endToEnd ? sample.latency_ms : null;
-    const p95 = endToEnd ? sample.latency_p95_ms : null;
-    const values = [
-      ...(gpu.configured ? [sample.camera_name] : []),
-      sample.stream, sample.resolution, sample.stream_format, phaseNames[sample.phase] || sample.phase,
-      sample.backend,
-      sample.fps == null ? null : formatNumber(sample.fps, gpu.final ? 3 : 2),
-      avg == null ? "n/a" : formatNumber(avg, 3),
-      p95 == null ? (gpu.final ? "n/a" : null) : formatNumber(p95, 3),
-      load.cpu_percent == null ? null : formatNumber(load.cpu_percent, 3),
-      load.gpu_percent == null ? null : formatNumber(load.gpu_percent, 3),
-    ];
-    for (const value of values) {
-      row.insertCell().textContent = value ?? "—";
-    }
+    const key = JSON.stringify([sample.camera_name, sample.stream]);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(sample);
   }
+  for (const samples of groups.values()) {
+    const first = samples[0];
+    const sharedResolution = samples.every((sample) => sample.resolution === first.resolution);
+    const sharedFormat = samples.every((sample) => sample.stream_format === first.stream_format);
+    samples.forEach((sample, index) => {
+      const row = body.insertRow();
+      row.classList.toggle("gpu-stream-start", index === 0);
+      const metadata = [
+        ...(gpu.configured ? [[sample.camera_name, true]] : []),
+        [sample.stream, true], [sample.resolution, sharedResolution], [sample.stream_format, sharedFormat],
+      ];
+      for (const [value, shared] of metadata) {
+        if (shared && index !== 0) continue;
+        const cell = row.insertCell();
+        cell.textContent = value ?? "—";
+        cell.title = cell.textContent;
+        if (shared) cell.rowSpan = samples.length;
+      }
+      const endToEnd = (sample.latency_basis || basis) === "frame_to_callback";
+      const avg = endToEnd ? sample.latency_ms : null;
+      const p95 = endToEnd ? sample.latency_p95_ms : null;
+      const values = [
+        gpuPhaseLabel(sample.phase), sample.backend,
+        sample.fps == null ? null : formatNumber(sample.fps, 3),
+        avg == null ? "n/a" : formatNumber(avg, 3),
+        p95 == null ? (gpu.final ? "n/a" : null) : formatNumber(p95, 3),
+      ];
+      values.forEach((value, column) => {
+        const cell = row.insertCell();
+        cell.textContent = value ?? "—";
+        cell.classList.toggle("gpu-transport-number", column >= 2);
+      });
+    });
+  }
+}
+
+function updateMonitorLogs(payload, transport) {
+  const logs = $("monitorLogs");
+  const run = JSON.stringify([payload.run_id || "", transport]);
+  const failed = payload.status === "failed";
+  if (logs.dataset.run !== run || failed && logs.dataset.status !== "failed") {
+    logs.open = !transport || failed;
+    logs.dataset.run = run;
+  }
+  logs.dataset.status = payload.status || "";
 }
 
 function renderPerformance(performance, transport, status) {
@@ -1868,7 +1966,8 @@ function renderPerformance(performance, transport, status) {
   $("frameworkMonitor").dataset.gpu = String(gpu);
   $("fpsColumns").classList.toggle("is-hidden", transport || gpu);
   $("transportColumns").classList.toggle("is-hidden", !transport || gpu);
-  $("gpuTransportColumns").classList.toggle("is-hidden", !gpu);
+  $("fpsTableWrap").classList.toggle("is-hidden", gpu);
+  $("gpuStreamTableWrap").classList.toggle("is-hidden", !gpu);
   for (const column of document.querySelectorAll(".transport-camera-column")) {
     column.classList.toggle("is-hidden", !configured);
   }
@@ -1876,6 +1975,7 @@ function renderPerformance(performance, transport, status) {
     renderGpuPerformance({ configured, ...performance.gpu_transport }, status);
     return;
   }
+  $("gpuSystemMetrics").classList.add("is-hidden");
   const reportedScopes = performance.system_scopes || [];
   const hasSystemData =
     reportedScopes.length > 0 ||
@@ -1944,19 +2044,14 @@ function renderPerformance(performance, transport, status) {
       ? $("transportReliability").value : performance.transport_reliability];
     const sampling = performance.transport_sampling_seconds;
     const duration = performance.transport_duration_seconds;
-    let phase = "等待测试";
+    let phase = STATUS_LABELS[status];
     if (performance.transport_final) {
-      phase = `采样完成 · ${formatNumber(sampling, 1)} s`;
-    } else if (status !== "idle") {
-      if (status === "stopping" || TERMINAL_RUN_STATUSES.has(status)) {
-        phase = STATUS_LABELS[status];
-      } else if (sampling == null) {
-        phase = "等待数据与预热";
-      } else {
-        phase = `采样 ${formatNumber(sampling, 1)}${duration ? ` / ${duration}` : ""} s`;
-      }
+      phase = "整理结果";
+    } else if (status === "running") {
+      phase = sampling == null ? "等待数据与预热" : samplingProgress(sampling, duration);
     }
-    progress.textContent = [communication, reliability, phase].filter(Boolean).join(" · ");
+    progress.textContent = [communication, reliability].filter(Boolean).join(" · ");
+    renderTransportProgress(status, phase);
   }
   const body = $("fpsTableBody");
   body.innerHTML = "";
@@ -2050,15 +2145,20 @@ function renderMonitor(payload = {}) {
     Boolean(performance.transport) || payload.mode === TRANSPORT_MODE ||
     (payload.status === "idle" && state.workspace === "framework" && $("mode").value === TRANSPORT_MODE)
   );
+  updateMonitorLogs(payload, transport);
+  if (!transport) renderTransportProgress(payload.status);
   $("frameworkMonitor").dataset.transport = String(transport);
   $("standaloneMonitor").classList.toggle("is-hidden", !standalone);
   $("frameworkMonitor").classList.toggle("is-hidden", standalone);
   $("runMeta").classList.toggle("is-hidden", standalone);
   const statusLabel = STATUS_LABELS[payload.status] || payload.status || "";
-  $("monitorDescription").textContent = standalone
-    ? `独立脚本进度与实时日志${statusLabel ? ` · ${statusLabel}` : ""}`
-    : transport ? "按话题每秒更新 · P95 在采样结束后显示"
-      : `进程资源、数据流与实时日志${statusLabel ? ` · ${statusLabel}` : ""}`;
+  const subtitle = $("monitorDescription");
+  if (transport) {
+    subtitle.textContent = ACTIVE_RUN_STATUSES.has(payload.status) ? "P95 在采样结束后显示" : "";
+  } else {
+    const description = standalone ? "独立脚本进度与实时日志" : "进程资源、数据流与实时日志";
+    subtitle.textContent = [description, statusLabel].filter(Boolean).join(" · ");
+  }
 
   if (standalone) {
     $("standaloneElapsed").textContent = formatDuration(
@@ -2543,11 +2643,25 @@ function updateDriverSetupSummary() {
   summary.title = [$("cameraSetup").value.trim(), setup].filter(Boolean).join("\n");
 }
 
+function frameworkDurationValue(mode) {
+  const value = $("duration").value.trim();
+  const match = DURATION_PATTERN.exec(value);
+  if (mode !== TRANSPORT_MODE || !match || match[2]) return value;
+  const unit = $("durationUnit").value;
+  return unit === "s" ? value : `${value}${unit}`;
+}
+
+function setFrameworkDuration(value, mode) {
+  const match = mode === TRANSPORT_MODE ? DURATION_PATTERN.exec(value) : null;
+  $("duration").value = match ? match[1] : value;
+  $("durationUnit").value = match?.[2]?.toLowerCase() || "s";
+}
+
 function transportDurationSeconds() {
-  const value = $("duration").value.trim().toLowerCase() || "60";
-  if (!DURATION_PATTERN.test(value)) return NaN;
-  const multiplier = { s: 1, m: 60, h: 3600 }[value.slice(-1)];
-  return multiplier ? Number(value.slice(0, -1)) * multiplier : Number(value);
+  const match = DURATION_PATTERN.exec(frameworkDurationValue(TRANSPORT_MODE) || "60");
+  if (!match) return NaN;
+  const multiplier = { s: 1, m: 60, h: 3600 }[match[2]?.toLowerCase() || "s"];
+  return Number(match[1]) * multiplier;
 }
 
 function validGpuDuration(seconds) {
@@ -2557,14 +2671,23 @@ function validGpuDuration(seconds) {
 function updateTransportTiming() {
   const transport = $("mode").value === TRANSPORT_MODE;
   const gpu = isGpuSelection();
-  const seconds = gpu ? transportDurationSeconds() : NaN;
+  const duration = $("duration");
+  const unit = $("durationUnit");
+  duration.placeholder = !transport ? "300 / 15m / 2h"
+    : { s: "60（默认）", m: "1（默认）", h: "例如 0.5" }[unit.value];
   const durationNote = $("transportDurationNote");
-  durationNote.classList.toggle("is-hidden", !gpu);
-  durationNote.textContent = "";
+  let note = "";
   if (gpu) {
-    durationNote.textContent = validGpuDuration(seconds)
-      ? `两阶段共采样 ${seconds * 2} 秒，另计预热` : "每阶段 1–3600 秒";
+    const seconds = transportDurationSeconds();
+    note = validGpuDuration(seconds)
+      ? `两阶段共采样 ${formatSamplingDuration(seconds * 2)}，另计预热`
+      : "每阶段须为 1 秒至 1 小时，精确到整秒";
   }
+  if (transport && unit.value === "h" && !duration.value.trim()) {
+    note = [`留空默认${gpu ? "每阶段" : "采样"} 1 分钟`, note].filter(Boolean).join(" · ");
+  }
+  durationNote.textContent = note;
+  durationNote.classList.toggle("is-hidden", !note);
   const warmup = $("frameworkAdvancedSummary");
   warmup.classList.toggle("is-hidden", !transport);
   warmup.textContent = `每路预热 ${$("transportWarmupFrames").value || 30} 帧`;
@@ -2633,9 +2756,11 @@ function updateModeControls() {
   $("runCount").disabled = transport;
   $("continueOnError").closest("label").classList.toggle("is-hidden", transport);
   $("durationLabel").textContent = gpu ? "每阶段采样时长" : transport ? "采样时长" : "运行时长";
-  $("duration").placeholder = transport ? "60s（默认）" : "300 / 15m / 2h";
+  $("durationUnit").classList.toggle("is-hidden", !transport);
+  $("frameworkDurationField").classList.toggle("grid-span-2", gpu);
+  $("frameworkDurationField").classList.toggle("is-hidden", mode === "functional");
+  $("duration").inputMode = transport ? "decimal" : "text";
   updateTransportTiming();
-  $("duration").closest("label").classList.toggle("is-hidden", mode === "functional");
   $("restartFields").classList.toggle("is-hidden", !needsRestart);
   $("streamStallFields").classList.toggle("is-hidden", !needsStreamStall);
   $("streamTopicFields").classList.toggle("is-hidden", !needsStreamTopics);
@@ -2658,7 +2783,7 @@ function currentModeConfig() {
     stream_options: readStreamOptions(),
     run_count: $("runCount").value,
     continue_on_error: $("continueOnError").checked,
-    duration: $("duration").value,
+    duration: frameworkDurationValue(state.activeMode),
     stable_seconds: $("stableSeconds").value,
     stream_timeout: $("streamTimeout").value,
     max_gap_seconds: $("maxGapSeconds").value,
@@ -2696,7 +2821,7 @@ function applyModeConfig(mode) {
   $("transportWarmupTimeout").value = config.transport_warmup_timeout_sec;
   $("runCount").value = config.run_count;
   $("continueOnError").checked = truthy(config.continue_on_error);
-  $("duration").value = config.duration;
+  setFrameworkDuration(config.duration, mode);
   $("stableSeconds").value = config.stable_seconds;
   $("streamTimeout").value = config.stream_timeout;
   $("maxGapSeconds").value = config.max_gap_seconds;
@@ -2857,6 +2982,7 @@ async function startRun(event) {
       );
     } else {
       setStatus("failed");
+      $("monitorLogs").open = true;
       appendLogs([`[UI] start failed: ${error.message}`]);
     }
   }
@@ -3514,7 +3640,7 @@ async function init() {
   $("standaloneForm").addEventListener("submit", startStandaloneRun);
   $("runForm").addEventListener("input", (event) => {
     clearValidation("runForm", "frameworkValidation");
-    if (["duration", "transportWarmupFrames"].includes(event.target.id)) updateTransportTiming();
+    if (["duration", "durationUnit", "transportWarmupFrames"].includes(event.target.id)) updateTransportTiming();
     if (["rosSetup", "cameraSetup"].includes(event.target.id)) {
       updateDriverSetupSummary();
       updateTransportReceiverNote();
@@ -3558,6 +3684,11 @@ async function init() {
   $("clearLogs").addEventListener("click", () => {
     $("logOutput").textContent = "";
   });
+  $("monitorLogs").addEventListener("toggle", () => {
+    if ($("monitorLogs").open && $("followLogs").checked) {
+      $("logOutput").scrollTop = $("logOutput").scrollHeight;
+    }
+  });
   $("viewCurrentReport").addEventListener("click", async () => {
     const runId = state.currentSnapshot?.run_id;
     if (!runId) return;
@@ -3577,6 +3708,13 @@ async function init() {
     loadLaunchFiles();
   });
   $("mode").addEventListener("change", changeFrameworkMode);
+  $("duration").addEventListener("change", () => {
+    const value = $("duration").value.trim();
+    if ($("mode").value === TRANSPORT_MODE && DURATION_PATTERN.exec(value)?.[2]) {
+      setFrameworkDuration(value, TRANSPORT_MODE);
+      updateTransportTiming();
+    }
+  });
   $("transportMode").addEventListener("change", updateMonitorVisibility);
   $("transportReceiver").addEventListener("change", () => {
     updateSpecialConfigControls();
