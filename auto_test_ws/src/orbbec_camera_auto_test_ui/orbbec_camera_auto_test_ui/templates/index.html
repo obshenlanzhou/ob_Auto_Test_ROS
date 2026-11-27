@@ -49,6 +49,7 @@
             <span aria-hidden="true">◉</span> 相机信息
           </button>
           <button type="button" class="device-info-button" id="showToolUpdate">在线更新</button>
+          <button type="button" class="device-info-button" id="showFeedback">工具改进建议</button>
           <div class="theme-switch" role="group" aria-label="页面主题">
             <button type="button" data-theme-value="light" aria-pressed="true"><span aria-hidden="true">☀</span> 浅色</button>
             <button type="button" data-theme-value="dark" aria-pressed="false"><span aria-hidden="true">☾</span> 深色</button>
@@ -730,6 +731,17 @@
           <button type="button" class="primary" id="applyToolUpdate" disabled>更新并重启</button>
         </div>
       </form>
+    </dialog>
+
+    <dialog class="exit-code-dialog feedback-dialog" id="feedbackDialog" aria-labelledby="feedbackTitle">
+      <form method="dialog" class="exit-code-dialog-header">
+        <h2 id="feedbackTitle">工具改进建议</h2>
+        <button type="submit" class="exit-code-dialog-close" aria-label="关闭工具改进建议">×</button>
+      </form>
+      <a class="feedback-external" id="feedbackExternal"
+         href="https://ob-auto-test-feedback.shenlanzhou.workers.dev/feedback"
+         target="_blank" rel="noopener noreferrer">在新页面填写</a>
+      <iframe id="feedbackFrame" title="工具改进建议表单" referrerpolicy="no-referrer"></iframe>
     </dialog>
 
     <dialog class="exit-code-dialog device-info-dialog" id="deviceInfoDialog" aria-labelledby="deviceInfoDialogTitle">

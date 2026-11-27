@@ -3529,6 +3529,11 @@ async function init() {
   $("standaloneStopButton").addEventListener("click", stopRun);
   $("showDevices").addEventListener("click", showDeviceInfo);
   $("refreshDevices").addEventListener("click", refreshDevices);
+  $("showFeedback").addEventListener("click", () => {
+    const frame = $("feedbackFrame");
+    if (!frame.hasAttribute("src")) frame.src = $("feedbackExternal").href;
+    $("feedbackDialog").showModal();
+  });
   $("showToolUpdate").addEventListener("click", () => {
     $("toolUpdateDialog").showModal();
     toolUpdate("open");

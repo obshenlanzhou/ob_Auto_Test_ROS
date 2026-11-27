@@ -97,6 +97,10 @@ python3 ./launch_restart_stream_check/launch_restart_stream_check.py --help
 
 通过启动脚本在 Ubuntu 等提供 `apt-get` 的系统上运行时，如果缺少 Git，终端会先询问是否安装。更新需要工作区干净、分支可快进，以及当前测试和结果打包已结束。
 
+## Web UI 工具改进建议
+
+在 Web UI 顶部打开「工具改进建议」，填写建议并通过人机验证即可提交。标题默认为「工具优化」。此入口暂不支持反馈测试问题。提交后会显示公开的 GitHub Issue 链接，开发者可在 [GitHub Issues](https://github.com/obshenlanzhou/ob_Auto_Test_ROS/issues) 查看和跟进。
+
 ## 适用场景
 
 - 需要完整测试流程、结果归档、Web UI 或 ROS package 方式运行时，使用 [auto_test_ws](auto_test_ws/README.md)。

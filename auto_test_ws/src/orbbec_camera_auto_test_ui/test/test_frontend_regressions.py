@@ -10,7 +10,8 @@ def test_frontend_regressions():
     if not node:
         pytest.skip("Node.js is required for frontend regression tests")
     completed = subprocess.run(
-        [node, "--test", str(Path(__file__).with_name("frontend_regressions.cjs"))],
+        [node, "--test", str(Path(__file__).with_name("frontend_regressions.cjs")),
+         str(Path(__file__).with_name("feedback_worker.test.mjs"))],
         capture_output=True, text=True, timeout=20,
     )
     assert completed.returncode == 0, completed.stdout + completed.stderr

@@ -1961,6 +1961,30 @@ button.danger {
 .tool-update-versions dd { margin: 0; overflow-wrap: anywhere; }
 .tool-update-actions { gap: 8px; flex-wrap: wrap; }
 
+.feedback-dialog {
+  width: min(690px, calc(100vw - 32px));
+}
+
+.feedback-dialog form {
+  padding-bottom: 12px;
+}
+
+.feedback-external {
+  display: block;
+  text-align: right;
+  margin: 0 20px 12px;
+}
+
+.feedback-dialog iframe {
+  display: block;
+  width: calc(100% - 40px);
+  height: min(430px, 65dvh);
+  margin: 0 20px 20px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  color-scheme: light dark;
+}
+
 .camera-plan-dialog {
   width: min(860px, calc(100vw - 32px));
 }
