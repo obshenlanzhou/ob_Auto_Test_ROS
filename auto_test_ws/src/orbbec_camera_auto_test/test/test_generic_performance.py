@@ -105,7 +105,7 @@ def test_transport_excludes_resource_samples_during_camera_shutdown(tmp_path, mo
     monkeypatch.setattr(transport, "time", clock)
     monkeypatch.setattr(transport, "TestSession", lambda *args, **kwargs: session)
     monkeypatch.setattr(transport, "capture_runtime_env", lambda *args, **kwargs: {"ROS_DISTRO": "jazzy"})
-    monkeypatch.setattr(transport, "_configured_setup", lambda _: None)
+    monkeypatch.setattr(transport, "_configured_setup", lambda *_: None)
     monkeypatch.setattr(transport, "_package_share", lambda *_: tmp_path)
     monkeypatch.setattr(transport, "_loaded_sdk_paths", lambda _: set())
     args = SimpleNamespace(

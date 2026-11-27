@@ -620,16 +620,20 @@ def build_performance_summary(result: Dict[str, Any]) -> List[str]:
             lines.append(f"- Test duration: {result['duration_seconds']:g} s")
         lines.extend(["- Latency basis: Frame header timestamp to subscription callback", ""])
         summary = result.get("gpu_transport_summary", [])
+        configured = bool(result.get("transport_camera_config"))
         basis = gpu_latency_basis(result.get("gpu_backend"), summary)
         system = result.get("gpu_system_summary", {})
         configs = {config.get("stream"): config for config in stream_config}
+        camera_configs = {(config.get("camera"), config.get("stream")): config
+                          for config in stream_config}
         cloud_formats = {"points": "XYZ", "colored_points": "XYZRGB"}
         phase_names = {"cpu": "CPU (DDS)", "cuda": "CUDA Buffer"}
         rows = []
         for row in summary:
             phase, stream = row["phase"], row["stream"]
             load = system.get(phase, {})
-            config = configs.get(stream, {})
+            camera = row.get("camera_name")
+            config = camera_configs.get((camera, stream), {}) if camera else configs.get(stream, {})
             width, height = config.get("width"), config.get("height")
             end_to_end = (row.get("latency_basis") or basis) == FRAME_TO_CALLBACK
             metrics = [
@@ -639,12 +643,14 @@ def build_performance_summary(result: Dict[str, Any]) -> List[str]:
                 load.get("cpu_percent"), load.get("gpu_percent"),
             ]
             rows.append([
+                *([camera] if configured else []),
                 stream, f"{width} x {height}" if width and height else None,
                 cloud_formats.get(stream) or config.get("format"), phase_names.get(phase, phase),
                 row.get("backend"),
                 *[f"{value:.3f}" if value is not None else "n/a" for value in metrics],
             ])
         headers = [
+            *(["Camera"] if configured else []),
             "Stream", "Resolution", "Format", "Mode", "Receiver backend", "FREQ[Hz]",
             "LATENCY AVG (ms)", "LATENCY P95 (ms)", "CPU[%]", "GPU[%]",
         ]
@@ -666,19 +672,21 @@ def build_performance_summary(result: Dict[str, Any]) -> List[str]:
             lines.append(f"- Loaded SDK: `{library['path']}`. SHA-256: `{library['sha256'] or 'N/A'}`")
         lines.append("")
         rows = []
+        configured = bool(result.get("transport_camera_config"))
         for topic, stats in result.get("transport_summary", {}).items():
             avg = stats["latency_avg_ms"]
             p95 = stats["latency_p95_ms"]
             rows.append([
+                *([stats.get("camera_name")] if configured else []),
                 topic, stats["message_count"], f"{stats['avg_fps']:.3f}",
                 f"{avg:.3f}" if avg is not None else "N/A",
                 f"{p95:.3f}" if p95 is not None else "N/A",
                 stats["invalid_stamps"], stats["delivery_mismatches"],
             ])
         lines.extend(_markdown_table(
-            ["Topic", "Samples", "FPS", "Mean latency (ms)", "P95 latency (ms)",
+            [*(["Camera"] if configured else []), "Topic", "Samples", "FPS", "Mean latency (ms)", "P95 latency (ms)",
              "Invalid timestamps", "Delivery mismatches"],
-            rows or [["N/A"] * 7],
+            rows or [["N/A"] * (8 if configured else 7)],
         ))
         lines.append("")
     else:

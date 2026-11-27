@@ -236,6 +236,57 @@ GPU 示例使用固定的 QoS、通信方式和每阶段 60 秒的预热超时�
 原始 GPU 示例汇总保存在 `gpu_driver_summary.csv`，可以查看样本数、最长收帧间隔及 CUDA Buffer 的 CPU 回退帧。
 命令行可用 `--transport-receiver gpu` 选择同一模式。
 
+#### 指定多相机 Launch 和必测话题
+
+传输延迟页面默认显示单相机配置。在 **相机配置** 点击 **多相机 → 配置相机**，在弹窗选择启动方式、
+设置设备和必测流，然后保存。可逐台配置，也可复用已有的多相机 Launch。页面保存后直接使用这份配置。
+命令行可通过 `--transport-camera-config` 传入 YAML。下面的配置复用已经设好设备和流开关的
+`multi_camera.launch.py`。
+
+```yaml
+launch: multi_camera.launch.py
+cameras:
+  - name: camera_01
+    streams: [color, depth]
+  - name: camera_02
+    streams: [color, depth]
+```
+
+Launch 可以使用绝对路径、相对 YAML 所在目录的路径，或已选驱动安装中的 Launch 文件名。流列表中的
+名称可以是 `color`、`depth`、`ir`、`left_ir`、`right_ir`、`left_color`、`right_color`、`points`、
+`colored_points`。话题经过重映射时，可以写成 `streams: {color: /rig/cam1/color/image_raw}`。
+NITROS 的 GPU 话题有单独映射时，可用 `gpu_topics: {color: /rig/cam1/color/image_raw/nitros_image}` 指定。
+指定的流都必须在本阶段完成预热，然后统一开始采样。报告按相机和流记录 FPS、端到端平均时延及 P95。
+如果相机的帧时间戳用设备时钟，在对应相机下填写 `time_domain: device`。
+
+对于标准 ROS 同进程 IPC 和 NITROS，Launch 需要声明并向相机转发
+`component_container_name`、`use_intra_process_comms`。预配置的多相机 Launch 没有这些参数时，
+可在 YAML 中为每台相机单独指定 Launch，使用序列号或 USB 端口定位设备。
+
+```yaml
+cameras:
+  - name: camera_01
+    launch: gemini_330_series.launch.py
+    arguments: {serial_number: "实际序列号1", enable_color: true, enable_depth: true}
+    streams: [color, depth]
+  - name: camera_02
+    launch: gemini_330_series.launch.py
+    arguments: {serial_number: "实际序列号2", enable_color: true, enable_depth: true}
+    streams: [color, depth]
+```
+
+```bash
+./run_camera_auto_test.sh --mode performance --scenario transport_latency \
+  --ros-setup /opt/ros/jazzy/setup.bash --driver-setup /path/to/driver/install/setup.bash \
+  --transport-camera-config /path/to/transport_cameras.yaml --duration 10
+```
+
+用 `--transport-receiver gpu` 可运行多机 GPU 对比。测试工作区按所选驱动的 GPU 后端构建订阅组件。
+NITROS 把订阅组件加载到相机所在容器，CUDA Buffer 保持跨进程，核验实际接收的缓冲后端。
+使用预配置的多相机 Launch 时，子相机也需要开启 GPU 发布。
+两种模式都统一切换 CPU/GPU 阶段，并单独记录读失败及 CUDA CPU 回退。结果文件为
+`transport_summary.csv`、`result.json` 和 `summary.md`。
+
 **流配置** 根据所选 ROS 2 Launch 显示可用开关。将一路图像设为「开启」后，在该流下方可填写宽度、高度、
 FPS 和格式，支持彩色、深度、单红外、左右红外及左右彩色。留空采用 Launch 默认值，
 相机 YAML 和额外 Launch 参数中的同名设置优先。Gemini 301 系列的「双彩色」和 Gemini 2L 的

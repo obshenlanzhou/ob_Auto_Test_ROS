@@ -12,6 +12,7 @@ PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PACKAGE_ROOT))
 
 import orbbec_camera_auto_test_ui.run_manager as run_manager  # noqa: E402
+import orbbec_camera_auto_test_ui.server as server  # noqa: E402
 from orbbec_camera_auto_test_ui.run_manager import (  # noqa: E402
     _build_shell_script,
     _ros_domain_environment_command,
@@ -67,6 +68,80 @@ class RunConfigurationTest(unittest.TestCase):
                     "enable_right_color=true", "right_color_width=1280"):
             self.assertIn(f"--launch-arg {arg}", commands[0])
         self.assertNotIn("--launch-arg depth_fps=", commands[0])
+
+    def test_transport_mode_passes_the_camera_plan_without_a_single_camera_launch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            plan = Path(directory) / "two cameras.yaml"
+            plan.write_text(
+                "launch: multi_camera.launch.py\ncameras:\n"
+                "  - {name: camera_01, streams: [color]}\n"
+                "  - {name: camera_02, streams: [color]}\n"
+            )
+            payload = self.base_payload()
+            payload.update(mode="transport_latency", transport_camera_config=str(plan),
+                           camera_name="saved_single_camera", launch_args="legacy_draft",
+                           stream_options={"color_width": "unfinished"})
+            self.assertEqual(validate_run_payload(payload), [])
+            _, commands, _ = _build_shell_script(payload, Path(directory) / "results")
+            self.assertIn(f"--transport-camera-config '{plan}'", commands[0])
+            self.assertNotIn("--launch-file", commands[0])
+            self.assertNotIn("--camera-name", commands[0])
+            self.assertNotIn("--launch-arg", commands[0])
+
+    def test_single_camera_run_keeps_a_saved_plan_inactive(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            plan = str(root / "saved-cameras.yaml")
+            results = root / "results"
+            with (
+                patch.object(run_manager, "CONFIG_PATH", root / "ui-config.json"),
+                patch.object(run_manager, "UI_RESULTS_ROOT", results),
+                patch.object(run_manager.RunManager, "_run_job"),
+            ):
+                run_manager.save_config({"mode": "transport_latency", "transport_camera_config": plan})
+                payload = self.base_payload()
+                payload.update(mode="transport_latency", performance_scenario="", transport_camera_config="")
+                status, job = run_manager.RunManager().start(payload)
+                self.assertEqual(status, 200)
+                request = json.loads((results / job["run_id"] / "ui_request.json").read_text())
+                self.assertIn("--launch-file gemini_301_series.launch.py", request["command_lines"][0])
+                self.assertNotIn("--transport-camera-config", request["command_lines"][0])
+                self.assertEqual(
+                    run_manager.load_config()["mode_configs"]["transport_latency"]["transport_camera_config"], plan,
+                )
+
+    def test_dialog_config_is_saved_only_after_the_plan_is_validated(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            storage = root / "ui_config.json"
+            launch = root / "launch" / "camera.launch.py"
+            launch.parent.mkdir()
+            launch.touch()
+            config = {"cameras": [
+                {"name": f"camera_0{index}", "launch": launch.name,
+                 "arguments": {"serial_number": f"00{index}", "enable_color": True},
+                 "streams": ["color"]}
+                for index in (1, 2)
+            ]}
+            with (
+                patch.object(server, "CONFIG_PATH", storage),
+                patch.object(run_manager, "CONFIG_PATH", storage),
+                patch.object(server, "capture_runtime_env", return_value={}),
+                patch.object(server, "_package_share", return_value=root),
+                patch("orbbec_camera_auto_test.core.transport_config.camera_launch_options",
+                      return_value=dict.fromkeys(("camera_name", "serial_number", "enable_color"))),
+            ):
+                saved = server.transport_camera_config({"config": config})
+                path = Path(saved["path"])
+                self.assertEqual(server.transport_camera_config({"load_path": str(path)})["config"], config)
+                config["cameras"][1]["arguments"]["serial_number"] = "001"
+                with self.assertRaisesRegex(ValueError, "Duplicate camera serial_number"):
+                    server.transport_camera_config({"config": config})
+                self.assertEqual(list(path.parent.iterdir()), [path])
+                self.assertEqual(
+                    run_manager.load_config()["mode_configs"]["transport_latency"]["transport_camera_config"],
+                    str(path),
+                )
 
     def test_invalid_stream_profiles_are_rejected(self):
         payload = self.base_payload()

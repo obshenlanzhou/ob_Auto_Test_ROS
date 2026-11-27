@@ -14,6 +14,10 @@ const state = {
   deviceQueryPending: false,
   activeMode: "functional",
   modeConfigs: {},
+  transportMultiCamera: false,
+  transportCameraConfigPath: "",
+  transportCameraPlan: null,
+  transportCameraDialogRequest: null,
   transportLaunchKey: "",
   transportLaunchRequest: null,
   transportLaunchArguments: null,
@@ -169,6 +173,7 @@ const DEFAULT_MODE_CONFIG = {
   performance_scenario: "",
   transport_mode: "cross_process",
   transport_receiver: "standard",
+  transport_camera_config: "",
   transport_reliability: "best_effort",
   transport_warmup_frames: "",
   transport_warmup_timeout_sec: "",
@@ -402,6 +407,7 @@ function formPayload() {
   const mode = $("mode").value;
   const transport = mode === TRANSPORT_MODE;
   const gpu = isGpuSelection();
+  const cameraPlan = transportCameraConfig();
   const usesPerformanceScenario = mode === "performance" || mode === "all";
   const restart = mode === "restart";
   const streamStall = mode === "stream_stall";
@@ -415,6 +421,7 @@ function formPayload() {
     ...(usesPerformanceScenario ? { performance_scenario: $("performanceScenario").value } : {}),
     ...(transport ? {
       transport_receiver: gpu ? "gpu" : "standard",
+      transport_camera_config: cameraPlan,
       ...(!gpu ? {
         transport_mode: $("transportMode").value,
         transport_reliability: $("transportReliability").value,
@@ -427,7 +434,7 @@ function formPayload() {
       continue_on_error: $("continueOnError").checked,
     }),
     launch_config: $("launchConfig").value,
-    stream_options: readStreamOptions(true),
+    stream_options: readStreamOptions(!cameraPlan),
     ...(mode !== "functional" ? { duration: $("duration").value.trim() } : {}),
     ...(restart || streamStall ? { image_topics: $("imageTopics").value } : {}),
     ...(restart ? {
@@ -979,6 +986,7 @@ const FRAMEWORK_ERROR_FIELDS = [
   ["transport_warmup_frames", "transportWarmupFrames"],
   ["transport_reliability", "transportReliability"],
   ["transport_receiver", "transportStandard"],
+  ["transport_camera_config", "openTransportCameraConfig"],
   ["transport_warmup_timeout_sec", "transportWarmupTimeout"],
   ["duration", "duration"],
 ];
@@ -1031,7 +1039,11 @@ function validateFrameworkForm() {
   if (!$("rosSetup").value.trim()) {
     errors.push(validationIssue($("rosSetup"), "ROS Setup 为必填项"));
   }
-  if (!$("launchFile").value.trim()) {
+  const multiCamera = isMultiCameraTransport();
+  const missingPlan = multiCamera && !transportCameraConfig();
+  if (missingPlan) {
+    errors.push(validationIssue($("openTransportCameraConfig"), "请先配置多相机"));
+  } else if (!multiCamera && !$("launchFile").value.trim()) {
     errors.push(validationIssue($("launchFile"), "请选择 Launch 文件"));
   }
   if ($("rosVersion").value === "2") {
@@ -1044,11 +1056,11 @@ function validateFrameworkForm() {
     const runCountError = validateNumberControl($("runCount"), { integer: true, min: 0, strictMin: true });
     if (runCountError) errors.push(runCountError);
   }
-  const gpuProblem = gpu && gpuReceiverProblem();
+  const gpuProblem = gpu && !missingPlan && gpuReceiverProblem();
   if (gpuProblem) {
     errors.push(validationIssue($("transportStandard"), gpuProblem));
   }
-  if (gpu && $("launchConfig").value === "dual_color") {
+  if (gpu && !multiCamera && $("launchConfig").value === "dual_color") {
     errors.push(validationIssue($("launchConfig"), "当前 GPU 示例不支持双彩色预设"));
   }
   if (mode !== "functional") {
@@ -1090,7 +1102,7 @@ function validateFrameworkForm() {
     }
   }
 
-  const invalidLaunchArg = $("launchArgs").value
+  const invalidLaunchArg = !multiCamera && $("launchArgs").value
     .split("\n")
     .map((item) => item.trim())
     .find((item) => item && (!item.includes("=") || !item.split("=", 1)[0].trim()));
@@ -1231,7 +1243,7 @@ function presentValidationErrors(formId, summaryId, errors, { focus = true } = {
       ? target
       : target?.querySelector?.("input, select, textarea");
     (control || target)?.scrollIntoView?.({ behavior: "smooth", block: "center" });
-    control?.focus({ preventScroll: true });
+    (control || target)?.focus?.({ preventScroll: true });
   }
   return false;
 }
@@ -1315,6 +1327,7 @@ function setStatus(status) {
   $("standaloneStopButton").disabled = !running;
   $("standaloneStopButton").classList.toggle("is-hidden", !running);
   $("showDevices").disabled = running;
+  $("queryTransportCameraDevices").disabled = running || state.deviceQueryPending;
   $("showDevices").title = running ? "测试运行期间暂停设备枚举" : "查看已连接的 ROS 2 相机";
 
   const monitor = $("monitorEmpty").closest(".monitor");
@@ -1753,7 +1766,7 @@ function renderGpuPerformance(gpu, status) {
   body.replaceChildren();
   if (!gpu.rows?.length) {
     const cell = body.insertRow().insertCell();
-    cell.colSpan = 10;
+    cell.colSpan = gpu.configured ? 11 : 10;
     cell.className = "table-message";
     cell.textContent = TERMINAL_RUN_STATUSES.has(status) ? "未采集到 GPU 测试数据" : "等待 GPU 测试阶段的数据";
     return;
@@ -1765,6 +1778,7 @@ function renderGpuPerformance(gpu, status) {
     const avg = endToEnd ? sample.latency_ms : null;
     const p95 = endToEnd ? sample.latency_p95_ms : null;
     const values = [
+      ...(gpu.configured ? [sample.camera_name] : []),
       sample.stream, sample.resolution, sample.stream_format, phaseNames[sample.phase] || sample.phase,
       sample.backend,
       sample.fps == null ? null : formatNumber(sample.fps, gpu.final ? 3 : 2),
@@ -1781,12 +1795,17 @@ function renderGpuPerformance(gpu, status) {
 
 function renderPerformance(performance, transport, status) {
   const gpu = performance.transport_receiver === "gpu" || (status === "idle" && isGpuSelection());
+  const configured = status === "idle" ? isMultiCameraTransport()
+    : Boolean(performance.transport_configured || performance.gpu_transport?.configured);
   $("frameworkMonitor").dataset.gpu = String(gpu);
   $("fpsColumns").classList.toggle("is-hidden", transport || gpu);
   $("transportColumns").classList.toggle("is-hidden", !transport || gpu);
   $("gpuTransportColumns").classList.toggle("is-hidden", !gpu);
+  for (const column of document.querySelectorAll(".transport-camera-column")) {
+    column.classList.toggle("is-hidden", !configured);
+  }
   if (gpu) {
-    renderGpuPerformance(performance.gpu_transport || {}, status);
+    renderGpuPerformance({ configured, ...performance.gpu_transport }, status);
     return;
   }
   const reportedScopes = performance.system_scopes || [];
@@ -1878,7 +1897,7 @@ function renderPerformance(performance, transport, status) {
   if (!topics.length) {
     const row = document.createElement("tr");
     const cell = document.createElement("td");
-    cell.colSpan = 8;
+    cell.colSpan = transport && configured ? 9 : 8;
     cell.className = "table-message";
     cell.textContent = transport
       ? (TERMINAL_RUN_STATUSES.has(status) ? "未采集到传输数据" : "完成预热后按话题显示采样数据")
@@ -1894,6 +1913,7 @@ function renderPerformance(performance, transport, status) {
     const currentFps = topic.samples === 0 && transport ? "—" : formatNumber(topic.current_fps, 2);
     const avgFps = topic.samples === 0 && transport ? "—" : formatNumber(topic.avg_fps, 2);
     const values = transport ? [
+      ...(configured ? [topic.camera_name || "—"] : []),
       name,
       topic.resolution || "—",
       topic.stream_format || "—",
@@ -2015,14 +2035,298 @@ function updateLaunchConfigOptions(preferred = "", { refreshGpu = false } = {}) 
   refreshTransportLaunchArguments({ force: refreshGpu });
 }
 
+const TRANSPORT_CAMERA_STREAMS = {
+  color: ["彩色", "enable_color"],
+  depth: ["深度", "enable_depth"],
+  ir: ["红外", "enable_ir"],
+  left_ir: ["左红外", "enable_left_ir"],
+  right_ir: ["右红外", "enable_right_ir"],
+  left_color: ["左彩色", "enable_left_color"],
+  right_color: ["右彩色", "enable_right_color"],
+  points: ["深度点云", "enable_point_cloud"],
+  colored_points: ["彩色点云", "enable_colored_point_cloud"],
+};
+
+function cameraPlanField(row, name) {
+  return row.querySelector(`[data-camera-field="${name}"]`);
+}
+
+function cameraPlanArguments(text) {
+  const pairs = new Map();
+  for (const line of text.split("\n").map((value) => value.trim()).filter(Boolean)) {
+    const match = /^([A-Za-z_]\w*)\s*=(.*)$/.exec(line);
+    if (!match || pairs.has(match[1])) {
+      throw new Error(`Launch 参数须使用不重复的 KEY=VALUE：${line}`);
+    }
+    pairs.set(match[1], match[2].trim());
+  }
+  return Object.fromEntries(pairs);
+}
+
+function formatCameraPlanArguments(values) {
+  return Object.entries(values).map(([name, value]) => `${name}=${value}`).join("\n");
+}
+
+function addTransportCameraRow(camera = {}) {
+  const list = $("transportCameraRows");
+  const row = $("transportCameraRowTemplate").content.firstElementChild.cloneNode(true);
+  const names = new Set([...list.children].map((item) => cameraPlanField(item, "name").value));
+  let index = 1;
+  while (names.has(`camera_${String(index).padStart(2, "0")}`)) index += 1;
+  const name = cameraPlanField(row, "name");
+  name.value = camera.name || `camera_${String(index).padStart(2, "0")}`;
+  name.pattern = "[A-Za-z_][A-Za-z_0-9]*";
+  const title = row.querySelector("[data-camera-title]");
+  title.textContent = name.value;
+  name.addEventListener("input", () => { title.textContent = name.value || "相机"; });
+  const remove = row.querySelector("[data-remove-camera]");
+  remove.addEventListener("click", () => row.remove());
+  cameraPlanField(row, "launch").value = camera.launch === $("transportCameraSharedLaunch").value
+    ? "" : camera.launch || "";
+  const args = { ...camera.arguments };
+  for (const field of ["serial_number", "usb_port", "time_domain"]) {
+    cameraPlanField(row, field).value = args[field] ?? camera[field] ?? "";
+    delete args[field];
+  }
+  const streams = camera.streams || ["color", "depth"];
+  row.streamTopics = Array.isArray(streams) ? Object.fromEntries(streams.map((stream) => [stream, null])) : streams;
+  row.gpuTopics = camera.gpu_topics || {};
+  const choices = row.querySelector("[data-camera-streams]");
+  const profiles = row.querySelector("[data-camera-profiles]");
+  for (const [id, [label, enableKey]] of Object.entries(TRANSPORT_CAMERA_STREAMS)) {
+    const option = document.createElement("label");
+    const check = document.createElement("input");
+    check.type = "checkbox";
+    check.dataset.stream = id;
+    check.checked = Object.hasOwn(row.streamTopics, id);
+    if (check.checked) delete args[enableKey];
+    option.append(check, document.createTextNode(label));
+    choices.append(option);
+    if (id === "points" || id === "colored_points") continue;
+    const profile = document.createElement("div");
+    profile.className = "camera-plan-profile";
+    profile.classList.toggle("is-hidden", !check.checked);
+    const heading = document.createElement("strong");
+    heading.textContent = label;
+    profile.append(heading);
+    for (const [field, title] of [["width", "宽"], ["height", "高"], ["fps", "FPS"], ["format", "格式"]]) {
+      const key = `${id}_${field}`;
+      const control = document.createElement("label");
+      const caption = document.createElement("span");
+      caption.textContent = title;
+      const input = document.createElement("input");
+      input.dataset.profile = key;
+      input.placeholder = "默认";
+      if (field !== "format") input.inputMode = "numeric";
+      input.value = args[key] ?? "";
+      delete args[key];
+      control.append(caption, input);
+      profile.append(control);
+    }
+    check.addEventListener("change", () => profile.classList.toggle("is-hidden", !check.checked));
+    profiles.append(profile);
+  }
+  cameraPlanField(row, "arguments").value = formatCameraPlanArguments(args);
+  list.append(row);
+}
+
+function updateTransportCameraLaunchMode() {
+  const aggregate = $("transportCameraLaunchMode").value === "aggregate";
+  $("transportCameraSharedLaunchLabel").textContent = aggregate ? "多相机 Launch" : "公共 Launch";
+  $("transportAggregateArguments").classList.toggle("is-hidden", !aggregate);
+  $("queryTransportCameraDevices").classList.toggle("is-hidden", aggregate);
+  $("cameraPlanDevicesStatus").classList.toggle("is-hidden", aggregate);
+  for (const control of $("transportCameraRows").querySelectorAll("[data-individual-camera]")) {
+    control.classList.toggle("is-hidden", aggregate);
+  }
+}
+
+function readTransportCameraPlan() {
+  const aggregate = $("transportCameraLaunchMode").value === "aggregate";
+  const sharedLaunch = $("transportCameraSharedLaunch").value.trim();
+  const cameras = [...$("transportCameraRows").children];
+  if (cameras.length < 2) throw new Error("请至少配置两台相机");
+  if (aggregate && !sharedLaunch) throw new Error("请选择多相机 Launch");
+  return {
+    ...(aggregate ? { launch: sharedLaunch, arguments: cameraPlanArguments($("transportAggregateLaunchArgs").value) } : {}),
+    cameras: cameras.map((row) => {
+      const name = cameraPlanField(row, "name").value.trim();
+      const timeDomain = cameraPlanField(row, "time_domain").value;
+      const selected = [...row.querySelectorAll("[data-stream]:checked")].map((input) => input.dataset.stream);
+      if (!selected.length) throw new Error(`${name} 至少选择一路必测流`);
+      const remapped = selected.some((stream) => row.streamTopics[stream]);
+      const streams = remapped ? Object.fromEntries(selected.map((stream) => [stream, row.streamTopics[stream] || null])) : selected;
+      const gpuTopics = Object.fromEntries(selected.filter((stream) => row.gpuTopics[stream])
+        .map((stream) => [stream, row.gpuTopics[stream]]));
+      const camera = {
+        name, streams,
+        ...(timeDomain ? { time_domain: timeDomain } : {}),
+        ...(Object.keys(gpuTopics).length ? { gpu_topics: gpuTopics } : {}),
+      };
+      if (!aggregate) {
+        const launch = cameraPlanField(row, "launch").value.trim() || sharedLaunch;
+        if (!launch) throw new Error(`请选择 ${name} 的 Launch`);
+        const args = cameraPlanArguments(cameraPlanField(row, "arguments").value);
+        for (const field of ["serial_number", "usb_port"]) {
+          const value = cameraPlanField(row, field).value.trim();
+          if (value) args[field] = value;
+        }
+        if (!args.serial_number && !args.usb_port) throw new Error(`请填写 ${name} 的序列号或 USB 端口`);
+        for (const input of row.querySelectorAll("[data-profile]")) {
+          const value = input.value.trim();
+          if (!value) continue;
+          const profile = input.dataset.profile;
+          if (profile.endsWith("_format") ? !/^[A-Za-z0-9_]+$/.test(value) : !/^\d+$/.test(value)) {
+            throw new Error(`${name} 的 ${profile} 无效`);
+          }
+          args[profile] = value;
+        }
+        for (const stream of selected) args[TRANSPORT_CAMERA_STREAMS[stream][1]] = true;
+        if (selected.includes("points") || selected.includes("colored_points")) args.enable_depth = true;
+        if (selected.includes("colored_points")) args.enable_color = true;
+        camera.launch = launch;
+        camera.arguments = args;
+      }
+      return camera;
+    }),
+  };
+}
+
+function showTransportCameraPlanError(message = "") {
+  const error = $("transportCameraPlanError");
+  error.textContent = message;
+  error.classList.toggle("is-hidden", !message);
+}
+
+function setTransportCameraPlanBusy(status = "") {
+  const form = $("transportCameraPlanForm");
+  form.dataset.busy = status;
+  form.setAttribute("aria-busy", String(Boolean(status)));
+  form.querySelector(".camera-plan-content").inert = Boolean(status);
+  $("saveTransportCameraConfig").disabled = Boolean(status);
+  $("saveTransportCameraConfig").textContent = {
+    saving: "正在保存…",
+    loading: "正在加载…",
+  }[status] || "保存配置";
+  for (const button of form.querySelectorAll("[data-close-camera-plan]")) {
+    button.disabled = status === "saving";
+  }
+}
+
+function updateTransportCameraPlanSummary() {
+  const count = state.transportCameraPlan?.cameras.length;
+  $("transportCameraPlanSummary").textContent = count ? `已配置 ${count} 台相机`
+    : state.transportCameraConfigPath ? "已保存相机配置" : "尚未配置相机";
+}
+
+async function openTransportCameraPlan() {
+  const dialog = $("transportCameraDialog");
+  const path = state.transportCameraConfigPath;
+  state.transportCameraDialogRequest?.abort();
+  const load = new AbortController();
+  state.transportCameraDialogRequest = load;
+  $("transportCameraRows").replaceChildren();
+  $("transportCameraSerials").replaceChildren();
+  $("transportCameraUsbPorts").replaceChildren();
+  $("cameraPlanDevicesStatus").textContent = "";
+  $("transportCameraLaunches").replaceChildren(...[...$("launchFile").options].map(({ value }) => new Option(value, value)));
+  showTransportCameraPlanError();
+  dialog.showModal();
+  let config = state.transportCameraPlan;
+  if (path && !config) {
+    setTransportCameraPlanBusy("loading");
+    try {
+      const result = await api("/api/transport/camera-config", {
+        method: "POST", body: JSON.stringify({ load_path: path }), signal: load.signal,
+      });
+      if (load.signal.aborted || !dialog.open) return;
+      config = result.config;
+      state.transportCameraPlan = config;
+      updateTransportCameraPlanSummary();
+    } catch (error) {
+      if (load.signal.aborted || !dialog.open) return;
+      showTransportCameraPlanError(`无法打开已保存的配置。 ${error.message}`);
+    }
+  }
+  if (load.signal.aborted || !dialog.open) return;
+  $("transportCameraLaunchMode").value = config?.launch ? "aggregate" : "individual";
+  $("transportCameraSharedLaunch").value = config?.launch || config?.cameras[0]?.launch || $("launchFile").value;
+  $("transportAggregateLaunchArgs").value = formatCameraPlanArguments(config?.arguments || {});
+  $("transportAggregateArguments").open = false;
+  for (const camera of config?.cameras || [{}, {}]) addTransportCameraRow(camera);
+  updateTransportCameraLaunchMode();
+  setTransportCameraPlanBusy();
+}
+
+async function saveTransportCameraPlan(event) {
+  event.preventDefault();
+  if ($("transportCameraPlanForm").dataset.busy) return;
+  showTransportCameraPlanError();
+  try {
+    const config = readTransportCameraPlan();
+    setTransportCameraPlanBusy("saving");
+    const payload = await api("/api/transport/camera-config", {
+      method: "POST", body: JSON.stringify({
+        config, ros_setup: $("rosSetup").value.trim(), camera_setup: $("cameraSetup").value.trim(),
+      }),
+    });
+    state.transportCameraConfigPath = payload.path;
+    state.transportCameraPlan = payload.config;
+    updateTransportCameraPlanSummary();
+    $("transportCameraDialog").close();
+    clearValidation("runForm", "frameworkValidation");
+    refreshTransportLaunchArguments({ force: true });
+  } catch (error) {
+    showTransportCameraPlanError(error.message);
+  } finally {
+    setTransportCameraPlanBusy();
+  }
+}
+
+async function queryTransportCameraDevices() {
+  if ($("showDevices").disabled || state.deviceQueryPending) return;
+  const dialogRequest = state.transportCameraDialogRequest;
+  const button = $("queryTransportCameraDevices");
+  const status = $("cameraPlanDevicesStatus");
+  state.deviceQueryPending = true;
+  button.disabled = true;
+  status.textContent = "正在发现相机…";
+  try {
+    const { devices = [] } = await api("/api/devices", {
+      method: "POST", body: JSON.stringify(deviceQueryPayload()),
+    });
+    if (dialogRequest.signal.aborted) return;
+    for (const [key, id] of [["serial", "transportCameraSerials"], ["usb_port", "transportCameraUsbPorts"]]) {
+      $(id).replaceChildren(...devices.filter((device) => device[key])
+        .map((device) => new Option(device.name || device[key], device[key])));
+    }
+    status.textContent = devices.length ? `已发现 ${devices.length} 台相机，可从设备输入框选取` : "未发现相机";
+  } catch (error) {
+    if (!dialogRequest.signal.aborted) status.textContent = error.message;
+  } finally {
+    state.deviceQueryPending = false;
+    button.disabled = $("showDevices").disabled;
+  }
+}
+
+function isMultiCameraTransport() {
+  return $("mode").value === TRANSPORT_MODE && state.transportMultiCamera === true;
+}
+
+function transportCameraConfig() {
+  return isMultiCameraTransport() ? state.transportCameraConfigPath || "" : "";
+}
+
 function transportLaunchKey() {
+  const multiCamera = isMultiCameraTransport();
+  const selection = multiCamera ? transportCameraConfig() : $("launchFile").value;
   const config = {
-    launch_file: $("launchFile").value,
+    [multiCamera ? "transport_camera_config" : "launch_file"]: selection,
     ros_setup: $("rosSetup").value.trim(),
     camera_setup: $("cameraSetup").value.trim(),
   };
   return $("mode").value === TRANSPORT_MODE && $("rosVersion").value === "2"
-    && config.launch_file && config.ros_setup ? JSON.stringify(config) : "";
+    && selection && config.ros_setup ? JSON.stringify(config) : "";
 }
 
 async function refreshTransportLaunchArguments({ force = false } = {}) {
@@ -2065,8 +2369,9 @@ function isGpuSelection() {
 
 function gpuReceiverProblem() {
   if ($("rosVersion").value !== "2") return "GPU 对比需要 ROS 2";
+  if (isMultiCameraTransport() && !transportCameraConfig()) return "配置相机后检测 GPU 后端";
   const key = transportLaunchKey();
-  if (!key) return "选择相机 Launch 并配置 ROS Setup 后检测 GPU 后端";
+  if (!key) return "选择相机配置并设置 ROS Setup 后检测 GPU 后端";
   if (state.transportLaunchKey !== key || state.transportLaunchRequest) return "正在检测驱动的 GPU 后端…";
   const capability = state.transportGpuCapability;
   if (!capability) return "无法检测 GPU 后端，请检查驱动环境和相机 Launch";
@@ -2075,7 +2380,10 @@ function gpuReceiverProblem() {
   if (!problem) return "";
   if (problem.includes("does not install")) return "当前驱动缺少已安装的 GPU 测试示例";
   if (problem.includes("enable_gpu_transport")) return "当前 Launch 未提供 GPU 传输开关";
-  if (problem.includes("component_container_name")) return "当前 Launch 未提供 NITROS 所需的组件容器参数";
+  if (problem.includes("component_container_name")) {
+    return isMultiCameraTransport() ? "NITROS 需要共用容器，请逐台配置支持容器参数的 Launch"
+      : "当前 Launch 未提供 NITROS 所需的组件容器参数";
+  }
   return "当前驱动或 Launch 不支持 GPU 对比";
 }
 
@@ -2100,28 +2408,29 @@ function updateSpecialConfigControls() {
   const transport = $("mode").value === TRANSPORT_MODE;
   const args = state.transportLaunchArguments;
   const gpu = isGpuSelection();
+  const configured = isMultiCameraTransport();
   const preset = PRESET_IMAGE_STREAMS[config];
   for (const [name, id] of Object.entries(STREAM_CONTROLS)) {
     const select = $(id);
     const row = select.closest(".stream-row");
-    const fromPreset = transport && preset?.includes(name.slice("enable_".length))
+    const fromPreset = transport && !configured && preset?.includes(name.slice("enable_".length))
       && (!gpu || !GPU_UNSUPPORTED_CONTROLS.has(id));
-    const visible = transport
+    const visible = !configured && (transport
       ? !special && !IMU_CONTROLS.has(id) && (!gpu || !GPU_UNSUPPORTED_CONTROLS.has(id))
         && (args ? args.has(name) : !SIDE_COLOR_CONTROLS.has(id))
-      : !SIDE_COLOR_CONTROLS.has(id);
+      : !SIDE_COLOR_CONTROLS.has(id));
     row.classList.toggle("is-hidden", !visible && !fromPreset);
     select.classList.toggle("is-hidden", Boolean(fromPreset));
     row.querySelector(".stream-preset-state")?.classList.toggle("is-hidden", !fromPreset);
     select.disabled = special || !visible;
   }
-  $("configFilePath").disabled = special;
+  $("configFilePath").disabled = special || configured;
   $("streamOptions").title = special ? "特殊配置 YAML 会覆盖普通流参数" : "";
   updateStreamProfileControls();
 }
 
 function updateStreamProfileControls() {
-  const transport = $("mode").value === TRANSPORT_MODE;
+  const transport = $("mode").value === TRANSPORT_MODE && !isMultiCameraTransport();
   const preset = PRESET_IMAGE_STREAMS[$("launchConfig").value];
   const args = state.transportLaunchArguments;
   const gpu = isGpuSelection();
@@ -2224,12 +2533,22 @@ function updateModeControls() {
   const mode = $("mode").value;
   const transport = mode === TRANSPORT_MODE;
   const gpu = isGpuSelection();
+  const multiCamera = isMultiCameraTransport();
   const needsPerformance = mode === "performance" || mode === "all";
   const needsRestart = mode === "restart";
   const needsStreamStall = mode === "stream_stall";
   const needsStreamTopics = needsRestart || needsStreamStall;
   $("transportReceiver").classList.toggle("is-hidden", !transport);
   $("transportReceiver").disabled = !transport;
+  const cameraMode = $("toggleTransportCameraMode");
+  cameraMode.classList.toggle("is-hidden", !transport);
+  cameraMode.setAttribute("aria-pressed", String(multiCamera));
+  $("multiCameraPlanField").classList.toggle("is-hidden", !multiCamera);
+  updateTransportCameraPlanSummary();
+  for (const id of ["singleCameraLaunch", "singleCameraParameters", "frameworkStreams", "singleCameraLaunchArguments"]) {
+    $(id).classList.toggle("is-hidden", multiCamera);
+  }
+  $("launchFile").disabled = multiCamera;
   $("transportWarmupSettings").classList.toggle("is-hidden", !transport);
   $("performanceScenario").closest("label").classList.toggle("is-hidden", !needsPerformance);
   for (const [id, visible] of [
@@ -2262,6 +2581,7 @@ function currentModeConfig() {
     performance_scenario: $("performanceScenario").value,
     transport_mode: $("transportMode").value,
     transport_receiver: $("transportGpu").checked ? "gpu" : "standard",
+    transport_camera_config: state.transportCameraConfigPath,
     transport_reliability: $("transportReliability").value,
     transport_warmup_frames: $("transportWarmupFrames").value,
     transport_warmup_timeout_sec: $("transportWarmupTimeout").value,
@@ -2298,6 +2618,10 @@ function applyModeConfig(mode) {
     ? config.performance_scenario : "";
   $("transportMode").value = config.transport_mode;
   $("transportGpu").checked = config.transport_receiver === "gpu";
+  if (state.transportCameraConfigPath !== config.transport_camera_config) {
+    state.transportCameraConfigPath = config.transport_camera_config || "";
+    state.transportCameraPlan = null;
+  }
   $("transportStandard").checked = !$("transportGpu").checked;
   $("transportReliability").value = config.transport_reliability;
   $("transportWarmupFrames").value = config.transport_warmup_frames;
@@ -3191,6 +3515,30 @@ async function init() {
   for (const id of ["rosSetup", "cameraSetup"]) {
     $(id).addEventListener("change", () => refreshTransportLaunchArguments());
   }
+  $("openTransportCameraConfig").addEventListener("click", openTransportCameraPlan);
+  $("transportCameraPlanForm").addEventListener("submit", saveTransportCameraPlan);
+  $("transportCameraLaunchMode").addEventListener("change", updateTransportCameraLaunchMode);
+  $("queryTransportCameraDevices").addEventListener("click", queryTransportCameraDevices);
+  $("addTransportCamera").addEventListener("click", () => {
+    addTransportCameraRow();
+    updateTransportCameraLaunchMode();
+    cameraPlanField($("transportCameraRows").lastElementChild, "name").focus();
+  });
+  $("transportCameraDialog").addEventListener("cancel", (event) => {
+    if ($("transportCameraPlanForm").dataset.busy === "saving") event.preventDefault();
+  });
+  $("transportCameraDialog").addEventListener("close", () => {
+    if (!$("transportCameraDialog").open) state.transportCameraDialogRequest?.abort();
+  });
+  for (const button of $("transportCameraDialog").querySelectorAll("[data-close-camera-plan]")) {
+    button.addEventListener("click", () => $("transportCameraDialog").close());
+  }
+  $("toggleTransportCameraMode").addEventListener("click", () => {
+    state.transportMultiCamera = !state.transportMultiCamera;
+    clearValidation("runForm", "frameworkValidation");
+    updateModeControls();
+    refreshTransportLaunchArguments({ force: true });
+  });
   $("standaloneTest").addEventListener("change", () =>
     renderStandaloneForm($("standaloneTest").value)
   );

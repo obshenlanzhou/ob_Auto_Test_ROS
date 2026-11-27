@@ -12,6 +12,7 @@ DURATION=""
 SCENARIO=""
 TRANSPORT_MODE=""
 TRANSPORT_RECEIVER=""
+TRANSPORT_CAMERA_CONFIG=""
 TRANSPORT_RELIABILITY=""
 TRANSPORT_SETUP="${ORBBEC_TRANSPORT_SETUP:-}"
 TRANSPORT_WARMUP_FRAMES=""
@@ -46,6 +47,7 @@ Options:
   --scenario default|stress|drop_frame|transport_latency
   --transport-mode cross_process|intra_process
   --transport-receiver standard|gpu
+  --transport-camera-config FILE  Camera and topic YAML for performance / transport_latency
   --transport-reliability best_effort|reliable
   --transport-setup PATH
   --transport-warmup-frames FRAMES
@@ -96,6 +98,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --transport-receiver)
       TRANSPORT_RECEIVER="$2"
+      shift 2
+      ;;
+    --transport-camera-config)
+      TRANSPORT_CAMERA_CONFIG="$2"
       shift 2
       ;;
     --transport-reliability)
@@ -192,8 +198,13 @@ if [[ -z "${MODE}" ]]; then
   exit 1
 fi
 
-if [[ -z "${LAUNCH_FILE}" ]]; then
-  echo "--launch-file is required" >&2
+if [[ -n "${TRANSPORT_CAMERA_CONFIG}" && ( "${MODE}" != "performance" || "${SCENARIO}" != "transport_latency" ) ]]; then
+  echo "--transport-camera-config requires --mode performance --scenario transport_latency" >&2
+  exit 1
+fi
+
+if [[ -z "${LAUNCH_FILE}" && -z "${TRANSPORT_CAMERA_CONFIG}" ]]; then
+  echo "--launch-file is required without a transport camera config" >&2
   usage
   exit 1
 fi
@@ -266,7 +277,9 @@ fi
 if [[ -n "${DRIVER_SETUP}" ]]; then
   COMMON_ARGS+=(--driver-setup "${DRIVER_SETUP}")
 fi
-COMMON_ARGS+=(--launch-file "${LAUNCH_FILE}")
+if [[ -n "${LAUNCH_FILE}" ]]; then
+  COMMON_ARGS+=(--launch-file "${LAUNCH_FILE}")
+fi
 for launch_arg in "${LAUNCH_ARGS[@]}"; do
   COMMON_ARGS+=(--launch-arg "${launch_arg}")
 done
@@ -295,6 +308,9 @@ run_performance() {
   fi
   if [[ -n "${TRANSPORT_RECEIVER}" ]]; then
     args+=(--transport-receiver "${TRANSPORT_RECEIVER}")
+  fi
+  if [[ -n "${TRANSPORT_CAMERA_CONFIG}" ]]; then
+    args+=(--transport-camera-config "${TRANSPORT_CAMERA_CONFIG}")
   fi
   if [[ -n "${TRANSPORT_RELIABILITY}" ]]; then
     args+=(--transport-reliability "${TRANSPORT_RELIABILITY}")

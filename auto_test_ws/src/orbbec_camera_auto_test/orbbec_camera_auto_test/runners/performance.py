@@ -823,7 +823,11 @@ def run_performance_test(args) -> int:
     )
     if args.scenario == TRANSPORT_SCENARIO:
         duration = _parse_duration_value(args.duration) if args.duration else 60.0
-        runner = run_gpu_transport_test if args.transport_receiver == "gpu" else run_transport_test
+        runner = (
+            run_gpu_transport_test
+            if args.transport_receiver == "gpu" and not getattr(args, "transport_camera_config", None)
+            else run_transport_test
+        )
         return runner(
             args, base_launch_args, results_dir, host_environment, duration, emit_status,
             _stream_config_from_launch_log,
@@ -886,7 +890,10 @@ def run_performance_test(args) -> int:
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Run Orbbec camera performance tests")
-    parser.add_argument("--launch-file", required=True, help="Driver launch file to test")
+    parser.add_argument("--launch-file", help="Driver launch file to test")
+    parser.add_argument(
+        "--transport-camera-config", help="YAML with cameras, topics and launches for a ROS 2 transport test",
+    )
     parser.add_argument(
         "--scenario",
         choices=("default", "stress", "drop_frame", TRANSPORT_SCENARIO),
@@ -935,7 +942,12 @@ def parse_args():
         help="Override scenario duration, supports seconds or suffixes like 15m, 2h, 1d",
     )
     parser.add_argument("--launch-arg", action="append", default=[], help="Extra KEY=VALUE launch arg")
-    return parser.parse_args()
+    args = parser.parse_args()
+    if not args.launch_file and not (args.transport_camera_config and args.scenario == TRANSPORT_SCENARIO):
+        parser.error("--launch-file is required without a transport camera config")
+    if args.transport_camera_config and args.scenario != TRANSPORT_SCENARIO:
+        parser.error("--transport-camera-config requires --scenario transport_latency")
+    return args
 
 
 def main() -> None:

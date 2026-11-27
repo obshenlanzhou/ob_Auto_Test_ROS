@@ -4,6 +4,7 @@ import csv
 import math
 import re
 import subprocess
+from pathlib import Path
 
 
 GPU_LAUNCHES = {
@@ -29,8 +30,13 @@ LATENCY_METRICS = {
 
 
 def camera_launch_options(launch_file, env):
+    command = ["ros2", "launch"]
+    if isinstance(launch_file, Path):
+        command.append(str(launch_file))
+    else:
+        command.extend(("orbbec_camera", launch_file))
     process = subprocess.run(
-        ["ros2", "launch", "orbbec_camera", launch_file, "--show-args"],
+        [*command, "--show-args"],
         env=env, capture_output=True, text=True, timeout=10,
     )
     if process.returncode:
@@ -43,11 +49,15 @@ def camera_launch_options(launch_file, env):
     return defaults
 
 
-def gpu_benchmark_capability(camera_share, arguments):
-    """Return the backend, usable benchmark launch path, and any validation error."""
+def driver_gpu_backend(camera_share):
     resources = camera_share.parent / "ament_index" / "resource_index"
     marker = resources / "orbbec_gpu_backend" / "orbbec_camera"
-    backend = marker.read_text(encoding="utf-8").strip() if marker.is_file() else "NONE"
+    return marker.read_text(encoding="utf-8").strip() if marker.is_file() else "NONE"
+
+
+def gpu_benchmark_capability(camera_share, arguments):
+    """Return the backend, usable benchmark launch path, and any validation error."""
+    backend = driver_gpu_backend(camera_share)
     launch_name = GPU_LAUNCHES.get(backend)
     if not launch_name:
         return backend, None, f"The selected driver has no GPU benchmark backend ({backend})"
@@ -91,7 +101,7 @@ def gpu_latency_basis(backend, rows):
 def group_gpu_rows(rows):
     streams = {}
     for row in rows:
-        streams.setdefault(row["stream"], []).append(row)
+        streams.setdefault((row.get("camera_name"), row["stream"]), []).append(row)
     return [row for stream_rows in streams.values() for row in stream_rows]
 
 

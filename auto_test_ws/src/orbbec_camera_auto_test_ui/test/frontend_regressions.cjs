@@ -150,7 +150,7 @@ test('GPU detection ignores stale results even when returning to the same driver
     updateMonitorVisibility() {},
   });
   vm.runInContext(source.slice(
-    source.indexOf('function transportLaunchKey('),
+    source.indexOf('function isMultiCameraTransport('),
     source.indexOf('function updateSpecialConfigControls('),
   ), context);
   const first = context.refreshTransportLaunchArguments();
@@ -170,6 +170,15 @@ test('GPU detection ignores stale results even when returning to the same driver
   assert.equal(elements.transportGpu.disabled, false);
   assert.match(elements.transportGpuCapability.textContent, /NITROS Buffer/);
   assert.equal(context.isGpuSelection(), true);
+  assert.equal(context.transportCameraConfig(), '');
+  assert.equal(JSON.parse(context.transportLaunchKey()).launch_file, 'gemini_330_series.launch.py');
+
+  context.state.transportMultiCamera = true;
+  context.state.transportCameraConfigPath = '/tmp/two-cameras.yaml';
+  assert.equal(JSON.parse(context.transportLaunchKey()).transport_camera_config, '/tmp/two-cameras.yaml');
+  context.state.transportCameraConfigPath = '';
+  assert.equal(context.transportLaunchKey(), '');
+  assert.match(context.gpuReceiverProblem(), /配置相机后/);
 });
 
 test('GPU transport table keeps stream details and reports only end-to-end latency', () => {
@@ -208,7 +217,7 @@ test('GPU transport table keeps stream details and reports only end-to-end laten
   const template = fs.readFileSync(path.join(__dirname, '../orbbec_camera_auto_test_ui/templates/index.html'), 'utf8');
   const header = template.match(/<tr id="gpuTransportColumns"[^>]*>([\s\S]*?)<\/tr>/)[1];
   assert.deepEqual([...header.matchAll(/<th\b[^>]*>([^<]*)<\/th>/g)].map(match => match[1]),
-    ['流', '分辨率', '格式', '模式', '接收后端', 'FPS', '端到端平均时延 (ms)',
+    ['相机', '流', '分辨率', '格式', '模式', '接收后端', 'FPS', '端到端平均时延 (ms)',
       '端到端 P95 时延 (ms)', '整机 CPU (%)', '整机 GPU (%)']);
   context.renderGpuPerformance({}, 'idle');
   assert.equal(body.rows[0][0].colSpan, 10);
@@ -228,6 +237,10 @@ test('GPU transport table keeps stream details and reports only end-to-end laten
   assert.match(element('transportProgress').textContent, /测试时长 60 s/);
   assert.deepEqual(body.rows[0].map(cell => cell.textContent),
     ['depth', '640 x 480', 'Y16', 'CUDA Buffer', 'cuda', '0.517', '35.499', '40.153', '52.428', '40.845']);
+  context.renderGpuPerformance({...result, configured: true,
+    rows: [{...result.rows[0], camera_name: 'camera_02'}]}, 'succeeded');
+  assert.equal(body.rows[0].length, 11);
+  assert.equal(body.rows[0][0].textContent, 'camera_02');
 
   context.renderGpuPerformance({...result, latency_basis: undefined}, 'succeeded');
   assert.deepEqual(body.rows[0].slice(6, 8).map(cell => cell.textContent), ['n/a', 'n/a']);

@@ -758,6 +758,45 @@ h3 {
   font-weight: 700;
 }
 
+#frameworkCamera legend {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+}
+
+button.camera-mode-toggle {
+  min-height: 26px;
+  padding: 3px 9px;
+  border-radius: 7px;
+  font-size: 11px;
+}
+
+button.camera-mode-toggle[aria-pressed="true"] {
+  border-color: var(--primary-line);
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+
+.camera-plan-field,
+.camera-plan-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.camera-plan-field {
+  justify-content: space-between;
+}
+
+.camera-plan-field button,
+.camera-plan-toolbar button {
+  min-height: 32px;
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
 .receiver-choices {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1905,6 +1944,99 @@ button.danger {
 
 .exit-code-dialog-footer button {
   min-width: 100px;
+}
+
+.camera-plan-dialog {
+  width: min(860px, calc(100vw - 32px));
+}
+
+.camera-plan-dialog form {
+  display: flex;
+  max-height: inherit;
+  flex-direction: column;
+}
+
+.camera-plan-content {
+  display: grid;
+  min-height: 0;
+  gap: 12px;
+  margin-top: 12px;
+  padding-right: 4px;
+  overflow: auto;
+}
+
+.camera-plan-toolbar > span {
+  flex: 1 0 min(100%, 180px);
+}
+
+.camera-plan-dialog .exit-code-dialog-footer,
+.camera-plan-stream-list {
+  gap: 8px;
+}
+
+.camera-plan-stream-list {
+  display: flex;
+  flex-wrap: wrap;
+}
+
+.camera-plan-stream-list label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 7px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.camera-plan-stream-list input {
+  width: 14px;
+  min-height: 14px;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--primary);
+}
+
+.camera-plan-profile {
+  display: grid;
+  grid-template-columns: minmax(62px, 1fr) repeat(4, minmax(45px, 1fr));
+  align-items: end;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.camera-plan-profile label {
+  gap: 3px;
+}
+
+.camera-plan-profile input {
+  min-height: 31px;
+  padding: 4px 6px;
+}
+
+.camera-plan-advanced {
+  margin-top: 8px;
+}
+
+.camera-plan-dialog summary {
+  color: var(--text-soft);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.camera-plan-error {
+  margin-top: 10px;
+  color: var(--danger);
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 520px) {
+  .camera-plan-profile {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .camera-plan-profile > strong {
+    grid-column: 1 / -1;
+  }
 }
 
 .device-info-dialog {

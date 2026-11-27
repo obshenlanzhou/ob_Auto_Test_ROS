@@ -2,7 +2,7 @@
 <package format="3">
   <name>orbbec_camera_transport_test</name>
   <version>0.1.0</version>
-  <description>Standard ROS 2 message transport benchmark for Orbbec cameras.</description>
+  <description>ROS 2 and GPU transport benchmark for Orbbec cameras.</description>
   <maintainer email="support@orbbec.com">Orbbec</maintainer>
   <license>Apache-2.0</license>
   <buildtool_depend>ament_cmake</buildtool_depend>

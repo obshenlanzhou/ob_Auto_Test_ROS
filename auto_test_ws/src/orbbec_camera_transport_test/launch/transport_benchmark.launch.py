@@ -70,9 +70,61 @@ def load_legacy_camera(context, load_parameters, declarations, camera_name):
     )]
 
 
+def setup_configured_benchmark(config, path):
+    streams = config["streams"]
+    backend = config["gpu_backend"]
+    composed = config["transport_mode"] == "intra_process" or backend.startswith("NITROS")
+    topics = [stream["topic"] for stream in streams]
+    parameters = [{
+        "topics": topics,
+        "required_topics": topics,
+        **{key: [stream[field] for stream in streams] for key, field in (
+            ("camera_names", "camera_name"), ("stream_names", "stream"),
+            ("stream_kinds", "kind"), ("gpu_topics", "gpu_topic"), ("host_clocks", "host_clock"),
+        )},
+        **{key: config[key] for key in ("transport_mode", "transport_reliability", "duration_seconds",
+                                        "warmup_frames", "warmup_timeout_sec", "gpu_backend")},
+        "results_dir": str(path.parent),
+    }]
+    drivers = []
+    for launch in config["launches"]:
+        arguments = dict(launch["arguments"])
+        if composed:
+            module = load_python_launch_file_as_module(launch["path"])
+            declared = {action.name for action in module.generate_launch_description().entities
+                        if isinstance(action, DeclareLaunchArgument)}
+            if not {"component_container_name", "use_intra_process_comms"} <= declared:
+                raise RuntimeError(f"{launch['path']} must pass the shared container and IPC settings "
+                                   "to its cameras; specify individual camera launches instead")
+            arguments["component_container_name"] = CONTAINER
+        drivers.append(GroupAction([IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(launch["path"]), launch_arguments=arguments.items(),
+        )]))
+    shutdown = [EmitEvent(event=Shutdown(reason="Transport benchmark exited"))]
+    if composed:
+        probe = ComposableNodeContainer(
+            package="rclcpp_components",
+            executable="component_container_mt",
+            name=CONTAINER.lstrip("/"),
+            namespace="",
+            output="screen",
+            on_exit=shutdown,
+            composable_node_descriptions=[ComposableNode(
+                package=PACKAGE, plugin=PLUGIN, parameters=parameters,
+            )],
+        )
+    else:
+        probe = Node(package=PACKAGE, executable="transport_subscriber", parameters=parameters,
+                     output="screen", on_exit=shutdown)
+    # Start the test receiver before loading the cameras so it can see each stream's warmup.
+    return [probe, *drivers]
+
+
 def setup_benchmark(context):
     path = Path(LaunchConfiguration('benchmark_config').perform(context))
     config = json.loads(path.read_text(encoding='utf-8'))
+    if "launches" in config:
+        return setup_configured_benchmark(config, path)
     camera_path = config['camera_launch']
     arguments = dict(config['camera_arguments'])
     intra_process = config['transport_mode'] == 'intra_process'

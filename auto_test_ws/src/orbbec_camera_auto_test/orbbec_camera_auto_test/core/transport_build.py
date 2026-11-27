@@ -13,14 +13,18 @@ from .session import capture_runtime_env
 TRANSPORT_PACKAGE = "orbbec_camera_transport_test"
 
 
-def ensure_transport_setup(workspace: Path, ros_setup: str, *, refresh: bool = False) -> str:
+def ensure_transport_setup(workspace: Path, ros_setup: str, *, refresh: bool = False,
+                           driver_setup: str | None = None, backend: str = "NONE") -> str:
     ros_setup = str(Path(ros_setup).expanduser().resolve())
-    env = capture_runtime_env(ros_setup=ros_setup)
+    env = capture_runtime_env(ros_setup=ros_setup, driver_setup=driver_setup)
     distro = env.get("ROS_DISTRO")
     if not distro:
         raise RuntimeError(f"Unable to determine the ROS 2 distribution from {ros_setup}")
 
-    underlay = hashlib.sha256(ros_setup.encode()).hexdigest()[:12]
+    underlay_key = ros_setup
+    if backend != "NONE":
+        underlay_key += f"\n{backend}\n{env.get('AMENT_PREFIX_PATH', '')}"
+    underlay = hashlib.sha256(underlay_key.encode()).hexdigest()[:12]
     cache_key = f"{distro}-{platform.machine()}-{underlay}"
     source = workspace / "src" / TRANSPORT_PACKAGE
     build = workspace / "build" / "transport" / cache_key
@@ -54,6 +58,7 @@ def ensure_transport_setup(workspace: Path, ros_setup: str, *, refresh: bool = F
                 "--base-paths", str(source),
                 "--build-base", str(build), "--install-base", str(install),
                 "--merge-install", "--packages-select", TRANSPORT_PACKAGE,
+                "--cmake-args", f"-DTRANSPORT_GPU_BACKEND={backend}",
             ],
             cwd=workspace, env=env, check=True,
         )

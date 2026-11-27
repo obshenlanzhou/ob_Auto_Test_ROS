@@ -16,6 +16,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Deque, Dict, List, Optional
 
+from orbbec_camera_auto_test.core.transport_config import read_transport_config
+
 from .file_preview import PREVIEW_BYTES, READ_CHUNK, result_preview_or_default
 from .standalone import (
     build_command as build_standalone_command,
@@ -166,6 +168,7 @@ MODE_CONFIG_KEYS = (
     "performance_scenario",
     "transport_mode",
     "transport_receiver",
+    "transport_camera_config",
     "transport_reliability",
     "transport_setup",
     "transport_warmup_frames",
@@ -645,6 +648,10 @@ def build_performance_metrics(
         transport_final = bool(transport_rows)
         if not transport_final:
             transport_rows = _read_latest_csv_rows(progress_path)
+    elif not gpu_transport:
+        partial_path = _latest_file(run_root, "transport_phase_summary.csv")
+        if partial_path:
+            transport_rows = _read_latest_csv_rows(partial_path)
     system_rows = _read_latest_csv_rows(system_path) if system_path else []
     system_row = system_rows[-1] if system_rows else {}
     fps_row = _read_latest_csv_row(fps_path) if fps_path else {}
@@ -672,12 +679,13 @@ def build_performance_metrics(
     elapsed_seconds = sampled_elapsed_seconds or _wall_elapsed_seconds(started_at, ended_at)
     stream_configs = _read_stream_config_from_launch_log(run_root)
     if isinstance(gpu_transport, dict) and gpu_transport.get("rows"):
-        # GPU benchmark rows identify streams within a single camera.
+        # The legacy benchmark has one camera and identifies rows by stream only.
         gpu_stream_configs = {stream: config for (_, stream), config in stream_configs.items()}
         cloud_formats = {"points": "XYZ", "colored_points": "XYZRGB"}
         for row in gpu_transport["rows"]:
             stream = row["stream"]
-            config = gpu_stream_configs.get(stream, {})
+            camera = row.get("camera_name")
+            config = stream_configs.get((camera, stream), {}) if camera else gpu_stream_configs.get(stream, {})
             width, height = config.get("width"), config.get("height")
             row["resolution"] = f"{width} x {height}" if width and height else None
             row["stream_format"] = cloud_formats.get(stream) or config.get("format")
@@ -740,13 +748,14 @@ def build_performance_metrics(
             topic = row.get("topic")
             if not topic:
                 continue
-            cloud_format = _point_cloud_format(topic)
-            stream_key = _stream_key_from_topic(topic)
-            camera = _camera_name_from_topic(topic)
+            stream_key = row.get("stream") or _stream_key_from_topic(topic)
+            cloud_format = {"points": "XYZ", "colored_points": "XYZRGB"}.get(stream_key) or _point_cloud_format(topic)
+            camera = row.get("camera_name") or _camera_name_from_topic(topic)
             config = stream_configs.get((camera, stream_key), stream_configs.get(("", stream_key), {}))
             width, height = config.get("width"), config.get("height")
             topics.append({
                 "topic": topic,
+                "camera_name": camera,
                 "resolution": f"{width} x {height}" if not cloud_format and width and height else "",
                 "stream_format": cloud_format or config.get("format", ""),
                 "samples": _int_value(row, "samples"),
@@ -774,6 +783,7 @@ def build_performance_metrics(
         )
 
     return {
+        "transport_configured": any(row.get("camera_name") for row in transport_rows),
         "available": bool(system_row or fps_row or transport_rows or gpu_transport),
         "transport": bool(transport_rows),
         "gpu_transport": gpu_transport,
@@ -895,6 +905,7 @@ def load_config() -> Dict[str, Any]:
         "performance_scenario": config.get("performance_scenario") or "",
         "transport_mode": config.get("transport_mode") or "cross_process",
         "transport_receiver": config.get("transport_receiver") or "standard",
+        "transport_camera_config": config.get("transport_camera_config") or "",
         "transport_reliability": config.get("transport_reliability") or "best_effort",
         "transport_setup": config.get("transport_setup") or "",
         "transport_warmup_frames": config.get("transport_warmup_frames") or "",
@@ -967,6 +978,7 @@ def save_config(payload: Dict[str, Any]) -> Dict[str, Any]:
         "performance_scenario",
         "transport_mode",
         "transport_receiver",
+        "transport_camera_config",
         "transport_reliability",
         "transport_setup",
         "transport_warmup_frames",
@@ -1124,22 +1136,26 @@ def _build_runner_args(payload: Dict[str, Any], mode: str, results_dir: Path) ->
     }
     module = modules.get(mode, "orbbec_camera_auto_test.runners.performance")
     args = ["python3", "-m", module]
+    transport = mode == "performance" and payload.get("performance_scenario") == TRANSPORT_MODE
+    camera_plan = _safe_text(payload.get("transport_camera_config")) if transport else ""
     ros_version = _safe_text(payload.get("ros_version")) or "2"
     args.extend(["--ros-version", ros_version])
     _append_arg(args, "--ros-setup", payload.get("ros_setup"))
     _append_arg(args, "--results-dir", str(results_dir))
-    _append_arg(args, "--launch-file", payload.get("launch_file"))
-    _append_arg(args, "--camera-name", payload.get("camera_name"))
-    _append_arg(args, "--serial-number", payload.get("serial_number"))
-    _append_arg(args, "--usb-port", payload.get("usb_port"))
-    _append_arg(args, "--config-file-path", _selected_config_file(payload))
+    if not camera_plan:
+        _append_arg(args, "--launch-file", payload.get("launch_file"))
+        _append_arg(args, "--camera-name", payload.get("camera_name"))
+        _append_arg(args, "--serial-number", payload.get("serial_number"))
+        _append_arg(args, "--usb-port", payload.get("usb_port"))
+        _append_arg(args, "--config-file-path", _selected_config_file(payload))
     _append_arg(args, "--driver-setup", payload.get("camera_setup"))
 
     if mode == "performance":
         _append_arg(args, "--scenario", payload.get("performance_scenario"))
-        if payload.get("performance_scenario") == TRANSPORT_MODE:
+        if transport:
             receiver = _safe_text(payload.get("transport_receiver")) or "standard"
             _append_arg(args, "--transport-receiver", payload.get("transport_receiver"))
+            _append_arg(args, "--transport-camera-config", camera_plan)
             if receiver == "standard":
                 _append_arg(args, "--transport-mode", payload.get("transport_mode"))
                 _append_arg(args, "--transport-reliability", payload.get("transport_reliability"))
@@ -1148,8 +1164,9 @@ def _build_runner_args(payload: Dict[str, Any], mode: str, results_dir: Path) ->
                     args, "--transport-warmup-timeout-sec", payload.get("transport_warmup_timeout_sec")
                 )
             _append_arg(args, "--transport-warmup-frames", payload.get("transport_warmup_frames"))
-            for setting in _preset_stream_profiles(payload):
-                args.extend(["--transport-preset-profile", setting])
+            if not camera_plan:
+                for setting in _preset_stream_profiles(payload):
+                    args.extend(["--transport-preset-profile", setting])
         _append_arg(args, "--duration", payload.get("duration"))
     if mode == "restart":
         _append_arg(args, "--duration", payload.get("duration"))
@@ -1168,13 +1185,14 @@ def _build_runner_args(payload: Dict[str, Any], mode: str, results_dir: Path) ->
         for topic in _parse_multiline_values(payload.get("image_topics")):
             args.extend(["--image-topic", topic])
 
-    launch_args = [
-        *_stream_launch_args(payload),
-        *_parse_extra_launch_args(payload.get("launch_args")),
-        *_special_launch_args(payload),
-    ]
-    for launch_arg in launch_args:
-        args.extend(["--launch-arg", launch_arg])
+    if not camera_plan:
+        launch_args = [
+            *_stream_launch_args(payload),
+            *_parse_extra_launch_args(payload.get("launch_args")),
+            *_special_launch_args(payload),
+        ]
+        for launch_arg in launch_args:
+            args.extend(["--launch-arg", launch_arg])
     return args
 
 
@@ -1322,25 +1340,30 @@ def validate_run_payload(payload: Dict[str, Any]) -> List[str]:
     except ValueError as exc:
         errors.append(str(exc))
 
-    launch_file = _safe_text(payload.get("launch_file"))
-    if not launch_file:
-        errors.append("launch_file is required")
-    launch_config = _safe_text(payload.get("launch_config")) or "generic"
-    if launch_config != "generic" and not _selected_config_file(payload):
-        errors.append(
-            f"launch config '{launch_config}' is not supported by '{launch_file}'"
-        )
     scenario = _safe_text(payload.get("performance_scenario"))
     if scenario and scenario not in {"default", "stress", "drop_frame", TRANSPORT_MODE}:
         errors.append(f"unsupported performance scenario: {scenario}")
     runs_transport = _runs_transport(mode, scenario)
+    camera_plan = _safe_text(payload.get("transport_camera_config")) if runs_transport else ""
+    launch_file = _safe_text(payload.get("launch_file"))
+    launch_config = _safe_text(payload.get("launch_config")) or "generic"
+    if camera_plan:
+        try:
+            read_transport_config(camera_plan)
+        except (OSError, ValueError) as exc:
+            errors.append(f"transport_camera_config: {exc}")
+    else:
+        if not launch_file:
+            errors.append("launch_file is required")
+        if launch_config != "generic" and not _selected_config_file(payload):
+            errors.append(f"launch config '{launch_config}' is not supported by '{launch_file}'")
     receiver = _safe_text(payload.get("transport_receiver")) or "standard"
     if runs_transport:
         if ros_version != "2":
             errors.append("传输延迟测试需要 ROS 2")
         if receiver not in {"standard", "gpu"}:
             errors.append("transport_receiver must be standard or gpu")
-        if receiver == "gpu" and launch_config == "dual_color":
+        if receiver == "gpu" and not camera_plan and launch_config == "dual_color":
             errors.append("当前 GPU 示例不支持双彩色预设")
         transport_mode = _safe_text(payload.get("transport_mode")) or "cross_process"
         if receiver == "standard" and transport_mode not in {"cross_process", "intra_process"}:
@@ -1369,7 +1392,7 @@ def validate_run_payload(payload: Dict[str, Any]) -> List[str]:
                     raise ValueError
             except ValueError:
                 errors.append("transport_warmup_timeout_sec must be a positive number of seconds")
-    stream_options = payload.get("stream_options")
+    stream_options = None if camera_plan else payload.get("stream_options")
     if stream_options is not None and not isinstance(stream_options, dict):
         errors.append("stream_options must be an object")
     elif isinstance(stream_options, dict):
@@ -1388,9 +1411,10 @@ def validate_run_payload(payload: Dict[str, Any]) -> List[str]:
     if (camera_setup.endswith(".zsh") or str(ros_setup).endswith(".zsh")) and shutil.which("zsh") is None:
         errors.append("zsh setup was selected, but zsh was not found in PATH")
 
-    for launch_arg in _parse_extra_launch_args(payload.get("launch_args")):
-        if "=" not in launch_arg:
-            errors.append(f"launch arg must be KEY=VALUE: {launch_arg}")
+    if not camera_plan:
+        for launch_arg in _parse_extra_launch_args(payload.get("launch_args")):
+            if "=" not in launch_arg:
+                errors.append(f"launch arg must be KEY=VALUE: {launch_arg}")
     if mode in {"restart", "stream_stall"} and not _safe_text(payload.get("duration")):
         errors.append("duration is required for this mode")
 
@@ -1689,6 +1713,9 @@ class RunManager:
             return 400, {"errors": errors}
 
         gpu = payload.get("transport_receiver") == "gpu"
+        camera_plan = _safe_text(payload.get("transport_camera_config")) if _runs_transport(
+            _safe_text(payload.get("mode")), _safe_text(payload.get("performance_scenario"))
+        ) else ""
         config = save_config(
             {
                 "ros_version": payload.get("ros_version") or "2",
@@ -1703,6 +1730,7 @@ class RunManager:
                 "mode": payload.get("mode") or "functional",
                 "performance_scenario": payload.get("performance_scenario") or "",
                 "transport_receiver": _safe_text(payload.get("transport_receiver")) or "standard",
+                **({"transport_camera_config": camera_plan} if camera_plan else {}),
                 **({} if gpu else {
                     "transport_mode": payload.get("transport_mode") or "cross_process",
                     "transport_reliability": _safe_text(payload.get("transport_reliability")) or "best_effort",
@@ -1732,7 +1760,7 @@ class RunManager:
                 "launch_args": payload.get("launch_args") or "",
             }
         )
-        payload = {**payload, **config}
+        payload = {**payload, **config, "transport_camera_config": camera_plan}
         mode = _safe_text(payload.get("mode")) or "functional"
         runs_transport = _runs_transport(mode, payload["performance_scenario"])
         run_id = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{mode}"

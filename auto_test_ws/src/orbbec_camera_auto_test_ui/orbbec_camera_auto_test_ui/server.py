@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import mimetypes
 import os
@@ -9,6 +10,7 @@ import signal
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import uuid
 from collections import deque
@@ -18,9 +20,14 @@ from pathlib import Path
 from typing import Any, Dict
 from urllib.parse import parse_qs, unquote, urlparse
 
+import yaml
+
 from orbbec_camera_auto_test.core.session import capture_runtime_env
-from orbbec_camera_auto_test.core.gpu_benchmark import camera_launch_options, gpu_benchmark_capability
+from orbbec_camera_auto_test.core.gpu_benchmark import (
+    camera_launch_options, driver_gpu_backend, gpu_benchmark_capability,
+)
 from orbbec_camera_auto_test.core.transport_build import ensure_transport_setup
+from orbbec_camera_auto_test.core.transport_config import GPU_BACKENDS, prepare_transport_config, read_transport_config
 from orbbec_camera_auto_test.runners.transport import _package_share
 from orbbec_camera_auto_test.profile.merger import load_merged_profile_data
 from .device_info import DeviceQueryError, query_camera_devices
@@ -36,6 +43,7 @@ from .run_manager import (
     CONFIG_PATH,
     CORE_PACKAGE_ROOT,
     STANDALONE_ROOT,
+    TRANSPORT_MODE,
     UI_RESULTS_ROOT,
     RunManager,
     ensure_dir,
@@ -450,15 +458,73 @@ def _package_run_results(run_id: str) -> tuple[Dict[str, Any], HTTPStatus]:
 
 def transport_launch_arguments(payload: Dict[str, Any]) -> Dict[str, Any]:
     launch_file = str(payload.get("launch_file") or "")
-    if not re.fullmatch(r"[\w-]+\.launch\.py", launch_file):
+    camera_plan = str(payload.get("transport_camera_config") or "").strip()
+    if not camera_plan and not re.fullmatch(r"[\w-]+\.launch\.py", launch_file):
         raise ValueError("Select a ROS 2 camera launch file")
     env = capture_runtime_env(
         str(payload.get("camera_setup") or "").strip(),
         ros_setup=str(payload.get("ros_setup") or "").strip(),
     )
+    camera_share = _package_share("orbbec_camera", env)
+    if camera_plan:
+        read_transport_config(camera_plan)
+        backend = driver_gpu_backend(camera_share)
+        problem = ""
+        if backend not in GPU_BACKENDS:
+            problem = f"The selected driver has no supported GPU backend ({backend})"
+        else:
+            try:
+                prepare_transport_config(camera_plan, camera_share, env, backend, False)
+            except (OSError, ValueError, subprocess.SubprocessError) as exc:
+                problem = str(exc)
+        return {"arguments": [], "gpu_backend": backend, "gpu_problem": problem}
     arguments = camera_launch_options(launch_file, env)
-    backend, _, problem = gpu_benchmark_capability(_package_share("orbbec_camera", env), arguments)
+    backend, _, problem = gpu_benchmark_capability(camera_share, arguments)
     return {"arguments": list(arguments), "gpu_backend": backend, "gpu_problem": problem}
+
+
+def transport_camera_config(payload: Dict[str, Any]) -> Dict[str, Any]:
+    directory = CONFIG_PATH.parent / "transport_camera_configs"
+    if "load_path" in payload:
+        path = Path(str(payload["load_path"])).expanduser().resolve()
+        saved = load_config()["mode_configs"].get(TRANSPORT_MODE, {}).get("transport_camera_config")
+        if path.parent != directory.resolve() and (not saved or path != Path(saved).expanduser().resolve()):
+            raise ValueError("无权打开此相机配置")
+        path, config = read_transport_config(path)
+        for entry in (config, *config["cameras"]):
+            if not isinstance(entry, dict):
+                raise ValueError("无效的多相机配置")
+            arguments = entry.get("arguments") or {}
+            if not isinstance(arguments, dict):
+                raise ValueError("无效的 Launch 参数")
+            for values, key in ((entry, "launch"), (arguments, "config_file_path")):
+                value = values.get(key)
+                if isinstance(value, str) and (path.parent / Path(value).expanduser()).is_file():
+                    values[key] = str((path.parent / Path(value).expanduser()).resolve())
+        return {"config": config}
+
+    config = payload.get("config")
+    if not isinstance(config, dict) or not isinstance(config.get("cameras"), list):
+        raise ValueError("请填写多相机配置")
+    if len(config["cameras"]) < 2:
+        raise ValueError("多相机测试至少需要两台相机")
+    env = capture_runtime_env(
+        str(payload.get("camera_setup") or "").strip(),
+        ros_setup=str(payload.get("ros_setup") or "").strip(),
+    )
+    camera_share = _package_share("orbbec_camera", env)
+    contents = yaml.safe_dump(config, allow_unicode=True, sort_keys=False).encode()
+    path = ensure_dir(directory) / f"{hashlib.sha256(contents).hexdigest()}.yaml"
+    with tempfile.NamedTemporaryFile(dir=directory, suffix=".yaml", delete=False) as output:
+        temporary = Path(output.name)
+        output.write(contents)
+    try:
+        prepare_transport_config(temporary, camera_share, env, "NONE", False)
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
+    save_config({"mode": TRANSPORT_MODE, "transport_camera_config": str(path)})
+    return {"path": str(path), "config": config}
 
 
 class UiHandler(BaseHTTPRequestHandler):
@@ -571,6 +637,8 @@ class UiHandler(BaseHTTPRequestHandler):
                 self._send_json(query_camera_devices(payload))
             elif parsed.path == "/api/transport/launch-arguments":
                 self._send_json(transport_launch_arguments(payload))
+            elif parsed.path == "/api/transport/camera-config":
+                self._send_json(transport_camera_config(payload))
             elif parsed.path == "/api/stop":
                 self._send_json(MANAGER.stop())
             elif parsed.path.startswith("/api/runs/") and parsed.path.endswith(

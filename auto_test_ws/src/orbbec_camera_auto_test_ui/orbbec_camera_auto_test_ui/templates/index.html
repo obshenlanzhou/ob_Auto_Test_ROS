@@ -132,13 +132,23 @@
                 </div>
               </details>
               <fieldset class="grid-span-2 config-fieldset" id="frameworkCamera">
-                <legend>相机配置</legend>
+                <legend>
+                  <span>相机配置</span>
+                  <button type="button" class="camera-mode-toggle ghost is-hidden"
+                          id="toggleTransportCameraMode" aria-pressed="false"
+                          aria-controls="multiCameraPlanField">多相机</button>
+                </legend>
                 <div class="grid">
-                  <label>
+                  <div id="multiCameraPlanField" class="camera-plan-field is-hidden">
+                    <span class="field-note" id="transportCameraPlanSummary">尚未配置相机</span>
+                    <button type="button" class="ghost" id="openTransportCameraConfig"
+                            aria-haspopup="dialog">配置相机</button>
+                  </div>
+                  <label id="singleCameraLaunch">
                     <span>Launch</span>
                     <select id="launchFile" name="launch_file"></select>
                   </label>
-                  <details class="form-section compact-section inline-disclosure">
+                  <details class="form-section compact-section inline-disclosure" id="singleCameraParameters">
                     <summary class="section-title"><div>相机参数</div><i aria-hidden="true">⌄</i></summary>
                     <div class="section-content grid two">
                       <label><span>相机名称</span><input id="cameraName" name="camera_name" placeholder="camera" /></label>
@@ -411,7 +421,7 @@
                   </label>
                 </div>
               </section>
-              <section class="advanced-group" aria-labelledby="advancedLaunchTitle">
+              <section class="advanced-group" id="singleCameraLaunchArguments" aria-labelledby="advancedLaunchTitle">
                 <h3 id="advancedLaunchTitle">Launch 参数</h3>
                 <p class="risk-banner multi-camera-launch-warning" role="note">
                   <strong>多相机 Launch 提示：</strong>页面设置的日志级别和 Launch 参数不会生效，请直接在 Launch 文件中配置。
@@ -561,8 +571,9 @@
                   <table class="fps-table">
                     <thead>
                       <tr id="fpsColumns"><th>Topic</th><th>分辨率</th><th>格式</th><th>当前 FPS</th><th>平均 FPS</th><th>目标 FPS</th><th>丢帧</th><th>丢帧率</th></tr>
-                      <tr id="transportColumns" class="is-hidden"><th scope="col">话题</th><th scope="col">分辨率</th><th scope="col">格式</th><th scope="col">样本数</th><th scope="col">当前 FPS</th><th scope="col">平均 FPS</th><th scope="col">平均延迟 (ms)</th><th scope="col">P95 延迟 (ms)</th></tr>
+                      <tr id="transportColumns" class="is-hidden"><th scope="col" class="transport-camera-column is-hidden">相机</th><th scope="col">话题</th><th scope="col">分辨率</th><th scope="col">格式</th><th scope="col">样本数</th><th scope="col">当前 FPS</th><th scope="col">平均 FPS</th><th scope="col">平均延迟 (ms)</th><th scope="col">P95 延迟 (ms)</th></tr>
                       <tr id="gpuTransportColumns" class="is-hidden">
+                        <th scope="col" class="transport-camera-column is-hidden">相机</th>
                         <th scope="col">流</th><th scope="col">分辨率</th><th scope="col">格式</th>
                         <th scope="col">模式</th><th scope="col">接收后端</th>
                         <th scope="col">FPS</th>
@@ -621,6 +632,85 @@
         </div>
       </section>
     </main>
+
+    <dialog class="exit-code-dialog camera-plan-dialog" id="transportCameraDialog" aria-labelledby="transportCameraDialogTitle">
+      <form id="transportCameraPlanForm">
+        <div class="exit-code-dialog-header">
+          <h2 id="transportCameraDialogTitle">多相机配置</h2>
+          <button type="button" class="exit-code-dialog-close" data-close-camera-plan aria-label="关闭多相机配置">×</button>
+        </div>
+        <div class="camera-plan-content">
+          <div class="grid two">
+            <label>
+              <span>启动方式</span>
+              <select id="transportCameraLaunchMode">
+                <option value="individual">逐台配置相机</option>
+                <option value="aggregate">使用已有的多相机 Launch</option>
+              </select>
+            </label>
+            <label>
+              <span id="transportCameraSharedLaunchLabel">公共 Launch</span>
+              <input id="transportCameraSharedLaunch" list="transportCameraLaunches" placeholder="gemini_330_series.launch.py" />
+            </label>
+          </div>
+          <details id="transportAggregateArguments" class="is-hidden">
+            <summary>总 Launch 参数</summary>
+            <label><textarea id="transportAggregateLaunchArgs" rows="2" aria-label="总 Launch 参数" placeholder="每行一个 KEY=VALUE"></textarea></label>
+          </details>
+          <div class="camera-plan-toolbar">
+            <span class="field-note" id="cameraPlanDevicesStatus" role="status"></span>
+            <button type="button" class="ghost" id="queryTransportCameraDevices">发现设备</button>
+            <button type="button" class="ghost" id="addTransportCamera">添加相机</button>
+          </div>
+          <div class="camera-editor" id="transportCameraRows"></div>
+        </div>
+        <p class="field-note camera-plan-error is-hidden" id="transportCameraPlanError" role="alert"></p>
+        <div class="exit-code-dialog-footer">
+          <button type="button" class="ghost" data-close-camera-plan>取消</button>
+          <button type="submit" class="primary" id="saveTransportCameraConfig">保存配置</button>
+        </div>
+      </form>
+      <datalist id="transportCameraLaunches"></datalist>
+      <datalist id="transportCameraSerials"></datalist>
+      <datalist id="transportCameraUsbPorts"></datalist>
+    </dialog>
+
+    <template id="transportCameraRowTemplate">
+      <section class="camera-row transport-camera-row">
+        <div class="camera-row-header">
+          <strong data-camera-title></strong>
+          <button type="button" class="ghost camera-remove" data-remove-camera>移除</button>
+        </div>
+        <label><span>命名空间</span><input data-camera-field="name" required /></label>
+        <label data-individual-camera><span>Launch</span><input data-camera-field="launch" list="transportCameraLaunches" placeholder="沿用公共 Launch" /></label>
+        <label data-individual-camera><span>序列号</span><input data-camera-field="serial_number" list="transportCameraSerials" autocomplete="off" /></label>
+        <label data-individual-camera><span>USB 端口</span><input data-camera-field="usb_port" list="transportCameraUsbPorts" autocomplete="off" /></label>
+        <fieldset class="config-fieldset grid-span-2 camera-plan-streams">
+          <legend>必测流</legend>
+          <div class="camera-plan-stream-list" data-camera-streams></div>
+          <div data-camera-profiles data-individual-camera></div>
+        </fieldset>
+        <details class="grid-span-2">
+          <summary>相机高级参数</summary>
+          <div class="grid two camera-plan-advanced">
+            <label>
+              <span>帧时间域</span>
+              <select data-camera-field="time_domain">
+                <option value="">跟随配置（默认 global）</option>
+                <option value="global">global</option>
+                <option value="system">system</option>
+                <option value="device">device</option>
+                <option value="unknown">unknown</option>
+              </select>
+            </label>
+            <label class="grid-span-2" data-individual-camera>
+              <span>额外 Launch 参数</span>
+              <textarea data-camera-field="arguments" rows="2" placeholder="每行一个 KEY=VALUE"></textarea>
+            </label>
+          </div>
+        </details>
+      </section>
+    </template>
 
     <dialog class="exit-code-dialog device-info-dialog" id="deviceInfoDialog" aria-labelledby="deviceInfoDialogTitle">
       <form method="dialog">
